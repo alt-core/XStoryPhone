@@ -57,15 +57,15 @@ npm test
 
 公開先はdev・stg・prodから明示します。Cloudflareの `npm run deploy` は対象未指定として停止し、prodへ公開する場合だけ `npm run deploy:cloudflare:prod` を使います。詳しくは公開手順を参照してください。
 
-## ドキュメント
+## XStoryPhoneのドキュメント
 
-- [シナリオ作成](docs/scenario.md)
-- [プレイヤー進行の保存モード](docs/player-modes.md)
-- [会話エンジン](docs/conversation.md)
-- [運営レビュー](docs/review.md)
-- [作品固有の拡張](docs/extensions.md)
-- [Cloudflareへの公開](docs/deployment.md)
-- [AWSへの公開](docs/deployment-aws.md)
+- [シナリオ作成](docs/xstoryphone/scenario.md)
+- [プレイヤー進行の保存モード](docs/xstoryphone/player-modes.md)
+- [会話エンジン](docs/xstoryphone/conversation.md)
+- [運営レビュー](docs/xstoryphone/review.md)
+- [作品固有の拡張](docs/xstoryphone/extensions.md)
+- [Cloudflareへの公開](docs/xstoryphone/deployment.md)
+- [AWSへの公開](docs/xstoryphone/deployment-aws.md)
 
 ## ライセンス
 
