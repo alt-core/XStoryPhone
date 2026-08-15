@@ -39,12 +39,12 @@
   import { safeLocalStorage, safeSessionStorage } from "./system/browserStorage";
   import {
     goBackInPhoneHistory,
-    goToPhoneHistoryHome,
     phoneHistoryStateFrom,
     pushPhoneHistoryRoute,
     replacePhoneHistoryRoute,
     type PhoneHistoryRoute
   } from "./system/phoneHistory";
+  import { localPlayerMemoryKey, playerSessionChanged } from "./system/playerSession";
   import { clearSearchAgentLocalMessages } from "./system/searchAgentStorage";
   import AllClearOverlay from "./system/AllClearOverlay.svelte";
   import GameOverOverlay from "./system/GameOverOverlay.svelte";
@@ -1381,7 +1381,7 @@
     notificationToast = null;
     appModalOpen = false;
     const app = apps.find((item) => item.id === link.sourceAppId);
-    if (app && !goBackInPhoneHistory(window.history, phoneHistoryScope)) {
+    if (app && !goBackInPhoneHistory(window.history, phoneHistoryScope, link.sourceAppId)) {
       openApp(app);
     }
   }
@@ -1389,7 +1389,7 @@
   function clearLocalPlayerStateForReset() {
     clearPlayerStateCache();
     clearSearchAgentLocalMessages();
-    clearTalkDelaySeenMessagesForMemoryKey(uiState.sessionToken);
+    clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearStartConfirmationForReset();
     clearRuntimeState();
     persist({
@@ -1408,7 +1408,7 @@
 
     clearPlayerStateCache();
     clearTranscriptStorage();
-    clearTalkDelaySeenMessagesForMemoryKey(uiState.sessionToken);
+    clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearRuntimeState();
     playerState = null;
     persist({
@@ -1505,7 +1505,7 @@
 
       applyErrorPlayerState(result);
       if (result.error === "unauthorized") {
-        clearTalkDelaySeenMessagesForMemoryKey(uiState.sessionToken);
+        clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
         persist({
           locked: true,
           sessionToken: undefined,
@@ -1557,7 +1557,7 @@
 
     if (result.error === "unauthorized") {
       clearPlayerStateCache();
-      clearTalkDelaySeenMessagesForMemoryKey(uiState.sessionToken);
+      clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
       clearPhoneRoute();
       persist({
         locked: true,
@@ -1669,9 +1669,14 @@
         return { ok: false, error: result.error };
       }
 
-      const sessionChanged = uiState.sessionToken !== result.sessionToken;
+      const sessionChanged = playerSessionChanged(
+        playerMode,
+        uiState.sessionToken,
+        result.sessionToken,
+        Boolean(existingBrowserToken && loaded?.ok)
+      );
       if (sessionChanged) {
-        clearTalkDelaySeenMessagesForMemoryKey(uiState.sessionToken);
+        clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
       }
       persist({
         locked: false,
@@ -2407,13 +2412,11 @@
 
   function closeApp() {
     const returningHome = activeAppId !== null || shadeOpen;
-    phoneHistoryNavigationId += 1;
     clearPhoneRoute();
 
     if (returningHome) {
-      if (!goToPhoneHistoryHome(window.history, phoneHistoryScope)) {
-        refreshPlayerStateOnHomeIfStale();
-      }
+      pushCurrentPhoneRoute({ kind: "home" });
+      refreshPlayerStateOnHomeIfStale();
     }
   }
 
@@ -3094,7 +3097,7 @@
             photos={sendablePhotos}
             focusContentId={focusedContentId}
             focusContentRequestId={focusedContentRequestId}
-            delayMemoryKey={uiState.sessionToken ?? ""}
+            delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialDateLabel={TALK_INITIAL_DATE_LABEL}
             initialShareDraft={pendingShareDraft?.kind === "sms" ? pendingShareDraft : null}
             postEnabledByThread={messagePostEnabledByThread}
@@ -3172,7 +3175,7 @@
             initialDateLabel={TALK_INITIAL_DATE_LABEL}
             focusContentId={focusedContentId}
             focusContentRequestId={focusedContentRequestId}
-            delayMemoryKey={uiState.sessionToken ?? ""}
+            delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialShareDraft={pendingShareDraft?.kind === "chat" ? pendingShareDraft : null}
             postEnabledByThread={chatPostEnabledByThread}
             replyDelayAnchorsByThread={replyDelayAnchorsByThread}

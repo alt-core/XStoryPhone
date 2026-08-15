@@ -4,6 +4,10 @@ import { createApp } from "../src/server/app.ts";
 import { scenarioHookHandlers } from "../src/project/hooks.ts";
 import { createInitialPlayerState, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
+const configuredPlayerMode = workerScenario.playerMode;
+test.before(() => { workerScenario.playerMode = "server"; });
+test.after(() => { workerScenario.playerMode = configuredPlayerMode; });
+
 class MemoryStore {
   player = { id: "player-1", state: createInitialPlayerState(), stateVersion: 0 };
   transcripts = new Map();
@@ -538,7 +542,7 @@ test("完了イベントの保存競合では予約を先に消費せず、再�
 
 test("クライアントからの作品固有イベントは明示許可されたtargetだけを受理する", async () => {
   const store = new MemoryStore();
-  store.player.state.stateValues.clue_reported = true;
+  store.player.state.stateValues.sealed_note_unlocked = true;
   workerScenario.stateVariables.test_client_secondary = false;
   store.player.state.stateValues.test_client_secondary = false;
   const secondaryHook = {
@@ -704,7 +708,7 @@ test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ
   const simulated = await app.request("http://localhost/api/admin/talk-branch-review/simulate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "見つけた" })
+    body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "黄色です" })
   });
   assert.equal(simulated.status, 200);
   assert.equal(store.savedReviewTrial.responseSnapshot.selectionSource, "regex");

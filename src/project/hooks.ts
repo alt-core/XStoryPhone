@@ -9,8 +9,13 @@ export const scenarioHookHandlers: ScenarioHookHandlerRegistry<ScenarioHookId> =
     context.state.set("old_note_opened", true);
     context.todo.remove("find_old_note");
   },
+  mark_rainy_window_opened(context) {
+    context.state.set("rainy_window_opened", true);
+    context.todo.remove("find_rainy_window");
+  },
   mark_sealed_note_unlocked(context) {
     context.state.set("sealed_note_unlocked", true);
+    context.talk.addBlock("guide", "sealed_note_opened");
   },
   schedule_demo_call(context) {
     context.schedule.after("demo_call_once", 1_000, "show_demo_call");

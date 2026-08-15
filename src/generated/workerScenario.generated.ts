@@ -2,8 +2,8 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "e8ec17fa1ed44e1e",
-  "playerMode": "server",
+  "revision": "498df06cee058913",
+  "playerMode": "browser",
   "project": {
     "id": "demo",
     "name": "XStoryPhone Demo",
@@ -96,7 +96,7 @@ export const workerScenario: WorkerScenario = {
       "icon": "message_square_text",
       "accent": "#7ee093",
       "initialState": "repairable",
-      "cond": "clue_reported",
+      "cond": "sealed_note_unlocked",
       "search": [
         "チャット",
         "ロビー",
@@ -108,10 +108,12 @@ export const workerScenario: WorkerScenario = {
     "llm": false
   },
   "stateVariables": {
-    "clue_reported": false,
+    "image_color_reported": false,
     "old_note_opened": false,
+    "rainy_window_opened": false,
     "chat_auth_link_sent": false,
     "chat_auth_verified": false,
+    "demo_completed": false,
     "session_started": false,
     "sealed_note_unlocked": false,
     "radio_playback_completed": false
@@ -142,13 +144,17 @@ export const workerScenario: WorkerScenario = {
       "initialState": "normal",
       "search": [
         "端末",
-        "持ち主",
-        "手がかり",
+        "操作",
+        "案内",
         "ヒント"
       ],
       "record": {
-        "title": "拾った端末について",
-        "body": "この端末には、まだ開けない断片が残っている。右下のナビで「古いメモ」と検索してみよう。"
+        "title": "操作ガイド",
+        "body": "ナビ検索とコンテンツ修復を順に試します。右下のナビで「古いメモ」と検索してください。",
+        "tags": [
+          "案内",
+          "操作"
+        ]
       },
       "cond": "",
       "publicId": "c_fbeb27e60040"
@@ -161,12 +167,15 @@ export const workerScenario: WorkerScenario = {
       "search": [
         "古いメモ",
         "ふるいメモ",
-        "鍵",
         "手がかり"
       ],
       "record": {
         "title": "古いメモ",
-        "body": "オレンジ色の印を見つけたら、メッセージで「見つけた」と伝える。"
+        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでナビにその色を伝えてください。",
+        "tags": [
+          "操作",
+          "画像"
+        ]
       },
       "cond": "",
       "publicId": "c_32c01e364751"
@@ -175,34 +184,82 @@ export const workerScenario: WorkerScenario = {
       "id": "sealed_note",
       "appId": "notes",
       "initialState": "hidden",
-      "cond": "clue_reported",
+      "cond": "image_color_reported",
       "search": [
         "鍵付き",
         "添付",
         "パスワード"
       ],
       "record": {
-        "title": "鍵付き添付の中身",
-        "body": "パスワード付き添付を開封すると、対応するコンテンツも利用可能になります。",
+        "title": "鍵付きメモ",
+        "body": "鍵付き添付とコンテンツ解錠の確認は完了です。次はチャットを修復してください。",
         "unlockCode": "0420"
       },
       "publicId": "c_bdffc57fcb5c"
     },
     {
-      "id": "orange_mark",
+      "id": "evening_platform",
       "appId": "photos",
-      "initialState": "hidden",
+      "initialState": "normal",
       "search": [
-        "オレンジ",
-        "印",
+        "駅",
+        "ホーム",
+        "夕方",
         "写真"
       ],
       "record": {
-        "title": "オレンジ色の印",
-        "imageUrl": "/demo/orange-mark.svg"
+        "title": "夕方のホーム",
+        "imageUrl": "/demo/album/evening-platform.webp",
+        "tags": [
+          "駅",
+          "夕方"
+        ]
       },
       "cond": "",
-      "publicId": "c_1c9fa608e356"
+      "publicId": "c_5a463a5eb50a"
+    },
+    {
+      "id": "rainy_window",
+      "appId": "photos",
+      "initialState": "repairable",
+      "repairLabel": "暗▚▞▐化された画像",
+      "search": [
+        "雨",
+        "窓",
+        "夜",
+        "写真"
+      ],
+      "record": {
+        "title": "雨の日の窓",
+        "imageUrl": "/demo/album/rainy-window.webp",
+        "tags": [
+          "雨",
+          "窓",
+          "黄色い灯り"
+        ]
+      },
+      "cond": "",
+      "publicId": "c_394e3752c02b"
+    },
+    {
+      "id": "coffee_table",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": [
+        "コーヒー",
+        "ノート",
+        "机",
+        "写真"
+      ],
+      "record": {
+        "title": "休憩中",
+        "imageUrl": "/demo/album/coffee-table.webp",
+        "tags": [
+          "休憩"
+        ]
+      },
+      "cond": "",
+      "publicId": "c_64fd68903e0a"
     },
     {
       "id": "owner_schedule",
@@ -214,11 +271,11 @@ export const workerScenario: WorkerScenario = {
         "20時30分"
       ],
       "record": {
-        "title": "端末の持ち主を探す",
+        "title": "端末の写真を整理",
         "date": "8/12",
         "time": "20:30",
-        "place": "駅前",
-        "memo": "オレンジ色の印が目印。"
+        "place": "自宅",
+        "memo": "「雨の日の窓」の写真を確認する。"
       },
       "cond": "",
       "publicId": "c_5ad6b8c27c5f"
@@ -271,24 +328,24 @@ export const workerScenario: WorkerScenario = {
           "example": "ヘルプ"
         },
         {
-          "id": "rule_1b8c4826049d",
+          "id": "rule_4597eda2ac22",
           "order": 3,
           "from": "guide::intro",
           "isDefault": false,
-          "cond": "",
-          "intent": "手がかり発見",
-          "criteria": "/^(?:見つけた|みつけた|発見した)[！!。.]?$/i",
+          "cond": "rainy_window_opened",
+          "intent": "灯りの色を報告",
+          "criteria": "/(?:黄色?|きいろ|オレンジ(?:色)?|橙色)/u",
           "match": "",
           "nextBlocks": [
             "guide::found_lead",
             "guide::found_done"
           ],
           "set": [
-            "clue_reported=true"
+            "image_color_reported=true"
           ],
           "mode": "",
           "notes": "正規表現だけで選択するデモ",
-          "example": "見つけた"
+          "example": "黄色です"
         },
         {
           "id": "rule_7877f9272516",
@@ -347,8 +404,8 @@ export const workerScenario: WorkerScenario = {
       "id": "lobby",
       "kind": "chat",
       "appId": "chat",
-      "label": "公開ロビー",
-      "cond": "clue_reported",
+      "label": "サンプルルーム",
+      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "lobby::start"
       ],
@@ -366,6 +423,25 @@ export const workerScenario: WorkerScenario = {
           "match": "",
           "nextBlocks": [
             "lobby::lobby_reply"
+          ],
+          "set": [
+            "demo_completed=true"
+          ],
+          "mode": "",
+          "notes": "",
+          "example": ""
+        },
+        {
+          "id": "rule_aea39ca1e449",
+          "order": 8,
+          "from": "lobby::lobby_reply",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "nextBlocks": [
+            "lobby::lobby_done"
           ],
           "set": [],
           "mode": "stay",
@@ -388,7 +464,7 @@ export const workerScenario: WorkerScenario = {
     },
     {
       "id": "visitor",
-      "name": "通りすがり",
+      "name": "デモ参加者",
       "role": "npc"
     }
   ],
@@ -401,7 +477,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::intro_1",
           "sender": "guide",
-          "body": "端末の中に壊れたメモがあるみたい。右下のナビを開いて「古いメモ」と検索してみて。",
+          "body": "XStoryPhoneの基本操作を順に試します。まず右下のナビで「古いメモ」と検索してください。",
           "attachmentId": "",
           "sentAt": "20:14",
           "notes": "",
@@ -418,7 +494,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::intro_prompt_1",
           "sender": "guide",
-          "body": "「見つけた」と送ってくれれば、次へ進めるよ。",
+          "body": "今することはホームのToDoに表示しているよ。分からなければ、ナビで「ヒント」と検索してみて。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 650,
@@ -438,7 +514,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::intro_prompt@2_1",
           "sender": "guide",
-          "body": "古いメモを開いて、書かれていた合図を送ってみて。",
+          "body": "検索、修復、会話、添付解錠、チャット再認証を順番に確認できます。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 650,
@@ -456,7 +532,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::common_help_1",
           "sender": "guide",
-          "body": "右下のナビで「古いメモ」を検索し、見つかったメモの指示を試してみて。",
+          "body": "ホームのToDoを確認してみて。分からなければ、ナビで「ヒント」と検索すると次の手順を確認できるよ。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 500,
@@ -474,7 +550,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::found_lead_1",
           "sender": "guide",
-          "body": "見つけてくれたんだね。",
+          "body": "「黄色」ですね。画像の修復と、正規表現による入力判定を確認できました。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 450,
@@ -492,8 +568,8 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::found_done_1",
           "sender": "guide",
-          "body": "手がかりを確認できました。次は、ホームに現れた壊れた「チャット」をナビで検索してみてください。",
-          "attachmentId": "orange_mark_image",
+          "body": "修復した画像を、メッセージの添付として表示する例です。",
+          "attachmentId": "rainy_window_image",
           "sentAt": "",
           "delayMs": 700,
           "notes": "",
@@ -503,15 +579,15 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::found_done_2",
           "sender": "guide",
-          "body": "鍵付き添付の例です。パスワードは「0420」。最初のメモもここから読み返せます。",
+          "body": "次は鍵付き添付です。パスワード「0420」で開いてください。最初の操作ガイドもここから読み返せます。",
           "segments": [
             {
               "kind": "text",
-              "text": "鍵付き添付の例です。パスワードは「0420」。最初の"
+              "text": "次は鍵付き添付です。パスワード「0420」で開いてください。最初の"
             },
             {
               "kind": "link",
-              "text": "メモ",
+              "text": "操作ガイド",
               "appId": "notes",
               "contentId": "welcome_note"
             },
@@ -537,7 +613,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::done_repeat_1",
           "sender": "guide",
-          "body": "ここまでが最小デモです。シナリオを書き換えて、あなたの物語を始めてください。",
+          "body": "鍵付きメモを開いたら、次はナビで「チャット」と検索してください。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 700,
@@ -557,7 +633,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::done_repeat@2_1",
           "sender": "guide",
-          "body": "別の分岐やメッセージブロックも追加できます。",
+          "body": "次の手順はホームのToDoでも確認できるよ。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 550,
@@ -617,6 +693,24 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
+      "id": "guide::sealed_note_opened",
+      "talkId": "guide",
+      "blockKey": "sealed_note_opened",
+      "messages": [
+        {
+          "id": "guide::sealed_note_opened_1",
+          "sender": "guide",
+          "body": "鍵付き添付を開封できました。ホームに壊れたチャットが現れたので、ナビで「チャット」と検索して開いてください。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 500,
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
       "id": "lobby::start",
       "talkId": "lobby",
       "blockKey": "start",
@@ -624,7 +718,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "lobby::start_1",
           "sender": "visitor",
-          "body": "ここはチャットUIのデモです。何か送るとdefault ruleが応答します。",
+          "body": "チャットUIとdefault分岐の確認です。何かメッセージを送ってください。",
           "attachmentId": "",
           "sentAt": "20:14",
           "notes": "",
@@ -652,10 +746,28 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "lobby::lobby_reply_2",
           "sender": "guide",
-          "body": "チャットにも同じ会話エンジンを利用できます。",
+          "body": "検索・修復・会話・添付解錠・チャット再認証のデモは完了です。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 650,
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "lobby::lobby_done",
+      "talkId": "lobby",
+      "blockKey": "lobby_done",
+      "messages": [
+        {
+          "id": "lobby::lobby_done_1",
+          "sender": "visitor",
+          "body": "追加のメッセージも受け取りました。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 400,
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -665,19 +777,19 @@ export const workerScenario: WorkerScenario = {
   ],
   "attachments": [
     {
-      "id": "orange_mark_image",
+      "id": "rainy_window_image",
       "type": "image",
-      "asset": "/demo/orange-mark.svg",
-      "content": "orange_mark"
+      "asset": "/demo/album/rainy-window.webp",
+      "content": "rainy_window"
     },
     {
       "id": "sealed_note_file",
       "type": "image",
-      "asset": "/demo/orange-mark.svg",
+      "asset": "/demo/sealed-note.svg",
       "content": "sealed_note",
       "lock": "password",
       "title": "鍵付きのメモ",
-      "body": "開封できました。物語では、ここへ次の手がかりを記述できます。"
+      "body": "鍵付き添付を開封できました。"
     }
   ],
   "repeatTalkBlocks": {
@@ -691,7 +803,7 @@ export const workerScenario: WorkerScenario = {
   "incomingCalls": [
     {
       "id": "demo_call",
-      "name": "持ち主候補"
+      "name": "着信テスト"
     }
   ],
   "initialSchedules": [],
@@ -700,6 +812,36 @@ export const workerScenario: WorkerScenario = {
       "id": "find_old_note",
       "text": "ナビで「古いメモ」を検索する",
       "cond": "!old_note_opened"
+    },
+    {
+      "id": "find_rainy_window",
+      "text": "ナビで「雨」と検索し、写真の灯りの色を確かめる",
+      "cond": "old_note_opened && !rainy_window_opened"
+    },
+    {
+      "id": "report_clue",
+      "text": "メッセージでナビに灯りの色を伝える",
+      "cond": "rainy_window_opened && !image_color_reported"
+    },
+    {
+      "id": "unlock_recovery_note",
+      "text": "パスワード「0420」で鍵付きメモを開く",
+      "cond": "image_color_reported && !sealed_note_unlocked"
+    },
+    {
+      "id": "restore_chat",
+      "text": "「チャット」を検索して開き、再認証リンクを発行する",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+    },
+    {
+      "id": "authenticate_chat",
+      "text": "メッセージに届いたリンクからチャットを開く",
+      "cond": "chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "id": "contact_owner",
+      "text": "サンプルルームでメッセージを送る",
+      "cond": "chat_auth_verified && !demo_completed"
     }
   ],
   "notifications": [
@@ -708,7 +850,7 @@ export const workerScenario: WorkerScenario = {
       "appId": "messages",
       "targetTalkId": "guide",
       "title": "ナビ",
-      "body": "端末の中を調べてみよう。",
+      "body": "ナビ検索とコンテンツ修復を試してみよう。",
       "cond": "!old_note_opened"
     },
     {
@@ -724,18 +866,42 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "home_hint",
       "surface": "home",
-      "body": "端末内の気になる言葉を検索できます。",
+      "body": "ナビで壊れたデータを検索し、修復してみよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "!clue_reported"
+      "cond": "!old_note_opened"
+    },
+    {
+      "id": "photo_hint",
+      "surface": "home",
+      "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "old_note_opened && !rainy_window_opened"
+    },
+    {
+      "id": "report_hint",
+      "surface": "home",
+      "body": "写真で一番大きく見える灯りの色を、メッセージで教えて。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "rainy_window_opened && !image_color_reported"
     },
     {
       "id": "sealed_note_opened",
-      "surface": "messages",
-      "body": "鍵付き添付を開封できました。",
+      "surface": "home",
+      "body": "「チャット」を検索して開き、再認証リンクを発行しよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "sealed_note_unlocked"
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+    },
+    {
+      "id": "contact_owner",
+      "surface": "home",
+      "body": "再認証したチャットで、メッセージを送ってみよう。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "chat_auth_verified && !demo_completed"
     },
     {
       "id": "radio_completed",
@@ -752,9 +918,79 @@ export const workerScenario: WorkerScenario = {
       "search": [
         "ヒント"
       ],
-      "body": "まずは「古いメモ」と検索してみて。",
-      "suppressResults": true,
-      "cond": ""
+      "body": "まずは「古いメモ」と検索して、コンテンツ修復を試してみて。",
+      "cond": "!old_note_opened",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_photo",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "「雨」と検索して写真を開き、一番大きく見える灯りの色を確かめて。",
+      "cond": "old_note_opened && !rainy_window_opened",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_report",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "メッセージでナビに、写真で一番大きく見えた灯りの色を送って。",
+      "cond": "rainy_window_opened && !image_color_reported",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_unlock",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "メッセージに届いた鍵付きメモを、パスワード「0420」で開いて。",
+      "cond": "image_color_reported && !sealed_note_unlocked",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_chat",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "「チャット」を検索して開き、再認証リンクを発行して。",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_auth",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "メッセージに届いた再認証リンクから、チャットを開いて。",
+      "cond": "chat_auth_link_sent && !chat_auth_verified",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_contact",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。",
+      "cond": "chat_auth_verified && !demo_completed",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_done",
+      "when": "",
+      "search": [
+        "ヒント"
+      ],
+      "body": "検索・修復・会話・添付解錠・再認証のデモは完了しています。",
+      "cond": "demo_completed",
+      "suppressResults": true
     },
     {
       "id": "found",
@@ -774,7 +1010,7 @@ export const workerScenario: WorkerScenario = {
     }
   ],
   "chatAuthGate": {
-    "cond": "clue_reported && !chat_auth_verified",
+    "cond": "sealed_note_unlocked && !chat_auth_verified",
     "linkSentCond": "chat_auth_link_sent"
   },
   "clientCallableEvents": [
@@ -802,6 +1038,13 @@ export const workerScenario: WorkerScenario = {
       "target": "old_note",
       "handler": "mark_old_note_opened",
       "cond": "!old_note_opened",
+      "llm": false
+    },
+    {
+      "event": "content_repaired",
+      "target": "rainy_window",
+      "handler": "mark_rainy_window_opened",
+      "cond": "!rainy_window_opened",
       "llm": false
     },
     {
@@ -850,7 +1093,7 @@ export const workerScenario: WorkerScenario = {
       "event": "scenario_event",
       "target": "chat_auth_link_requested",
       "handler": "send_chat_auth_link",
-      "cond": "clue_reported && !chat_auth_link_sent && !chat_auth_verified",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
       "llm": false
     },
     {
@@ -874,7 +1117,9 @@ export const workerScenario: WorkerScenario = {
       "welcome_note": "c_fbeb27e60040",
       "old_note": "c_32c01e364751",
       "sealed_note": "c_bdffc57fcb5c",
-      "orange_mark": "c_1c9fa608e356",
+      "evening_platform": "c_5a463a5eb50a",
+      "rainy_window": "c_394e3752c02b",
+      "coffee_table": "c_64fd68903e0a",
       "owner_schedule": "c_5ad6b8c27c5f",
       "sample_radio": "c_513e68175e27"
     },

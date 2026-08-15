@@ -2,7 +2,7 @@
 import type { DeviceState } from "../scenario-runtime/types";
 
 export const demoDeviceStateGenerated: DeviceState = {
-  "revision": "e8ec17fa1ed44e1e",
+  "revision": "498df06cee058913",
   "batteryLevel": 72,
   "signalLabel": "4G",
   "currentDateLabel": "8月12日（水）",
@@ -65,7 +65,7 @@ export const demoDeviceStateGenerated: DeviceState = {
       "appId": "messages",
       "targetContentId": "t_17f5f84e4690",
       "title": "ナビ",
-      "body": "端末の中を調べてみよう。"
+      "body": "ナビ検索とコンテンツ修復を試してみよう。"
     }
   ],
   "todos": []

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Folder } from "@lucide/svelte";
   import type { NoteItem } from "../scenario-runtime/types";
+  import ContentTags from "../system/ContentTags.svelte";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
   import ScrollHint from "../system/ScrollHint.svelte";
   import AppShell from "./AppShell.svelte";
@@ -60,7 +61,10 @@
         {#if selectedNote.corrupted}
           <p class="content-error">{selectedNote.body}</p>
         {:else}
-          <h3>{selectedNote.title}</h3>
+          <div class="note-heading">
+            <h3>{selectedNote.title}</h3>
+            <ContentTags tags={selectedNote.tags ?? []} />
+          </div>
           <p>{selectedNote.body}</p>
         {/if}
       </article>
@@ -198,6 +202,13 @@
   h3 {
     margin: 0;
     font-size: 1.28rem;
+  }
+
+  .note-heading {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+    --content-tag-accent: #8fd2ff;
   }
 
   .note-paper > p {

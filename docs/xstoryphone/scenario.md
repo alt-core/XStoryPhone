@@ -51,6 +51,16 @@
 
 `messages` と `chat` の中身は、`talks`、`talkPeople`、`attachments` と2つのTSVで定義します。それ以外は `contents[].record` に、そのアプリの表示データを書きます。具体的な最小例はデモシナリオを参照してください。
 
+`notes` と `photos` の `record` には、任意で `tags` を指定できます。タグは記述順に詳細表示へ並び、多い場合は横へスクロールします。絞り込みには使いません。
+
+```json
+{
+  "title": "駅前で見つけた写真",
+  "imageUrl": "/demo/photo.svg",
+  "tags": ["駅前", "手がかり"]
+}
+```
+
 ## 状態条件による表示
 
 `apps`、`contents`、`talks`、`todos`、`notifications`、`assistantMessages` には任意の `cond` を書けます。条件を満たさない項目はクライアントへ表示されず、検索やAPIの直接呼び出しでも利用できません。

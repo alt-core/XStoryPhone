@@ -11,14 +11,14 @@ import {
 
 test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ、改ざんと別作品を拒否する", async () => {
   const state = createInitialPlayerState();
-  state.stateValues = { clue_reported: true };
+  state.stateValues = { image_color_reported: true };
   const player = { id: "browser-player", state, stateVersion: 3 };
   const token = await encodeBrowserProgress("test-secret", "project-a", "revision-a", player);
 
   const decoded = await decodeBrowserProgress("test-secret", "project-a", token);
   assert.equal(decoded?.id, player.id);
   assert.equal(decoded?.stateVersion, 3);
-  assert.deepEqual(decoded?.state.stateValues, { clue_reported: true });
+  assert.deepEqual(decoded?.state.stateValues, { image_color_reported: true });
 
   const tamperedIndex = token.length - 2;
   const tamperedCharacter = token[tamperedIndex] === "a" ? "b" : "a";

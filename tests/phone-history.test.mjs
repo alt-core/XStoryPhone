@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   goBackInPhoneHistory,
-  goToPhoneHistoryHome,
   phoneHistoryStateFrom,
   pushPhoneHistoryRoute,
   replacePhoneHistoryRoute
@@ -76,7 +75,8 @@ test("トップ階層の移動だけをpushし、同一画面は増やさない"
     version: 1,
     scope: "scope",
     index: 1,
-    route: { kind: "app", appId: "notes" }
+    route: { kind: "app", appId: "notes" },
+    previousRoute: { kind: "home" }
   });
 });
 
@@ -95,30 +95,33 @@ test("同一アプリ内の選択は現在位置を保ったまま置換でき�
   });
 });
 
-test("端末ホームは管理履歴の起点へ戻り、起点では履歴を増やさない", () => {
+test("端末ホームは新しい履歴として積み、戻ると直前のアプリへ戻る", () => {
   const history = new FakeHistory();
   replacePhoneHistoryRoute(history, "scope", { kind: "home" });
   pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "notes" });
-  pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "photos" });
+  pushPhoneHistoryRoute(history, "scope", { kind: "home" });
 
-  assert.equal(goToPhoneHistoryHome(history, "scope"), true);
-  assert.deepEqual(history.goCalls, [-2]);
-  assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, { kind: "home" });
-
-  assert.equal(goToPhoneHistoryHome(history, "scope"), false);
   assert.equal(history.entries.length, 3);
   assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, { kind: "home" });
+
+  assert.equal(goBackInPhoneHistory(history, "scope"), true);
+  assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, { kind: "app", appId: "notes" });
 });
 
 test("戻るリンクは同じスコープの直前画面がある場合だけブラウザ履歴を使う", () => {
   const history = new FakeHistory();
   replacePhoneHistoryRoute(history, "scope", { kind: "home" });
-  assert.equal(goBackInPhoneHistory(history, "scope"), false);
+  assert.equal(goBackInPhoneHistory(history, "scope", "messages"), false);
 
   pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "messages" });
-  assert.equal(goBackInPhoneHistory(history, "scope"), true);
+  pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "notes" });
+  replacePhoneHistoryRoute(history, "scope", { kind: "app", appId: "notes", contentId: "note-1" });
+  assert.equal(goBackInPhoneHistory(history, "scope", "chat"), false);
+  assert.equal(history.backCalls, 0);
+
+  assert.equal(goBackInPhoneHistory(history, "scope", "messages"), true);
   assert.equal(history.backCalls, 1);
-  assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, { kind: "home" });
+  assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, { kind: "app", appId: "messages" });
 });
 
 test("戻った後の新しい遷移では不要なforward履歴を捨てる", () => {

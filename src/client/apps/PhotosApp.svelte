@@ -3,6 +3,7 @@
   import { Image, X } from "@lucide/svelte";
   import type { PhotoItem } from "../scenario-runtime/types";
   import AudioPlaybackButton from "../system/AudioPlaybackButton.svelte";
+  import ContentTags from "../system/ContentTags.svelte";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
   import ScrollHint from "../system/ScrollHint.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
@@ -271,45 +272,55 @@
   <div class="photo-layout">
     {#if selectedPhoto}
       <section class="photo-view" aria-label={photoLabel(selectedPhoto)} title={photoLabel(selectedPhoto)}>
-        {#if selectedPhoto.corrupted}
-          <div class="photo-error-panel" style={photoCorruptionNoiseStyle(selectedPhoto)}>
-            <span class="repair-label">&lt;ERROR コンテンツへのリンクが破損しています&gt;</span>
-          </div>
-        {:else if canEnlargePhoto(selectedPhoto)}
-          <button
-            class="photo-expand-button"
-            type="button"
-            title="拡大表示"
-            aria-label={`${photoLabel(selectedPhoto)}を拡大表示`}
-            on:click={() => openExpandedPhoto(selectedPhoto)}
-          >
-            <span class="photo-art large hasImage">
-              <img src={selectedPhoto.imageUrl} alt="" />
-            </span>
-          </button>
-        {:else}
-          <div class="photo-art large" class:hasImage={Boolean(selectedPhoto.imageUrl)} class:video-art={isVideoContent(selectedPhoto)}>
-            {#if selectedPhoto.imageUrl}
-              {#if isVideoContent(selectedPhoto)}
-                <VideoStillFrame src={selectedPhoto.imageUrl} square />
-              {:else}
+        <div class="photo-display">
+          {#if selectedPhoto.corrupted}
+            <div class="photo-error-panel" style={photoCorruptionNoiseStyle(selectedPhoto)}>
+              <span class="repair-label">&lt;ERROR コンテンツへのリンクが破損しています&gt;</span>
+            </div>
+          {:else if canEnlargePhoto(selectedPhoto)}
+            <button
+              class="photo-expand-button"
+              type="button"
+              title="拡大表示"
+              aria-label={`${photoLabel(selectedPhoto)}を拡大表示`}
+              on:click={() => openExpandedPhoto(selectedPhoto)}
+            >
+              <span class="photo-art large hasImage">
                 <img src={selectedPhoto.imageUrl} alt="" />
+              </span>
+            </button>
+          {:else}
+            <div class="photo-art large" class:hasImage={Boolean(selectedPhoto.imageUrl)} class:video-art={isVideoContent(selectedPhoto)}>
+              {#if selectedPhoto.imageUrl}
+                {#if isVideoContent(selectedPhoto)}
+                  <VideoStillFrame src={selectedPhoto.imageUrl} square />
+                {:else}
+                  <img src={selectedPhoto.imageUrl} alt="" />
+                {/if}
+              {:else}
+                <span class="land-mark"></span>
               {/if}
-            {:else}
-              <span class="land-mark"></span>
-            {/if}
-            {#if isVideoContent(selectedPhoto)}
-              <div class="video-playback-overlay">
-                <AudioPlaybackButton
-                  playbackId={`album-video:${selectedPhoto.id}`}
-                  src={selectedPhoto.audioUrl ?? ""}
-                  label="再生"
-                  onComplete={() => notifyAudioPlaybackComplete(selectedPhoto)}
-                />
-              </div>
-            {/if}
-          </div>
-        {/if}
+            </div>
+          {/if}
+
+          {#if !selectedPhoto.corrupted && (selectedPhoto.tags?.length || isVideoContent(selectedPhoto))}
+            <div class="photo-lower-overlay">
+              {#if selectedPhoto.tags?.length}
+                <ContentTags tags={selectedPhoto.tags} overlay />
+              {/if}
+              {#if isVideoContent(selectedPhoto)}
+                <div class="video-playback-overlay">
+                  <AudioPlaybackButton
+                    playbackId={`album-video:${selectedPhoto.id}`}
+                    src={selectedPhoto.audioUrl ?? ""}
+                    label="再生"
+                    onComplete={() => notifyAudioPlaybackComplete(selectedPhoto)}
+                  />
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
       </section>
     {:else}
       <section class="photo-view" aria-label="アルバムは空です">
@@ -405,6 +416,23 @@
   .photo-view {
     display: grid;
     gap: 10px;
+  }
+
+  .photo-display {
+    position: relative;
+    min-width: 0;
+    --content-tag-accent: #f0b35d;
+  }
+
+  .photo-lower-overlay {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    z-index: 3;
+    display: grid;
+    gap: 6px;
+    min-width: 0;
   }
 
   .photo-empty {
@@ -564,16 +592,7 @@
     box-shadow: none;
   }
 
-  .photo-art.video-art {
-    isolation: isolate;
-  }
-
   .video-playback-overlay {
-    position: absolute;
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
-    z-index: 2;
     color: rgba(255, 255, 255, 0.92);
   }
 

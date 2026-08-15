@@ -132,6 +132,7 @@ export type MessageThread = {
 export type PhotoItem = {
   id: string;
   title?: string;
+  tags?: string[];
   mediaKind?: "still_video";
   attachmentId?: string;
   imageUrl?: string;
@@ -142,6 +143,7 @@ export type NoteItem = {
   id: string;
   title: string;
   body: string;
+  tags?: string[];
 } & ScenarioContentMeta;
 
 export type CalendarEvent = {

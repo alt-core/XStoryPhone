@@ -22,11 +22,7 @@
   };
   type RadioFormSubmitResult = { ok: true; gameOver?: boolean } | { ok: false; error?: string; message?: string };
   const broadcastWaitingTitle = "放送開始をお待ちください";
-  const broadcastWaitingBodyBefore =
-    "しばらく待ってリロードしても再生できない場合は、リアルなシステムトラブルです。";
-  const broadcastWaitingSupportAddressParts = ["support", "@", "example", ".", "com"];
-  const broadcastWaitingBodyAfter =
-    " へ、あなたのパスコードを添えてご連絡ください。お手数をおかけして申し訳ございません。";
+  const broadcastWaitingBody = "しばらく待ってから、ページのリロードをお試しください。";
 
   export let items: RadioEpisodeItem[] = [];
   export let focusContentId = "";
@@ -501,9 +497,7 @@
               <TriangleAlert size={24} strokeWidth={2.2} aria-hidden="true" />
               <strong>{broadcastWaitingTitle}</strong>
             </div>
-            <p>
-              {broadcastWaitingBodyBefore}<span class="broadcast-waiting-address">{#each broadcastWaitingSupportAddressParts as addressPart}<span>{addressPart}</span>{/each}</span>{broadcastWaitingBodyAfter}
-            </p>
+            <p>{broadcastWaitingBody}</p>
           </div>
         {:else}
           <div class="transport-stage" class:playing={isSelectedPlaying}>
@@ -1052,11 +1046,6 @@
     font-weight: 520;
     line-height: 1.58;
     overflow-wrap: anywhere;
-  }
-
-  .broadcast-waiting-address {
-    font-weight: 680;
-    white-space: nowrap;
   }
 
   .progress-stack {

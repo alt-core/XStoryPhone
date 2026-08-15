@@ -1,8 +1,9 @@
 comment	talk	from	cond	intent	criteria	example	match	next	mode	set	notes
 	guide	*		ヘルプ	/^(?:help|ヘルプ)$/i	ヘルプ		common_help	stay		どの状態からでも利用できる共通分岐
-	guide	intro		手がかり発見	/^(?:見つけた|みつけた|発見した)[！!。.]?$/i	見つけた		"found_lead
-found_done"		clue_reported=true	正規表現だけで選択するデモ
+	guide	intro	rainy_window_opened	灯りの色を報告	/(?:黄色?|きいろ|オレンジ(?:色)?|橙色)/u	黄色です		"found_lead
+found_done"		image_color_reported=true	正規表現だけで選択するデモ
 	guide	intro						intro_prompt	stay
 	guide	found_done		ゲームオーバー確認	/^終了$/u	終了		game_over_reply	game_over		ゲームオーバーUIのデモ
 	guide	found_done						done_repeat	stay
-	lobby	start						lobby_reply	stay
+	lobby	start						lobby_reply		demo_completed=true
+	lobby	lobby_reply						lobby_done	stay

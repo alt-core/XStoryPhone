@@ -37,6 +37,7 @@ const llmParameterOverrides = [
 });
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const samConfigPath = fileURLToPath(new URL("../infra/aws/samconfig.toml", import.meta.url));
 
 function run(command, args, capture = false, extraEnvironment = {}) {
   const result = spawnSync(command, args, {
@@ -57,9 +58,10 @@ run("npm", ["run", "audit:client:aws"]);
 run("sam", ["build", "--template-file", "infra/aws/template.yaml"]);
 run("sam", [
   "deploy",
+  "--no-fail-on-empty-changeset",
   "--stack-name", settings.stackName,
   "--template-file", ".aws-sam/build/template.yaml",
-  "--config-file", "infra/aws/samconfig.toml",
+  "--config-file", samConfigPath,
   "--config-env", environment,
   "--parameter-overrides",
   `EnvironmentName=${environment}`,

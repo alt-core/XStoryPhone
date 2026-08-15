@@ -191,6 +191,11 @@ function validateRecord(content, errors) {
       errors.push(`${content.id}: record.${key} は文字列にしてください。`);
     }
   }
+  if (["notes", "photos"].includes(content.appId) && record.tags !== undefined) {
+    if (!Array.isArray(record.tags) || record.tags.some((tag) => typeof tag !== "string" || !tag.trim())) {
+      errors.push(`${content.id}: record.tags は文字列の配列にし、空文字を含めないでください。`);
+    }
+  }
 }
 
 function deviceStateFor(source, publicIds, revision) {

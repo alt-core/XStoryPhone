@@ -16,7 +16,6 @@ function renderGlobalError(targetElement: HTMLElement) {
             <p class="out-game-kicker">ゲーム外のエラー</p>
             <h1 id="global-error-title">画面の表示に失敗しました</h1>
             <p>しばらくしてから、ページのリロードをお試しください。</p>
-            <p>解消しない場合は、この作品の運営者へパスコードを添えてお問い合わせください。</p>
             <div class="out-game-error-actions">
               <button class="out-game-primary-button" type="button" data-reload-button>リロード</button>
             </div>

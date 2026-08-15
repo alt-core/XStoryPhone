@@ -107,6 +107,10 @@ test("AWSデプロイは入力ログ設定を環境変数から引き継ぐ", ()
   assert.doesNotMatch(deployAws, /"PlayerInputLogging=false"/u);
 });
 
+test("AWSデプロイはクライアントだけの変更でも静的ファイル同期まで続行する", () => {
+  assert.match(deployAws, /"--no-fail-on-empty-changeset"/u);
+});
+
 test("AWSの環境別スタック名と運用上限はデプロイスクリプトで一元管理する", () => {
   assert.doesNotMatch(samconfig, /stack_name|parameter_overrides/u);
   assert.match(deployAws, /--stack-name", settings\.stackName/u);

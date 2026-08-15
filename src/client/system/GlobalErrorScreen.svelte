@@ -3,7 +3,6 @@
 
   export let message = "";
   export let supportCode = "AP-CLIENT";
-  const supportAddressParts = ["support", "@", "example", ".", "com"];
 
   function reload() {
     window.location.reload();
@@ -21,14 +20,6 @@
       <p>{message}</p>
     {:else}
       <p>しばらくしてから、ページのリロードをお試しください。</p>
-      <p>それでも、エラーが解消しない場合は、リアルなシステムトラブルです。</p>
-      <p>
-        <span class="out-game-support-address">
-          {#each supportAddressParts as addressPart}<span>{addressPart}</span>{/each}
-        </span>
-        まで、あなたのパスコードを添えてご連絡ください。
-      </p>
-      <p>ご心配とご面倒をおかけして、たいへん申し訳ございません。</p>
     {/if}
     <p class="out-game-support-code">エラーコード: {supportCode}</p>
     <div class="out-game-error-actions">
@@ -37,6 +28,6 @@
         <span>リロード</span>
       </button>
     </div>
-    <a class="privacy-link" href="/privacy-policy.html" target="_blank" rel="noreferrer">プライバシーポリシー／お問い合わせ</a>
+    <a class="privacy-link" href="/privacy-policy.html" target="_blank" rel="noreferrer">プライバシーポリシー</a>
   </div>
 </section>

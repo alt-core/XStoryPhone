@@ -10,9 +10,10 @@ export type PhoneHistoryState = {
   scope: string;
   index: number;
   route: PhoneHistoryRoute;
+  previousRoute?: PhoneHistoryRoute;
 };
 
-type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "go" | "back">;
+type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
 
 const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "calendar", "radio"]);
 
@@ -46,6 +47,7 @@ export function phoneHistoryStateFrom(value: unknown, scope?: string): PhoneHist
 
   const state = value as Partial<PhoneHistoryState>;
   const route = routeFrom(state.route);
+  const previousRoute = state.previousRoute === undefined ? undefined : routeFrom(state.previousRoute);
   if (
     state.owner !== "xstoryphone"
     || state.version !== 1
@@ -55,11 +57,19 @@ export function phoneHistoryStateFrom(value: unknown, scope?: string): PhoneHist
     || !Number.isInteger(state.index)
     || (state.index ?? -1) < 0
     || !route
+    || (state.previousRoute !== undefined && !previousRoute)
   ) {
     return null;
   }
 
-  return { owner: "xstoryphone", version: 1, scope: state.scope, index: state.index as number, route };
+  return {
+    owner: "xstoryphone",
+    version: 1,
+    scope: state.scope,
+    index: state.index as number,
+    route,
+    ...(previousRoute ? { previousRoute } : {})
+  };
 }
 
 export function samePhoneHistoryRoute(left: PhoneHistoryRoute, right: PhoneHistoryRoute) {
@@ -74,7 +84,8 @@ export function replacePhoneHistoryRoute(history: HistoryLike, scope: string, ro
     version: 1,
     scope,
     index: current?.index ?? 0,
-    route
+    route,
+    ...(current?.previousRoute ? { previousRoute: current.previousRoute } : {})
   };
   history.replaceState(next, "");
   return next;
@@ -94,25 +105,22 @@ export function pushPhoneHistoryRoute(history: HistoryLike, scope: string, route
     version: 1,
     scope,
     index: current.index + 1,
-    route
+    route,
+    previousRoute: current.route
   };
   history.pushState(next, "");
   return next;
 }
 
-export function goToPhoneHistoryHome(history: HistoryLike, scope: string) {
+export function goBackInPhoneHistory(history: HistoryLike, scope: string, expectedPreviousAppId?: AppId) {
   const current = phoneHistoryStateFrom(history.state, scope);
-  if (current && current.index > 0) {
-    history.go(-current.index);
-    return true;
-  }
-  replacePhoneHistoryRoute(history, scope, { kind: "home" });
-  return false;
-}
-
-export function goBackInPhoneHistory(history: HistoryLike, scope: string) {
-  const current = phoneHistoryStateFrom(history.state, scope);
-  if (!current || current.index <= 0) {
+  if (
+    !current
+    || current.index <= 0
+    || (expectedPreviousAppId !== undefined && (
+      current.previousRoute?.kind !== "app" || current.previousRoute.appId !== expectedPreviousAppId
+    ))
+  ) {
     return false;
   }
   history.back();

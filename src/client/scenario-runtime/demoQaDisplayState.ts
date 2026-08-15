@@ -32,7 +32,17 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       id: "qa-photo",
       contentId: "qa-photo",
       title: "確認用画像",
-      imageUrl: "/demo/orange-mark.svg",
+      imageUrl: "/demo/album/evening-platform.webp",
+      tags: ["表示確認", "静止画", "横スクロール確認用の長いタグ", "手がかり"],
+      initialState: "normal"
+    }, {
+      id: "qa-video",
+      contentId: "qa-video",
+      title: "確認用動画",
+      mediaKind: "still_video",
+      imageUrl: "/demo/album/rainy-window.webp",
+      audioUrl: "/system/incoming-call-bell.wav",
+      tags: ["表示確認", "動画", "再生UIの上"],
       initialState: "normal"
     }],
     notes: [
@@ -41,6 +51,7 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
         contentId: "qa-note",
         title: "表示確認用メモ",
         body: "これはQA表示専用の文章です。実シナリオの未到達本文は含みません。",
+        tags: ["表示確認", "メモ", "横スクロール確認用の長いタグ", "補助情報"],
         initialState: "normal"
       },
       {

@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "playerMode": "browser",
   "features": {
     "llm": false
   },
@@ -16,10 +17,12 @@
     "wallpaperUrl": "/demo/wallpaper.svg"
   },
   "stateVariables": {
-    "clue_reported": false,
+    "image_color_reported": false,
     "old_note_opened": false,
+    "rainy_window_opened": false,
     "chat_auth_link_sent": false,
     "chat_auth_verified": false,
+    "demo_completed": false,
     "session_started": false,
     "sealed_note_unlocked": false,
     "radio_playback_completed": false
@@ -80,7 +83,7 @@
       "icon": "message_square_text",
       "accent": "#7ee093",
       "initialState": "repairable",
-      "cond": "clue_reported",
+      "cond": "sealed_note_unlocked",
       "search": ["チャット", "ロビー", "掲示板"]
     }
   ],
@@ -101,10 +104,11 @@
       "id": "welcome_note",
       "appId": "notes",
       "initialState": "normal",
-      "search": ["端末", "持ち主", "手がかり", "ヒント"],
+      "search": ["端末", "操作", "案内", "ヒント"],
       "record": {
-        "title": "拾った端末について",
-        "body": "この端末には、まだ開けない断片が残っている。右下のナビで「古いメモ」と検索してみよう。"
+        "title": "操作ガイド",
+        "body": "ナビ検索とコンテンツ修復を順に試します。右下のナビで「古いメモ」と検索してください。",
+        "tags": ["案内", "操作"]
       }
     },
     {
@@ -112,32 +116,57 @@
       "appId": "notes",
       "initialState": "repairable",
       "repairLabel": "古▚▐▀▜メモ",
-      "search": ["古いメモ", "ふるいメモ", "鍵", "手がかり"],
+      "search": ["古いメモ", "ふるいメモ", "手がかり"],
       "record": {
         "title": "古いメモ",
-        "body": "オレンジ色の印を見つけたら、メッセージで「見つけた」と伝える。"
+        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでナビにその色を伝えてください。",
+        "tags": ["操作", "画像"]
       }
     },
     {
       "id": "sealed_note",
       "appId": "notes",
       "initialState": "hidden",
-      "cond": "clue_reported",
+      "cond": "image_color_reported",
       "search": ["鍵付き", "添付", "パスワード"],
       "record": {
-        "title": "鍵付き添付の中身",
-        "body": "パスワード付き添付を開封すると、対応するコンテンツも利用可能になります。",
+        "title": "鍵付きメモ",
+        "body": "鍵付き添付とコンテンツ解錠の確認は完了です。次はチャットを修復してください。",
         "unlockCode": "0420"
       }
     },
     {
-      "id": "orange_mark",
+      "id": "evening_platform",
       "appId": "photos",
-      "initialState": "hidden",
-      "search": ["オレンジ", "印", "写真"],
+      "initialState": "normal",
+      "search": ["駅", "ホーム", "夕方", "写真"],
       "record": {
-        "title": "オレンジ色の印",
-        "imageUrl": "/demo/orange-mark.svg"
+        "title": "夕方のホーム",
+        "imageUrl": "/demo/album/evening-platform.webp",
+        "tags": ["駅", "夕方"]
+      }
+    },
+    {
+      "id": "rainy_window",
+      "appId": "photos",
+      "initialState": "repairable",
+      "repairLabel": "暗▚▞▐化された画像",
+      "search": ["雨", "窓", "夜", "写真"],
+      "record": {
+        "title": "雨の日の窓",
+        "imageUrl": "/demo/album/rainy-window.webp",
+        "tags": ["雨", "窓", "黄色い灯り"]
+      }
+    },
+    {
+      "id": "coffee_table",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["コーヒー", "ノート", "机", "写真"],
+      "record": {
+        "title": "休憩中",
+        "imageUrl": "/demo/album/coffee-table.webp",
+        "tags": ["休憩"]
       }
     },
     {
@@ -146,11 +175,11 @@
       "initialState": "normal",
       "search": ["予定", "8月12日", "20時30分"],
       "record": {
-        "title": "端末の持ち主を探す",
+        "title": "端末の写真を整理",
         "date": "8/12",
         "time": "20:30",
-        "place": "駅前",
-        "memo": "オレンジ色の印が目印。"
+        "place": "自宅",
+        "memo": "「雨の日の窓」の写真を確認する。"
       }
     },
     {
@@ -177,25 +206,25 @@
     },
     {
       "id": "visitor",
-      "name": "通りすがり",
+      "name": "デモ参加者",
       "role": "npc"
     }
   ],
   "attachments": [
     {
-      "id": "orange_mark_image",
+      "id": "rainy_window_image",
       "type": "image",
-      "asset": "/demo/orange-mark.svg",
-      "content": "orange_mark"
+      "asset": "/demo/album/rainy-window.webp",
+      "content": "rainy_window"
     },
     {
       "id": "sealed_note_file",
       "type": "image",
-      "asset": "/demo/orange-mark.svg",
+      "asset": "/demo/sealed-note.svg",
       "content": "sealed_note",
       "lock": "password",
       "title": "鍵付きのメモ",
-      "body": "開封できました。物語では、ここへ次の手がかりを記述できます。"
+      "body": "鍵付き添付を開封できました。"
     }
   ],
   "talks": [
@@ -210,8 +239,8 @@
       "id": "lobby",
       "kind": "chat",
       "appId": "chat",
-      "label": "公開ロビー",
-      "cond": "clue_reported",
+      "label": "サンプルルーム",
+      "cond": "sealed_note_unlocked",
       "startBlocks": ["start"]
     }
   ],
@@ -220,6 +249,36 @@
       "id": "find_old_note",
       "text": "ナビで「古いメモ」を検索する",
       "cond": "!old_note_opened"
+    },
+    {
+      "id": "find_rainy_window",
+      "text": "ナビで「雨」と検索し、写真の灯りの色を確かめる",
+      "cond": "old_note_opened && !rainy_window_opened"
+    },
+    {
+      "id": "report_clue",
+      "text": "メッセージでナビに灯りの色を伝える",
+      "cond": "rainy_window_opened && !image_color_reported"
+    },
+    {
+      "id": "unlock_recovery_note",
+      "text": "パスワード「0420」で鍵付きメモを開く",
+      "cond": "image_color_reported && !sealed_note_unlocked"
+    },
+    {
+      "id": "restore_chat",
+      "text": "「チャット」を検索して開き、再認証リンクを発行する",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+    },
+    {
+      "id": "authenticate_chat",
+      "text": "メッセージに届いたリンクからチャットを開く",
+      "cond": "chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "id": "contact_owner",
+      "text": "サンプルルームでメッセージを送る",
+      "cond": "chat_auth_verified && !demo_completed"
     }
   ],
   "notifications": [
@@ -228,7 +287,7 @@
       "appId": "messages",
       "targetTalkId": "guide",
       "title": "ナビ",
-      "body": "端末の中を調べてみよう。",
+      "body": "ナビ検索とコンテンツ修復を試してみよう。",
       "cond": "!old_note_opened"
     },
     {
@@ -244,18 +303,42 @@
     {
       "id": "home_hint",
       "surface": "home",
-      "body": "端末内の気になる言葉を検索できます。",
+      "body": "ナビで壊れたデータを検索し、修復してみよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "!clue_reported"
+      "cond": "!old_note_opened"
+    },
+    {
+      "id": "photo_hint",
+      "surface": "home",
+      "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "old_note_opened && !rainy_window_opened"
+    },
+    {
+      "id": "report_hint",
+      "surface": "home",
+      "body": "写真で一番大きく見える灯りの色を、メッセージで教えて。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "rainy_window_opened && !image_color_reported"
     },
     {
       "id": "sealed_note_opened",
-      "surface": "messages",
-      "body": "鍵付き添付を開封できました。",
+      "surface": "home",
+      "body": "「チャット」を検索して開き、再認証リンクを発行しよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "sealed_note_unlocked"
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+    },
+    {
+      "id": "contact_owner",
+      "surface": "home",
+      "body": "再認証したチャットで、メッセージを送ってみよう。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "chat_auth_verified && !demo_completed"
     },
     {
       "id": "radio_completed",
@@ -270,7 +353,64 @@
       "id": "hint",
       "when": "",
       "search": ["ヒント"],
-      "body": "まずは「古いメモ」と検索してみて。",
+      "body": "まずは「古いメモ」と検索して、コンテンツ修復を試してみて。",
+      "cond": "!old_note_opened",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_photo",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "「雨」と検索して写真を開き、一番大きく見える灯りの色を確かめて。",
+      "cond": "old_note_opened && !rainy_window_opened",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_report",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "メッセージでナビに、写真で一番大きく見えた灯りの色を送って。",
+      "cond": "rainy_window_opened && !image_color_reported",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_unlock",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "メッセージに届いた鍵付きメモを、パスワード「0420」で開いて。",
+      "cond": "image_color_reported && !sealed_note_unlocked",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_chat",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "「チャット」を検索して開き、再認証リンクを発行して。",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_auth",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "メッセージに届いた再認証リンクから、チャットを開いて。",
+      "cond": "chat_auth_link_sent && !chat_auth_verified",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_contact",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。",
+      "cond": "chat_auth_verified && !demo_completed",
+      "suppressResults": true
+    },
+    {
+      "id": "hint_done",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "検索・修復・会話・添付解錠・再認証のデモは完了しています。",
+      "cond": "demo_completed",
       "suppressResults": true
     },
     {
@@ -286,7 +426,7 @@
     }
   ],
   "chatAuthGate": {
-    "cond": "clue_reported && !chat_auth_verified",
+    "cond": "sealed_note_unlocked && !chat_auth_verified",
     "linkSentCond": "chat_auth_link_sent"
   },
   "generatedAudio": [
@@ -299,7 +439,7 @@
   "incomingCalls": [
     {
       "id": "demo_call",
-      "name": "持ち主候補"
+      "name": "着信テスト"
     }
   ],
   "initialSchedules": [],
@@ -317,6 +457,12 @@
       "target": "old_note",
       "handler": "mark_old_note_opened",
       "cond": "!old_note_opened"
+    },
+    {
+      "event": "content_repaired",
+      "target": "rainy_window",
+      "handler": "mark_rainy_window_opened",
+      "cond": "!rainy_window_opened"
     },
     {
       "event": "content_unlocked",
@@ -353,7 +499,7 @@
       "event": "scenario_event",
       "target": "chat_auth_link_requested",
       "handler": "send_chat_auth_link",
-      "cond": "clue_reported && !chat_auth_link_sent && !chat_auth_verified"
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified"
     },
     {
       "event": "scenario_event",
