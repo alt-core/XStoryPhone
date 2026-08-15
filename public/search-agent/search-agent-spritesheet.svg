@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1872" viewBox="0 0 1536 1872">
+  <!-- 1行目: 待機6フレーム -->
+  <ellipse cx="96" cy="113" rx="66" ry="66" fill="#f59e0b"/>
+  <ellipse cx="288" cy="111" rx="67" ry="65" fill="#f59e0b"/>
+  <ellipse cx="480" cy="108" rx="66" ry="67" fill="#f59e0b"/>
+  <ellipse cx="672" cy="106" rx="65" ry="68" fill="#f59e0b"/>
+  <ellipse cx="864" cy="109" rx="66" ry="67" fill="#f59e0b"/>
+  <ellipse cx="1056" cy="112" rx="67" ry="65" fill="#f59e0b"/>
+  <!-- 4行目: 喜び4フレーム -->
+  <ellipse cx="96" cy="750" rx="72" ry="54" fill="#f59e0b"/>
+  <ellipse cx="288" cy="720" rx="63" ry="70" fill="#f59e0b"/>
+  <ellipse cx="480" cy="702" rx="66" ry="66" fill="#f59e0b"/>
+  <ellipse cx="672" cy="742" rx="70" ry="57" fill="#f59e0b"/>
+</svg>

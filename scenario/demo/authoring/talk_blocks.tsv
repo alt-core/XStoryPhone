@@ -1,0 +1,29 @@
+comment	sender	body	attachment	time	delay_ms	notes	updated_at	source
+*guide
+intro
+	guide	端末の中に壊れたメモがあるみたい。右下のナビを開いて「古いメモ」と検索してみて。		20:14			2026-08-12	human
+intro_prompt
+	guide	「見つけた」と送ってくれれば、次へ進めるよ。			650		2026-08-12	human
+---
+	guide	古いメモを開いて、書かれていた合図を送ってみて。			650		2026-08-12	human
+common_help
+	guide	右下のナビで「古いメモ」を検索し、見つかったメモの指示を試してみて。			500		2026-08-12	human
+found_lead
+	guide	見つけてくれたんだね。			450		2026-08-12	human
+found_done
+	guide	手がかりを確認できました。次は、ホームに現れた壊れた「チャット」をナビで検索してみてください。	orange_mark_image		700		2026-08-12	human
+	guide	鍵付き添付の例です。パスワードは「0420」。最初の[メモ](open:notes:welcome_note)もここから読み返せます。	sealed_note_file		700		2026-08-12	human
+done_repeat
+	guide	ここまでが最小デモです。シナリオを書き換えて、あなたの物語を始めてください。			700		2026-08-12	human
+---
+	guide	別の分岐やメッセージブロックも追加できます。			550		2026-08-12	human
+game_over_reply
+	guide	この入力はゲームオーバー演出のデモです。			500		2026-08-12	human
+chat_auth_link
+	guide	チャットの再認証リンクを発行しました。[チャットを開く](open:chat:lobby;action:chat_auth_link_opened)			500		2026-08-12	human
+*lobby
+start
+	visitor	ここはチャットUIのデモです。何か送るとdefault ruleが応答します。		20:14			2026-08-12	human
+lobby_reply
+	visitor	メッセージを受け取りました。			400		2026-08-12	human
+	guide	チャットにも同じ会話エンジンを利用できます。			650		2026-08-12	human

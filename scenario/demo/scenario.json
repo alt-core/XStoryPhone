@@ -1,0 +1,371 @@
+{
+  "schemaVersion": 1,
+  "features": {
+    "llm": false
+  },
+  "project": {
+    "id": "demo",
+    "name": "XStoryPhone Demo",
+    "osName": "StoryOS",
+    "assistantName": "ナビ",
+    "accentColor": "#8fd2ff",
+    "dateLabel": "8月12日（水）",
+    "timeLabel": "20:14",
+    "batteryLevel": 72,
+    "signalLabel": "4G",
+    "wallpaperUrl": "/demo/wallpaper.svg"
+  },
+  "stateVariables": {
+    "clue_reported": false,
+    "old_note_opened": false,
+    "chat_auth_link_sent": false,
+    "chat_auth_verified": false,
+    "session_started": false,
+    "sealed_note_unlocked": false,
+    "radio_playback_completed": false
+  },
+  "apps": [
+    {
+      "id": "phone",
+      "label": "電話",
+      "icon": "phone",
+      "accent": "#67d78e",
+      "initialState": "normal",
+      "search": ["電話", "着信"]
+    },
+    {
+      "id": "messages",
+      "label": "メッセージ",
+      "icon": "message_circle",
+      "accent": "#5cc8a7",
+      "initialState": "normal",
+      "search": ["メッセージ", "ナビ"]
+    },
+    {
+      "id": "notes",
+      "label": "メモ",
+      "icon": "notebook_pen",
+      "accent": "#8fd2ff",
+      "initialState": "normal",
+      "search": ["メモ", "ノート"]
+    },
+    {
+      "id": "photos",
+      "label": "アルバム",
+      "icon": "album",
+      "accent": "#f0b35d",
+      "initialState": "normal",
+      "search": ["アルバム", "写真"]
+    },
+    {
+      "id": "calendar",
+      "label": "スケジュール",
+      "icon": "calendar_days",
+      "accent": "#f07178",
+      "initialState": "normal",
+      "search": ["予定", "スケジュール"]
+    },
+    {
+      "id": "radio",
+      "label": "ラジオ",
+      "icon": "radio",
+      "accent": "#f4c86a",
+      "initialState": "normal",
+      "search": ["ラジオ", "放送"]
+    },
+    {
+      "id": "chat",
+      "label": "チャット",
+      "repairLabel": "チャ▗▛▞▐▀",
+      "icon": "message_square_text",
+      "accent": "#7ee093",
+      "initialState": "repairable",
+      "cond": "clue_reported",
+      "search": ["チャット", "ロビー", "掲示板"]
+    }
+  ],
+  "contents": [
+    {
+      "id": "missed_call",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["電話", "着信", "非通知"],
+      "record": {
+        "name": "非通知",
+        "kind": "missed",
+        "at": "20:02",
+        "durationLabel": "応答なし"
+      }
+    },
+    {
+      "id": "welcome_note",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["端末", "持ち主", "手がかり", "ヒント"],
+      "record": {
+        "title": "拾った端末について",
+        "body": "この端末には、まだ開けない断片が残っている。右下のナビで「古いメモ」と検索してみよう。"
+      }
+    },
+    {
+      "id": "old_note",
+      "appId": "notes",
+      "initialState": "repairable",
+      "repairLabel": "古▚▐▀▜メモ",
+      "search": ["古いメモ", "ふるいメモ", "鍵", "手がかり"],
+      "record": {
+        "title": "古いメモ",
+        "body": "オレンジ色の印を見つけたら、メッセージで「見つけた」と伝える。"
+      }
+    },
+    {
+      "id": "sealed_note",
+      "appId": "notes",
+      "initialState": "hidden",
+      "cond": "clue_reported",
+      "search": ["鍵付き", "添付", "パスワード"],
+      "record": {
+        "title": "鍵付き添付の中身",
+        "body": "パスワード付き添付を開封すると、対応するコンテンツも利用可能になります。",
+        "unlockCode": "0420"
+      }
+    },
+    {
+      "id": "orange_mark",
+      "appId": "photos",
+      "initialState": "hidden",
+      "search": ["オレンジ", "印", "写真"],
+      "record": {
+        "title": "オレンジ色の印",
+        "imageUrl": "/demo/orange-mark.svg"
+      }
+    },
+    {
+      "id": "owner_schedule",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["予定", "8月12日", "20時30分"],
+      "record": {
+        "title": "端末の持ち主を探す",
+        "date": "8/12",
+        "time": "20:30",
+        "place": "駅前",
+        "memo": "オレンジ色の印が目印。"
+      }
+    },
+    {
+      "id": "sample_radio",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ラジオ", "放送", "音声"],
+      "record": {
+        "programTitle": "接続テスト放送",
+        "genAudioId": "demo_voice"
+      }
+    }
+  ],
+  "talkPeople": [
+    {
+      "id": "owner",
+      "name": "あなた",
+      "role": "owner"
+    },
+    {
+      "id": "guide",
+      "name": "ナビ",
+      "role": "npc"
+    },
+    {
+      "id": "visitor",
+      "name": "通りすがり",
+      "role": "npc"
+    }
+  ],
+  "attachments": [
+    {
+      "id": "orange_mark_image",
+      "type": "image",
+      "asset": "/demo/orange-mark.svg",
+      "content": "orange_mark"
+    },
+    {
+      "id": "sealed_note_file",
+      "type": "image",
+      "asset": "/demo/orange-mark.svg",
+      "content": "sealed_note",
+      "lock": "password",
+      "title": "鍵付きのメモ",
+      "body": "開封できました。物語では、ここへ次の手がかりを記述できます。"
+    }
+  ],
+  "talks": [
+    {
+      "id": "guide",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ナビ",
+      "startBlocks": ["intro"]
+    },
+    {
+      "id": "lobby",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "公開ロビー",
+      "cond": "clue_reported",
+      "startBlocks": ["start"]
+    }
+  ],
+  "todos": [
+    {
+      "id": "find_old_note",
+      "text": "ナビで「古いメモ」を検索する",
+      "cond": "!old_note_opened"
+    }
+  ],
+  "notifications": [
+    {
+      "id": "welcome",
+      "appId": "messages",
+      "targetTalkId": "guide",
+      "title": "ナビ",
+      "body": "端末の中を調べてみよう。",
+      "cond": "!old_note_opened"
+    },
+    {
+      "id": "chat_auth",
+      "appId": "messages",
+      "targetTalkId": "guide",
+      "title": "チャット認証",
+      "body": "再認証用のリンクを発行しました。",
+      "cond": "chat_auth_link_sent && !chat_auth_verified"
+    }
+  ],
+  "assistantMessages": [
+    {
+      "id": "home_hint",
+      "surface": "home",
+      "body": "端末内の気になる言葉を検索できます。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "!clue_reported"
+    },
+    {
+      "id": "sealed_note_opened",
+      "surface": "messages",
+      "body": "鍵付き添付を開封できました。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "sealed_note_unlocked"
+    },
+    {
+      "id": "radio_completed",
+      "surface": "radio",
+      "body": "音声の再生完了イベントを受け取りました。",
+      "weight": 1,
+      "cond": "radio_playback_completed"
+    }
+  ],
+  "searchResponses": [
+    {
+      "id": "hint",
+      "when": "",
+      "search": ["ヒント"],
+      "body": "まずは「古いメモ」と検索してみて。",
+      "suppressResults": true
+    },
+    {
+      "id": "found",
+      "when": "found",
+      "body": "見つかったよ。"
+    },
+    {
+      "id": "not_found",
+      "when": "not_found",
+      "body": "該当するデータは見つかりませんでした。",
+      "suppressResults": true
+    }
+  ],
+  "chatAuthGate": {
+    "cond": "clue_reported && !chat_auth_verified",
+    "linkSentCond": "chat_auth_link_sent"
+  },
+  "generatedAudio": [
+    {
+      "id": "demo_voice",
+      "title": "生成音声デモ",
+      "provider": "static"
+    }
+  ],
+  "incomingCalls": [
+    {
+      "id": "demo_call",
+      "name": "持ち主候補"
+    }
+  ],
+  "initialSchedules": [],
+  "clientCallableEvents": [
+    "chat_auth_link_requested"
+  ],
+  "hooks": [
+    {
+      "event": "session_started",
+      "handler": "mark_session_started",
+      "cond": "!session_started"
+    },
+    {
+      "event": "content_repaired",
+      "target": "old_note",
+      "handler": "mark_old_note_opened",
+      "cond": "!old_note_opened"
+    },
+    {
+      "event": "content_unlocked",
+      "target": "sealed_note",
+      "handler": "mark_sealed_note_unlocked",
+      "cond": "!sealed_note_unlocked"
+    },
+    {
+      "event": "scenario_event",
+      "target": "schedule_demo_call",
+      "handler": "schedule_demo_call"
+    },
+    {
+      "event": "scenario_event",
+      "target": "show_demo_call",
+      "handler": "show_demo_call"
+    },
+    {
+      "event": "scenario_event",
+      "target": "demo_form",
+      "handler": "demo_form_game_over"
+    },
+    {
+      "event": "scenario_event",
+      "target": "demo_all_clear",
+      "handler": "demo_all_clear"
+    },
+    {
+      "event": "scenario_event",
+      "target": "demo_form_reject",
+      "handler": "demo_form_reject"
+    },
+    {
+      "event": "scenario_event",
+      "target": "chat_auth_link_requested",
+      "handler": "send_chat_auth_link",
+      "cond": "clue_reported && !chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "event": "scenario_event",
+      "target": "message_link_opened",
+      "handler": "verify_chat_auth",
+      "cond": "chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "event": "scenario_event",
+      "target": "audio_playback_completed",
+      "handler": "mark_radio_playback_completed",
+      "cond": "!radio_playback_completed"
+    }
+  ]
+}

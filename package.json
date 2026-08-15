@@ -1,0 +1,63 @@
+{
+  "name": "xstoryphone",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "npm run assets:build && npm run scenario:build && WRANGLER_LOG_PATH=.wrangler/logs CLOUDFLARE_ENV=dev VITE_XSTORYPHONE_RESET_FOR_TESTING=true vite --host 127.0.0.1",
+    "build": "npm run build:cloudflare:dev",
+    "build:cloudflare": "npm run build:cloudflare:dev",
+    "build:cloudflare:target": "npm run assets:build && npm run scenario:build && WRANGLER_LOG_PATH=.wrangler/logs vite build",
+    "build:cloudflare:dev": "CLOUDFLARE_ENV=dev VITE_XSTORYPHONE_RESET_FOR_TESTING=true npm run build:cloudflare:target",
+    "build:cloudflare:stg": "CLOUDFLARE_ENV=stg VITE_XSTORYPHONE_RESET_FOR_TESTING=true npm run build:cloudflare:target",
+    "build:cloudflare:prod": "CLOUDFLARE_ENV=prod VITE_XSTORYPHONE_RESET_FOR_TESTING=false npm run build:cloudflare:target",
+    "build:aws": "npm run assets:build && npm run scenario:build && BUILD_PLATFORM=aws vite build",
+    "preview": "npm run build && vite preview",
+    "deploy": "node scripts/deploy-cloudflare.mjs",
+    "deploy:cloudflare:dev": "node scripts/deploy-cloudflare.mjs dev",
+    "deploy:cloudflare:stg": "node scripts/deploy-cloudflare.mjs stg",
+    "deploy:cloudflare:prod": "node scripts/deploy-cloudflare.mjs prod",
+    "deploy:aws:dev": "node scripts/deploy-aws.mjs dev",
+    "deploy:aws:stg": "node scripts/deploy-aws.mjs stg",
+    "deploy:aws:prod": "node scripts/deploy-aws.mjs prod",
+    "check": "npm run assets:build && npm run scenario:build && npm run audit:client && svelte-check --tsconfig ./tsconfig.json",
+    "test": "npm run assets:build && npm run scenario:build && node --test tests/*.test.mjs",
+    "assets:build": "node scripts/generate-search-agent-sprites.mjs",
+    "audit:public": "node scripts/audit-public.mjs",
+    "audit:client": "node scripts/audit-client-boundary.mjs",
+    "audit:client:cloudflare": "node scripts/audit-client-boundary.mjs dist/client",
+    "audit:client:aws": "node scripts/audit-client-boundary.mjs dist/aws",
+    "aws:validate": "SAM_CLI_TELEMETRY=0 sam validate --lint --template-file infra/aws/template.yaml",
+    "aws:build": "SAM_CLI_TELEMETRY=0 sam build --template-file infra/aws/template.yaml",
+    "scenario:validate": "node scripts/scenario-validate.mjs",
+    "scenario:build": "node scripts/scenario-build.mjs",
+    "db:migrate:local": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone-dev --local --env dev",
+    "db:migrate:remote": "node scripts/require-explicit-migration-target.mjs",
+    "db:migrate:remote:dev": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone-dev --remote --env dev",
+    "db:migrate:remote:stg": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone-stg --remote --env stg",
+    "db:migrate:remote:prod": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone --remote --env prod",
+    "review:analyze": "node scripts/analyze-talk-branch-review-clusters.mjs"
+  },
+  "dependencies": {
+    "@lucide/svelte": "^1.8.0",
+    "hono": "^4.12.14",
+    "howler": "^2.2.4",
+    "svelte": "^5.55.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.33.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/howler": "^2.2.12",
+    "@types/node": "^25.6.0",
+    "svelte-check": "^4.4.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.9",
+    "wrangler": "^4.84.1"
+  }
+}

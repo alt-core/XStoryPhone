@@ -1,0 +1,73 @@
+:root {
+  color: #f6f2e8;
+  background: #0d1017;
+  color-scheme: dark;
+  --ap-text: #f6f2e8;
+  --ap-text-muted: rgba(255, 255, 255, 0.62);
+  --ap-text-soft: rgba(255, 255, 255, 0.5);
+  --ap-surface-1: rgba(255, 255, 255, 0.07);
+  --ap-surface-2: rgba(255, 255, 255, 0.095);
+  --ap-surface-3: rgba(13, 17, 24, 0.62);
+  --ap-border: rgba(255, 255, 255, 0.1);
+  --ap-border-strong: rgba(255, 255, 255, 0.14);
+  --ap-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --ap-radius-icon: 12px;
+  --ap-radius-chip: 999px;
+  --ap-radius-control: 13px;
+  --ap-radius-card: 13px;
+  --ap-radius-panel: 16px;
+  --ap-gap-page: 12px;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#app {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+button:focus-visible {
+  outline: 2px solid #f4c86a;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(92, 200, 167, 0.35);
+}

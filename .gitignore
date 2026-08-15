@@ -1,0 +1,40 @@
+# 依存関係
+node_modules/
+
+# ビルド成果物
+dist/
+.svelte-kit/
+
+# Cloudflare / ローカル実行環境
+.wrangler/
+.aws-sam/
+.dev.vars
+.dev.vars.*
+
+# 環境変数
+.env
+.env.*
+!.env.example
+
+# 公開化作業の非公開資料
+/.projects/
+
+# テスト・確認用出力
+.playwright-cli/
+artifacts/
+coverage/
+
+# ログ
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# OS・エディタ
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 一時ファイル
+*.tmp
+*.temp

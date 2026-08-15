@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101923"/>
+      <stop offset="0.52" stop-color="#17232c"/>
+      <stop offset="1" stop-color="#2a2119"/>
+    </linearGradient>
+    <linearGradient id="ambient" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#55bca6" stop-opacity="0.12"/>
+      <stop offset="0.46" stop-color="#55bca6" stop-opacity="0"/>
+      <stop offset="1" stop-color="#d98232" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0.18" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.48" stop-color="#ffffff" stop-opacity="0.055"/>
+      <stop offset="0.72" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="url(#base)"/>
+  <rect width="1080" height="1920" fill="url(#ambient)"/>
+  <rect width="1080" height="1920" fill="url(#sweep)"/>
+</svg>
