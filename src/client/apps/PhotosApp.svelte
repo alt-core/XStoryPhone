@@ -268,7 +268,7 @@
 
 <svelte:window on:keydown={handleWindowKeydown} on:resize={handleWindowResize} />
 
-<AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d">
+<AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d" immersive>
   <div class="photo-layout">
     {#if selectedPhoto}
       <section class="photo-view" aria-label={photoLabel(selectedPhoto)} title={photoLabel(selectedPhoto)}>
@@ -336,8 +336,8 @@
       <strong>{photos.length}</strong>
     </div>
 
-    <ScrollHint enabled={photos.length > 6} step={118}>
-      <div class="photo-grid" class:scrolling={photos.length > 6} bind:this={photoGrid}>
+    <ScrollHint enabled={photos.length > 3} step={118}>
+      <div class="photo-grid" class:scrolling={photos.length > 3} bind:this={photoGrid}>
         {#each photos as photo}
           <button
             use:trackPhotoButton={photo.id}
@@ -410,7 +410,17 @@
 <style>
   .photo-layout {
     display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
     gap: 10px;
+    min-height: 0;
+    height: 100%;
+    padding: 14px 14px 78px;
+    overflow: hidden;
+  }
+
+  .photo-layout :global(.scroll-hint-shell) {
+    min-height: 0;
+    height: 100%;
   }
 
   .photo-view {
@@ -629,7 +639,8 @@
   }
 
   .photo-grid.scrolling {
-    max-height: 236px;
+    min-height: 0;
+    height: 100%;
     overflow: auto;
     overscroll-behavior: contain;
     padding-bottom: 12px;

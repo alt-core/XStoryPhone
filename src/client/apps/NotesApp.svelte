@@ -94,7 +94,7 @@
 <style>
   .notes-layout {
     display: grid;
-    grid-template-rows: clamp(380px, 66%, 430px) auto minmax(0, 1fr);
+    grid-template-rows: 300px auto minmax(0, 1fr);
     gap: 10px;
     min-height: 0;
     height: 100%;

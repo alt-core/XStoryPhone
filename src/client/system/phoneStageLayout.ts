@@ -1,9 +1,9 @@
 import type { PhonePresentationMode } from "../../project/projectStage";
 
 export const PHONE_STAGE_SHELL_WIDTH = 410;
-export const PHONE_STAGE_SHELL_HEIGHT = 806;
+export const PHONE_STAGE_SHELL_HEIGHT = 698;
 const SCREEN_WIDTH = 384;
-const SCREEN_HEIGHT = 780;
+const SCREEN_HEIGHT = 672;
 
 export function resolvePhoneStageLayout(
   mode: PhonePresentationMode,
@@ -15,7 +15,7 @@ export function resolvePhoneStageLayout(
   const frameOnly = interactive && viewportWidth <= 520;
   const designWidth = frameOnly ? SCREEN_WIDTH : PHONE_STAGE_SHELL_WIDTH;
   const designHeight = frameOnly ? SCREEN_HEIGHT : PHONE_STAGE_SHELL_HEIGHT;
-  const maxScale = frameOnly ? 1.08 : 1;
+  const maxScale = frameOnly ? 1.15 : 1;
 
   return {
     interactive,

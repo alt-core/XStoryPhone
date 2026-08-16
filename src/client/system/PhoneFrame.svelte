@@ -107,7 +107,7 @@
   .phone-shell {
     position: relative;
     width: 410px;
-    height: 806px;
+    height: 698px;
     border: 1px solid rgba(255, 255, 255, 0.22);
     border-radius: 42px;
     background:
@@ -307,7 +307,7 @@
 
   .phone-shell.frame-only {
     width: 384px;
-    height: 780px;
+    height: 672px;
     border: 0;
     border-radius: 0;
     padding: 0;

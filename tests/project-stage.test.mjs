@@ -13,7 +13,23 @@ test("focusedは狭幅時だけ端末画面をフレームなしで表示する"
   assert.equal(layout.hidden, false);
   assert.equal(layout.frameOnly, true);
   assert.equal(layout.designWidth, 384);
-  assert.equal(layout.designHeight, 780);
+  assert.equal(layout.designHeight, 672);
+  assert.equal(layout.scale, 390 / 384);
+});
+
+test("focusedは主要iPhone Safariの表示領域で横幅いっぱいまで拡大できる", () => {
+  const layout = resolvePhoneStageLayout("focused", 393, 393, 697);
+
+  assert.equal(layout.frameOnly, true);
+  assert.equal(layout.scale, 393 / 384);
+});
+
+test("focusedは高さが足りない場合に固定画面全体を縮小する", () => {
+  const layout = resolvePhoneStageLayout("focused", 375, 375, 550);
+
+  assert.equal(layout.frameOnly, true);
+  assert.equal(layout.designHeight, 672);
+  assert.equal(layout.scale, 550 / 672);
 });
 
 test("embeddedは狭幅でも端末フレームを保ち、小型コンテナへ収める", () => {

@@ -111,6 +111,7 @@
   const qaAppId = appIdFromQuery(queryParams.get("app"));
   const qaView = queryParams.get("view") ?? "";
   const qaFocusContentId = queryParams.get("focus") ?? "";
+  const qaStressContent = queryParams.get("density") === "stress";
   const qaGeneratedAudioReady = queryParams.get("ai") !== "form";
   const qaRadioPlaybackBlocked = queryParams.get("playback") === "blocked";
   const qaRadioFormDisabled = queryParams.get("form") === "disabled";
@@ -524,7 +525,8 @@
     const qaState = createQaPlayerState({
       generatedAudioReady: qaGeneratedAudioReady,
       radioPlaybackBlocked: qaRadioPlaybackBlocked,
-      radioFormDisabled: qaRadioFormDisabled
+      radioFormDisabled: qaRadioFormDisabled,
+      stressContent: qaStressContent
     });
     applyPlayerState(qaState, { force: true });
     if (qaView === "all-clear") {
@@ -3251,10 +3253,7 @@
   .game-stage {
     display: block;
     padding: 0;
-    background:
-      linear-gradient(118deg, rgba(80, 211, 190, 0.1) 0%, transparent 31%),
-      linear-gradient(298deg, rgba(230, 151, 83, 0.09) 0%, transparent 34%),
-      linear-gradient(135deg, #081016 0%, #10131a 46%, #1b1713 100%);
+    background: #000;
   }
 
   .route-surface {
