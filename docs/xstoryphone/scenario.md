@@ -18,12 +18,18 @@
     "name": "My Story",
     "osName": "StoryOS",
     "assistantName": "ナビ",
+    "date": "2026-08-12",
+    "timeLabel": "20:14",
     "wallpaperUrl": "/demo/wallpaper.svg"
   }
 }
 ```
 
-`osName` と `assistantName` はUIへ反映されます。
+`osName` と `assistantName` はUIへ反映されます。`date` と `timeLabel` は作中の端末が示す日時です。
+
+`date` は `YYYY-MM-DD` 形式で指定します。これは実世界の特定の瞬間ではなく、タイムゾーンを持たない作中の暦日です。UTCへの変換はせず、ロック画面の日付表記とスケジュールアプリが表示する週をこの値から決めます。スケジュールの `record.date` も同じ形式で指定してください。
+
+疑似端末のロック方式は `project.lockScreen` で設定します。プレイヤーパスコード、サーバー判定の固定PIN、ロック画面なしの違いと画面遷移は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
 
 進行状態の保存方式は、最上位の `playerMode` へ `server` または `browser` を指定します。省略時は `server` です。用途と運用上の違いは[プレイヤー進行の保存モード](player-modes.md)を参照してください。
 

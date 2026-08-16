@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { evaluateCondition } from "../src/shared/condition.ts";
+import { parseStoryDate } from "../src/shared/storyDate.ts";
 import { collectScopedTalkBlocks, resolveScopedTalkBlockId } from "./lib/talk-blocks.mjs";
 
 const rootDir = process.cwd();
@@ -161,8 +162,8 @@ function validateCondition(label, value, stateVariables, errors) {
   }
 }
 
-function validateProject(project, errors) {
-  const requiredStrings = ["id", "name", "osName", "assistantName", "accentColor", "dateLabel", "timeLabel", "signalLabel", "wallpaperUrl"];
+function validateProject(project, playerMode, errors) {
+  const requiredStrings = ["id", "name", "osName", "assistantName", "accentColor", "date", "timeLabel", "signalLabel", "wallpaperUrl"];
   for (const key of requiredStrings) {
     if (typeof project?.[key] !== "string" || !project[key].trim()) {
       errors.push(`project.${key} は空でない文字列にしてください。`);
@@ -170,6 +171,26 @@ function validateProject(project, errors) {
   }
   if (!Number.isInteger(project?.batteryLevel) || project.batteryLevel < 0 || project.batteryLevel > 100) {
     errors.push("project.batteryLevel は0から100の整数にしてください。");
+  }
+  if (typeof project?.date === "string" && !parseStoryDate(project.date)) {
+    errors.push("project.date は YYYY-MM-DD 形式の実在する日付にしてください。");
+  }
+  const lockScreen = project?.lockScreen;
+  if (!lockScreen || typeof lockScreen !== "object" || Array.isArray(lockScreen)) {
+    errors.push("project.lockScreen はobjectにしてください。");
+    return;
+  }
+  if (!new Set(["player-passcode", "fixed-pin", "none"]).has(lockScreen.method)) {
+    errors.push("project.lockScreen.method は player-passcode、fixed-pin、none のいずれかにしてください。");
+  } else if (lockScreen.method === "player-passcode" && playerMode === "browser") {
+    errors.push("browserモードでは project.lockScreen.method に player-passcode を指定できません。");
+  }
+  if (lockScreen.method === "fixed-pin") {
+    if (typeof lockScreen.pin !== "string" || !/^\d{4,8}$/u.test(lockScreen.pin)) {
+      errors.push("project.lockScreen.pin は4桁から8桁の数字文字列にしてください。");
+    }
+  } else if (lockScreen.pin !== undefined) {
+    errors.push("project.lockScreen.pin は fixed-pin の場合だけ指定してください。");
   }
 }
 
@@ -196,6 +217,9 @@ function validateRecord(content, errors) {
       errors.push(`${content.id}: record.tags は文字列の配列にし、空文字を含めないでください。`);
     }
   }
+  if (content.appId === "calendar" && typeof record.date === "string" && !parseStoryDate(record.date)) {
+    errors.push(`${content.id}: record.date は YYYY-MM-DD 形式の実在する日付にしてください。`);
+  }
 }
 
 function deviceStateFor(source, publicIds, revision) {
@@ -213,7 +237,7 @@ function deviceStateFor(source, publicIds, revision) {
     revision,
     batteryLevel: source.project.batteryLevel,
     signalLabel: source.project.signalLabel,
-    currentDateLabel: source.project.dateLabel,
+    currentDate: source.project.date,
     currentTimeLabel: source.project.timeLabel,
     wallpaperUrl: source.project.wallpaperUrl,
     apps: source.apps.filter((app) => app.initialState !== "hidden" && evaluateCondition(String(app.cond ?? ""), initialState)).map((app) => ({
@@ -247,7 +271,7 @@ export function loadAndValidateScenario() {
   if (source.schemaVersion !== 1) errors.push("schemaVersion は 1 にしてください。");
   const playerMode = source.playerMode ?? "server";
   if (!new Set(["server", "browser"]).has(playerMode)) errors.push("playerMode は server または browser にしてください。");
-  validateProject(source.project, errors);
+  validateProject(source.project, playerMode, errors);
   const publicStateVariables = Array.isArray(source.publicStateVariables)
     ? source.publicStateVariables.map((id) => String(id).trim())
     : [];
@@ -617,7 +641,9 @@ export function loadAndValidateScenario() {
       "project.id": source.project.id,
       "project.name": source.project.name,
       "device.os_name": source.project.osName,
-      "device.date_label": source.project.dateLabel,
+      "device.lock_method": source.project.lockScreen.method,
+      "device.lock_pin_length": source.project.lockScreen.method === "fixed-pin" ? source.project.lockScreen.pin.length : 0,
+      "device.date": source.project.date,
       "device.wallpaper_url": source.project.wallpaperUrl,
       "search_agent.name": source.project.assistantName,
       "player.mode": playerMode,

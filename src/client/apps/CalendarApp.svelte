@@ -1,30 +1,29 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, Clock3, MapPin } from "@lucide/svelte";
+  import { parseStoryDate, storyWeekFor } from "../../shared/storyDate";
   import type { CalendarEvent } from "../scenario-runtime/types";
   import ScrollHint from "../system/ScrollHint.svelte";
   import AppShell from "./AppShell.svelte";
 
   export let events: CalendarEvent[] = [];
+  export let currentDate = "";
   export let focusContentId = "";
   export let focusContentRequestId = 0;
   export let onContentOpen: (contentId: string) => void = () => {};
   export let onNoise: (durationMs?: number) => void = () => {};
 
-  const weekDays = [
-    { day: "月", date: "1", value: "6/1" },
-    { day: "火", date: "2", value: "6/2" },
-    { day: "水", date: "3", value: "6/3" },
-    { day: "木", date: "4", value: "6/4" },
-    { day: "金", date: "5", value: "6/5" },
-    { day: "土", date: "6", value: "6/6" },
-    { day: "日", date: "7", value: "6/7" }
-  ];
-
-  let selectedDate = "6/5";
+  let selectedDate = currentDate;
+  let visibleWeekDate = currentDate;
+  let lastAppliedCurrentDate = "";
   let lastReportedContentSignature = "";
   let lastAppliedFocusContentId = "";
   let lastAppliedFocusContentRequestId = focusContentRequestId;
 
+  $: if (currentDate && currentDate !== lastAppliedCurrentDate) {
+    lastAppliedCurrentDate = currentDate;
+    selectedDate = currentDate;
+    visibleWeekDate = currentDate;
+  }
   $: if (!focusContentId) {
     lastAppliedFocusContentId = "";
     lastAppliedFocusContentRequestId = focusContentRequestId;
@@ -34,11 +33,15 @@
       lastAppliedFocusContentId = focusContentId;
       lastAppliedFocusContentRequestId = focusContentRequestId;
       selectedDate = focused.date;
+      visibleWeekDate = focused.date;
     }
   }
+  $: weekDays = storyWeekFor(visibleWeekDate);
   $: selectedEvents = events.filter((event) => event.date === selectedDate);
   $: selectedDayIndex = weekDays.findIndex((item) => item.value === selectedDate);
-  $: selectedDay = weekDays.find((item) => item.value === selectedDate) ?? weekDays[4];
+  $: selectedDay = weekDays.find((item) => item.value === selectedDate) ?? weekDays[0];
+  $: selectedDateParts = parseStoryDate(selectedDate);
+  $: selectedMonthLabel = selectedDateParts ? `${selectedDateParts.year}年${selectedDateParts.month}月` : "";
   $: selectedEventContentIds = selectedEvents
     .filter((event) => !event.corrupted)
     .map((event) => event.contentId ?? event.id)
@@ -50,7 +53,7 @@
   }
 
   function moveSelectedDate(direction: -1 | 1) {
-    const currentIndex = selectedDayIndex >= 0 ? selectedDayIndex : 4;
+    const currentIndex = selectedDayIndex >= 0 ? selectedDayIndex : 0;
     const nextIndex = currentIndex + direction;
 
     if (nextIndex < 0 || nextIndex >= weekDays.length) {
@@ -62,19 +65,19 @@
   }
 </script>
 
-<AppShell title="スケジュール" subtitle="2026年6月" accent="#f07178">
+<AppShell title="スケジュール" subtitle={selectedMonthLabel} accent="#f07178">
   <div class="calendar-layout">
     <div class="month-strip" aria-label="週間カレンダー">
       {#each weekDays as item}
         <button
           type="button"
-          class:today={item.value === "6/5"}
+          class:today={item.value === currentDate}
           class:selected={item.value === selectedDate}
           aria-current={item.value === selectedDate ? "date" : undefined}
           on:click={() => (selectedDate = item.value)}
         >
-          <small>{item.day}</small>
-          <strong>{item.date}</strong>
+          <small>{item.weekdayLabel}</small>
+          <strong>{item.day}</strong>
         </button>
       {/each}
     </div>
@@ -85,11 +88,11 @@
       </button>
       <section class="today-card">
         <div class="selected-day">
-          <span>2026年</span>
-          <strong>6月{selectedDay.date}日</strong>
+          <span>{selectedDateParts?.year ?? "----"}年</span>
+          <strong>{selectedDateParts?.month ?? "--"}月{selectedDay?.day ?? "--"}日</strong>
         </div>
         <div class="today-meta">
-          <span>{selectedDate === "6/5" ? "今日" : `${selectedDay.day}曜日`}</span>
+          <span>{selectedDate === currentDate ? "今日" : `${selectedDay?.weekdayLabel ?? "--"}曜日`}</span>
           <p>{selectedEvents.length}件の予定</p>
         </div>
       </section>

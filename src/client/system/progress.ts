@@ -11,6 +11,7 @@ const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", 
 export type PersistedUiState = {
   version: 5;
   locked: boolean;
+  lockMethod?: "player-passcode" | "fixed-pin" | "none";
   sessionToken?: string;
   serialCounter?: string;
   openedAppIds: AppId[];
@@ -22,6 +23,7 @@ export type PersistedUiState = {
 type StoredUiState = {
   version?: unknown;
   locked?: unknown;
+  lockMethod?: unknown;
   sessionToken?: unknown;
   serialCounter?: unknown;
   openedAppIds?: unknown;
@@ -90,6 +92,9 @@ export function loadUiState(): PersistedUiState {
     return {
       version: currentVersion,
       locked: Boolean(parsed.locked),
+      lockMethod: ["player-passcode", "fixed-pin", "none"].includes(String(parsed.lockMethod))
+        ? parsed.lockMethod as PersistedUiState["lockMethod"]
+        : undefined,
       sessionToken: typeof parsed.sessionToken === "string" ? parsed.sessionToken : undefined,
       serialCounter: typeof parsed.serialCounter === "string" ? parsed.serialCounter : undefined,
       openedAppIds: openedAppIdsFrom(parsed.openedAppIds),

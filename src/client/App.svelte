@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import ProjectStage from "../project/ProjectStage.svelte";
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
+  import { formatStoryDateCompact } from "../shared/storyDate";
   import CalendarApp from "./apps/CalendarApp.svelte";
   import ChatApp from "./apps/ChatApp.svelte";
   import MessagesApp from "./apps/MessagesApp.svelte";
@@ -56,6 +57,7 @@
   import PhoneFrame from "./system/PhoneFrame.svelte";
   import PhoneStage from "./system/PhoneStage.svelte";
   import GlobalErrorScreen from "./system/GlobalErrorScreen.svelte";
+  import PlayerPasscodeScreen from "./system/PlayerPasscodeScreen.svelte";
   import StartConfirmationScreen from "./system/StartConfirmationScreen.svelte";
   import {
     ALBUM_MEDIA_ADDED_ASSISTANT_BODY,
@@ -76,6 +78,7 @@
     submitRadioForm,
     startSession,
     unlockContent,
+    verifyDevicePin,
     openMessageLink,
     playerMode,
     type AllClearPayload,
@@ -115,6 +118,14 @@
   const qaGeneratedAudioReady = queryParams.get("ai") !== "form";
   const qaRadioPlaybackBlocked = queryParams.get("playback") === "blocked";
   const qaRadioFormDisabled = queryParams.get("form") === "disabled";
+  type DeviceLockMethod = "player-passcode" | "fixed-pin" | "none";
+  const configuredDeviceLockMethod = String(projectConstants["device.lock_method"] ?? "none") as DeviceLockMethod;
+  const deviceLockMethod: DeviceLockMethod = qaMode && qaView === "lock" && configuredDeviceLockMethod === "none"
+    ? "fixed-pin"
+    : configuredDeviceLockMethod;
+  const fixedPinLength = Number(projectConstants["device.lock_pin_length"] ?? 0);
+  const lockScreenPinLength = deviceLockMethod === "fixed-pin" ? fixedPinLength || 4 : pinLength;
+  const initialDeviceLocked = deviceLockMethod !== "none";
   const PLAYER_STATE_CACHE_KEY = "xstoryphone.player-state-cache";
   const PLAYER_STATE_CACHE_VERSION = 11;
   const CLIENT_RUNTIME_REVISION = String(projectConstants["client.runtime_revision"] ?? "");
@@ -122,6 +133,7 @@
   const RESET_FOR_TESTING_PATH_SUFFIX = "/reset-for-testing";
   const LOGOUT_PATH_SUFFIX = "/logout";
   const resetForTestingEnabled = import.meta.env.DEV || import.meta.env.VITE_XSTORYPHONE_RESET_FOR_TESTING === "true";
+  const shadeProtectionAction = resetForTestingEnabled ? "reset" : deviceLockMethod === "none" ? "none" : "lock";
   const PLAYER_STATE_HOME_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
   const SCENARIO_WAKE_TIMER_MAX_MS = 2_147_483_647;
   const PROGRESSION_RETRY_DELAYS_MS = [1_000, 3_000] as const;
@@ -137,7 +149,7 @@
   const RADIO_PLAYBACK_PROGRESS_INTERVAL_MS = 250;
   const INITIAL_MESSAGE_LINK_TUTORIAL_BODY = projectConstants["searchAgent.broken_link_tutorial_body"];
   const BROKEN_LINK_ASSISTANT_BODY = projectConstants["searchAgent.broken_link_body"];
-  const TALK_INITIAL_DATE_LABEL = compactDateLabel(projectConstants["device.date_label"]);
+  const TALK_INITIAL_DATE_LABEL = formatStoryDateCompact(projectConstants["device.date"]);
   type SurfaceMessageMode = "search" | "dismissOnTap";
   type TalkKind = "sms" | "chat";
   type ReplyDelayAnchor = {
@@ -167,6 +179,10 @@
     segments: AudioPlaybackSegment[];
     cues: AudioPlaybackCue[];
   };
+  type StartedSession = {
+    sessionToken: string;
+    playerState: PlayerState;
+  };
   const TALK_BACK_LINK_LABELS: Record<TalkBackLinkAppId, string> = {
     messages: "メッセージ",
     chat: "チャット"
@@ -185,6 +201,10 @@
         ...persistedUiState,
         ...(browserProgressToken ? { sessionToken: browserProgressToken } : {})
       };
+  if (!localQaMode && uiState.lockMethod !== deviceLockMethod) {
+    uiState = { ...uiState, locked: initialDeviceLocked, lockMethod: deviceLockMethod };
+    saveUiState(uiState);
+  }
   let playerState: PlayerState | null = localQaMode ? null : loadCachedPlayerState(uiState.sessionToken, uiState.locked);
   let deviceState: DeviceState = demoDeviceState;
   let activeAppId: AppId | null = qaMode && !uiState.locked && qaView !== "incoming" ? qaAppId : null;
@@ -245,7 +265,13 @@
   let phoneHistoryScope = crypto.randomUUID();
   let phoneHistoryReady = false;
   let phoneHistoryNavigationId = 0;
-  let startConfirmationDone = localQaMode || hasStartConfirmation();
+  // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
+  let pendingPlayerPasscode = "";
+  const storedStartConfirmationDone = hasStartConfirmation();
+  let startConfirmationDone = localQaMode || (
+    storedStartConfirmationDone
+    && !(playerMode === "browser" && deviceLockMethod === "none" && !uiState.sessionToken)
+  );
   let globalErrorVisible = false;
   let globalErrorMessage = "";
   let globalErrorSupportCode = "AP-CLIENT";
@@ -253,7 +279,16 @@
 
   $: holdScreenRequired = !localQaMode && holdScreenEnabled && !holdScreenBypassed;
   $: startConfirmationRequired = !localQaMode && !holdScreenRequired && !startConfirmationDone;
-  $: outOfGameVisible = globalErrorVisible || holdScreenRequired || startConfirmationRequired;
+  $: playerPasscodeEntryRequired = (localQaMode && qaView === "passcode") || (
+    !localQaMode
+    && !holdScreenRequired
+    && !startConfirmationRequired
+    && playerMode === "server"
+    && deviceLockMethod !== "player-passcode"
+    && !uiState.sessionToken
+    && !pendingPlayerPasscode
+  );
+  $: outOfGameVisible = globalErrorVisible || holdScreenRequired || startConfirmationRequired || playerPasscodeEntryRequired;
   $: projectStageContext = {
     sessionToken: uiState.sessionToken ?? "",
     playerState,
@@ -291,7 +326,15 @@
   } else if (!activeIncomingCall && interruptedIncomingCallId) {
     interruptedIncomingCallId = "";
   }
-  $: routeKey = holdScreenRequired ? "hold-screen" : startConfirmationRequired ? "start-confirmation" : uiState.locked ? "lock" : activeApp?.id ?? "home";
+  $: routeKey = holdScreenRequired
+    ? "hold-screen"
+    : startConfirmationRequired
+      ? "start-confirmation"
+      : playerPasscodeEntryRequired
+        ? "player-passcode"
+        : uiState.locked
+          ? "lock"
+          : activeApp?.id ?? "home";
   $: visibleTalkBackLink =
     temporaryTalkBackLink && activeApp?.id === temporaryTalkBackLink.targetAppId && !shadeOpen && !uiState.locked
       ? temporaryTalkBackLink
@@ -611,16 +654,6 @@
     return message;
   }
 
-  function compactDateLabel(dateLabel: string) {
-    const monthDayMatch = /(\d{1,2})月(\d{1,2})日/.exec(dateLabel);
-    if (monthDayMatch) {
-      return `${monthDayMatch[1]}/${monthDayMatch[2]}`;
-    }
-
-    const slashMatch = /(\d{1,2}\/\d{1,2})/.exec(dateLabel);
-    return slashMatch?.[1] ?? "今日";
-  }
-
   function mergePlayerState(
     baseState: DeviceState,
     state: PlayerState | null,
@@ -657,7 +690,7 @@
     );
 
     const scenarioTime = state.scenarioTime ?? {
-      dateLabel: visibleBaseState.currentDateLabel,
+      date: visibleBaseState.currentDate,
       timeLabel: visibleBaseState.currentTimeLabel
     };
 
@@ -665,7 +698,7 @@
 
     return {
       ...visibleBaseState,
-      currentDateLabel: scenarioTime.dateLabel,
+      currentDate: scenarioTime.date,
       currentTimeLabel: scenarioTime.timeLabel,
       messages: applyContentAvailability(messageThreads, state, corruptMessageThread),
       photos: availablePhotos,
@@ -1395,7 +1428,7 @@
     clearStartConfirmationForReset();
     clearRuntimeState();
     persist({
-      locked: true,
+      locked: initialDeviceLocked,
       openedAppIds: [],
       lastContentByAppId: {},
       localTalkReadCursors: {},
@@ -1413,8 +1446,11 @@
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearRuntimeState();
     playerState = null;
+    if (playerMode === "browser" && deviceLockMethod === "none") {
+      clearStartConfirmationForReset();
+    }
     persist({
-      locked: true,
+      locked: initialDeviceLocked,
       sessionToken: undefined,
       serialCounter: undefined
     });
@@ -1485,6 +1521,7 @@
     radioAutoplayContentId = "";
     radioAutoplayRequestId = 0;
     pendingShareDraft = null;
+    pendingPlayerPasscode = "";
     window.clearTimeout(noiseTimer);
     window.clearTimeout(notificationToastTimer);
     window.clearTimeout(gameOverOverlayTimer);
@@ -1508,8 +1545,11 @@
       applyErrorPlayerState(result);
       if (result.error === "unauthorized") {
         clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
+        if (playerMode === "browser" && deviceLockMethod === "none") {
+          clearStartConfirmationForReset();
+        }
         persist({
-          locked: true,
+          locked: initialDeviceLocked,
           sessionToken: undefined,
           serialCounter: undefined,
           openedAppIds: [],
@@ -1540,12 +1580,17 @@
     trackEvent({ name: "logout", source: "url_suffix" });
   }
 
-  function confirmStart() {
+  async function confirmStart() {
+    if (playerMode === "browser" && deviceLockMethod === "none" && !uiState.sessionToken) {
+      const opened = await openBrowserSession();
+      if (!opened.ok) return opened;
+    }
     saveStartConfirmation();
     startConfirmationDone = true;
     if (uiState.sessionToken && !uiState.locked) {
       void refreshPlayerStateWithRetry(uiState.sessionToken, "AP-STATE");
     }
+    return { ok: true };
   }
 
   async function refreshPlayerState(sessionToken: string) {
@@ -1561,8 +1606,11 @@
       clearPlayerStateCache();
       clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
       clearPhoneRoute();
+      if (playerMode === "browser" && deviceLockMethod === "none") {
+        clearStartConfirmationForReset();
+      }
       persist({
-        locked: true,
+        locked: initialDeviceLocked,
         sessionToken: undefined,
         serialCounter: undefined,
         openedAppIds: [],
@@ -1656,56 +1704,69 @@
     void refreshPlayerState(uiState.sessionToken).catch(() => undefined);
   }
 
-  async function unlockDevice(serialCode: string) {
+  function applyStartedSession(
+    result: StartedSession,
+    options: { locked: boolean; resumedBrowserProgress?: boolean }
+  ) {
+    const sessionChanged = playerSessionChanged(
+      playerMode,
+      uiState.sessionToken,
+      result.sessionToken,
+      options.resumedBrowserProgress === true
+    );
+    if (sessionChanged) {
+      clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
+    }
+    persist({
+      locked: options.locked,
+      sessionToken: result.sessionToken,
+      serialCounter: result.playerState.serialCounter,
+      ...(sessionChanged
+        ? {
+            openedAppIds: [],
+            lastContentByAppId: {},
+            localTalkReadCursors: {},
+            pendingTalkReadCursors: {}
+          }
+        : {})
+    });
+    if (sessionChanged) {
+      displayedTalkTarget = null;
+      locallySuppressedNotificationIds = [];
+    }
+    applyPlayerState(result.playerState, { force: sessionChanged });
+    if (!options.locked && pendingNotificationOpen) {
+      const pendingOpen = pendingNotificationOpen;
+      const pendingApp = apps.find((app) => app.id === pendingOpen.appId);
+      pendingNotificationOpen = null;
+      if (pendingApp) {
+        openAppContent(pendingApp, pendingOpen.contentId);
+      }
+    }
+  }
+
+  function entryError(error: string) {
+    return ["invalid", "rate_limited", "browser_progress_too_large"].includes(error) ? error : "server_unavailable";
+  }
+
+  async function openBrowserSession() {
     try {
-      const existingBrowserToken = playerMode === "browser" ? loadBrowserProgressToken() : undefined;
+      const existingBrowserToken = loadBrowserProgressToken();
       const loaded = existingBrowserToken ? await loadPlayerState(existingBrowserToken) : null;
       const result = loaded?.ok
-        ? { ...loaded, sessionToken: loaded.playerState.progressToken ?? existingBrowserToken }
+        ? { ...loaded, sessionToken: loaded.playerState.progressToken ?? existingBrowserToken ?? "" }
         : loaded && loaded.error !== "unauthorized"
           ? loaded
-          : await startSession(serialCode);
+          : await startSession("");
 
       if (!result.ok) {
         applyErrorPlayerState(result);
-        return { ok: false, error: result.error };
+        return { ok: false, error: entryError(result.error) };
       }
-
-      const sessionChanged = playerSessionChanged(
-        playerMode,
-        uiState.sessionToken,
-        result.sessionToken,
-        Boolean(existingBrowserToken && loaded?.ok)
-      );
-      if (sessionChanged) {
-        clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
-      }
-      persist({
+      applyStartedSession(result, {
         locked: false,
-        sessionToken: result.sessionToken,
-        serialCounter: result.playerState.serialCounter,
-        ...(sessionChanged
-          ? {
-              openedAppIds: [],
-              lastContentByAppId: {},
-              localTalkReadCursors: {},
-              pendingTalkReadCursors: {}
-            }
-          : {})
+        resumedBrowserProgress: Boolean(existingBrowserToken && loaded?.ok)
       });
-      if (sessionChanged) {
-        displayedTalkTarget = null;
-        locallySuppressedNotificationIds = [];
-      }
-      applyPlayerState(result.playerState, { force: sessionChanged });
-      if (pendingNotificationOpen) {
-        const pendingOpen = pendingNotificationOpen;
-        const pendingApp = apps.find((app) => app.id === pendingOpen.appId);
-        pendingNotificationOpen = null;
-        if (pendingApp) {
-          openAppContent(pendingApp, pendingOpen.contentId);
-        }
-      }
       trackEvent({ name: "unlock_device" });
       return { ok: true };
     } catch {
@@ -1713,16 +1774,91 @@
     }
   }
 
-  async function lockDevice() {
-    const sourceAppId = activeAppId ?? undefined;
-    const reset = resetForTestingEnabled && await resetPlayerForTesting();
-    if (reset) {
-      clearLocalPlayerStateForReset();
-    } else {
-      clearRuntimeState();
-      persist({ locked: true });
+  async function startPlayerPasscodeSession(serialCode: string) {
+    try {
+      const result = await startSession(serialCode);
+      if (!result.ok) {
+        applyErrorPlayerState(result);
+        return { ok: false, error: entryError(result.error) };
+      }
+      applyStartedSession(result, { locked: false });
+      trackEvent({ name: "unlock_device" });
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "server_unavailable" };
     }
+  }
+
+  async function authenticatePlayerPasscode(serialCode: string) {
+    if (deviceLockMethod === "fixed-pin") {
+      pendingPlayerPasscode = serialCode;
+      if (!uiState.locked) persist({ locked: true });
+      return { ok: true };
+    }
+    return startPlayerPasscodeSession(serialCode);
+  }
+
+  async function unlockDevice(code: string) {
+    if (localQaMode) {
+      uiState = { ...uiState, locked: false };
+      return { ok: true };
+    }
+    if (deviceLockMethod === "player-passcode") {
+      return startPlayerPasscodeSession(code);
+    }
+    if (deviceLockMethod !== "fixed-pin") {
+      return { ok: false, error: "not_available" };
+    }
+
+    try {
+      const verified = await verifyDevicePin(code);
+      if (!verified.ok) {
+        return { ok: false, error: entryError(verified.error) };
+      }
+      if (playerMode === "browser") {
+        return openBrowserSession();
+      }
+      if (!uiState.sessionToken && pendingPlayerPasscode) {
+        const started = await startPlayerPasscodeSession(pendingPlayerPasscode);
+        if (started.ok) pendingPlayerPasscode = "";
+        return started;
+      }
+      if (!uiState.sessionToken) {
+        return { ok: false, error: "server_unavailable" };
+      }
+      const loaded = await loadPlayerState(uiState.sessionToken);
+      if (!loaded.ok) {
+        applyErrorPlayerState(loaded);
+        if (loaded.error === "unauthorized") {
+          clearLocalAuthenticationForLogout();
+        }
+        return { ok: false, error: entryError(loaded.error) };
+      }
+      applyStartedSession({ sessionToken: uiState.sessionToken, playerState: loaded.playerState }, { locked: false });
+      trackEvent({ name: "unlock_device" });
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "server_unavailable" };
+    }
+  }
+
+  function lockDevice() {
+    const sourceAppId = activeAppId ?? undefined;
+    clearRuntimeState();
+    persist({ locked: true });
     trackEvent({ name: "lock_device", ...(sourceAppId ? { appId: sourceAppId } : {}) });
+  }
+
+  async function handleProtectionAction() {
+    if (!resetForTestingEnabled) {
+      lockDevice();
+      return;
+    }
+    if (await resetPlayerForTesting()) {
+      clearLocalPlayerStateForReset();
+      return;
+    }
+    showGlobalError("reset_for_testing_failed", { supportCode: "AP-RESET" });
   }
 
   function triggerNoise(durationMs = 100) {
@@ -3045,6 +3181,10 @@
     <div class="out-game-dialog">
       <StartConfirmationScreen browserMode={playerMode === "browser"} onConfirm={confirmStart} />
     </div>
+  {:else if playerPasscodeEntryRequired}
+    <div class="out-game-dialog">
+      <PlayerPasscodeScreen passcodeLength={pinLength} onSubmit={authenticatePlayerPasscode} />
+    </div>
   {:else}
     {#snippet phone(presentation: PhonePresentation)}
       <PhoneStage mode={presentation.mode} let:frameOnly>
@@ -3080,8 +3220,8 @@
           {#if uiState.locked}
             <LockScreen
               {deviceState}
-              {pinLength}
-              browserMode={playerMode === "browser"}
+              pinLength={lockScreenPinLength}
+              unlockMethod={deviceLockMethod === "fixed-pin" ? "fixed-pin" : "player-passcode"}
               onUnlock={unlockDevice}
               onOpenNotification={openNotification}
             />
@@ -3140,6 +3280,7 @@
           {:else if activeApp?.id === "calendar"}
             <CalendarApp
               events={deviceState.calendarEvents}
+              currentDate={deviceState.currentDate}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
               onContentOpen={(contentId) => void handleContentOpen("calendar", contentId)}
@@ -3209,7 +3350,8 @@
         batteryLevel={deviceState.batteryLevel}
         signalLabel={deviceState.signalLabel}
         open={shadeOpen && !uiState.locked}
-        onLock={lockDevice}
+        protectionAction={shadeProtectionAction}
+        onProtectionAction={handleProtectionAction}
         onOpenNotification={openNotification}
       />
       <svelte:fragment slot="overlay">

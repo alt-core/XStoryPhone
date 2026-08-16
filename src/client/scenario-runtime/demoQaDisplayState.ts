@@ -64,7 +64,7 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
         id: `qa-calendar-extra-${index + 1}`,
         contentId: `qa-calendar-extra-${index + 1}`,
         title: index === 5 ? "長い予定名がカード内で折り返されることを確認" : `表示確認 ${index + 1}`,
-        date: "6/5",
+        date: "2026-08-12",
         time: `${String(9 + index).padStart(2, "0")}:30`,
         place: index === 5 ? "表示領域を超える可能性のある長いテスト会場名" : "テスト会場",
         memo: "予定一覧の縦スクロールを確認します。",
@@ -161,7 +161,7 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       id: "qa-calendar",
       contentId: "qa-calendar",
       title: "表示確認",
-      date: "6/5",
+      date: "2026-08-12",
       time: "20:30",
       place: "テスト会場",
       memo: "QA表示専用の予定です。",
@@ -279,7 +279,7 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
     serialCounter: "qa",
     nextScenarioWakeAt: null,
     scenarioTime: {
-      dateLabel: deviceState.currentDateLabel,
+      date: deviceState.currentDate,
       timeLabel: deviceState.currentTimeLabel
     },
     projectState: {},

@@ -487,6 +487,21 @@ app.get("/api/generated-audio/static/:id", (c) => {
   return new Response(buffer, { headers: { "content-type": "audio/wav", "cache-control": "public, max-age=3600" } });
 });
 
+app.post("/api/device-pin/verify", async (c) => {
+  const lockScreen = workerScenario.project.lockScreen;
+  if (lockScreen.method !== "fixed-pin") {
+    return c.json({ ok: false, error: "not_available" }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  const pin = typeof body?.pin === "string" ? body.pin : "";
+  if (pin !== lockScreen.pin) {
+    return c.json({ ok: false, error: "invalid" }, 400);
+  }
+
+  return c.json({ ok: true });
+});
+
 app.post("/api/session/start", async (c) => {
   if (browserMode()) {
     if (!browserStateSecret(c)) return c.json({ ok: false, error: "browser_state_secret_missing" }, 500);

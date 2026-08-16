@@ -480,7 +480,7 @@ export function publicPlayerState(
     serialCounter: "anonymous",
     nextScenarioWakeAt,
     scenarioTime: {
-      dateLabel: workerScenario.project.dateLabel,
+      date: workerScenario.project.date,
       timeLabel: workerScenario.project.timeLabel
     },
     projectState: Object.fromEntries(

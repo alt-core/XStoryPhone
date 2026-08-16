@@ -126,6 +126,37 @@ test("共通HonoアプリはStoreを注入してセッション開始と状態�
   assert.equal((await state.json()).playerState.stateVersion, store.player.stateVersion);
 });
 
+test("固定PINはクライアントへ正解を渡さずサーバーで一致判定する", async () => {
+  const originalLockScreen = workerScenario.project.lockScreen;
+  workerScenario.project.lockScreen = { method: "fixed-pin", pin: "0420" };
+  try {
+    const store = new MemoryStore();
+    const app = createApp({
+      store,
+      config: { appEnv: "development", playerInputLogging: false, llm: {} }
+    });
+    const rejected = await app.request("http://localhost/api/device-pin/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin: "1234" })
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal((await rejected.json()).error, "invalid");
+
+    const accepted = await app.request("http://localhost/api/device-pin/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin: "0420" })
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).ok, true);
+    assert.equal(store.createCalls, 0);
+    assert.equal(store.playerCalls, 0);
+  } finally {
+    workerScenario.project.lockScreen = originalLockScreen;
+  }
+});
+
 test("テストプレイ用進行リセットはdevとstgだけで公開ホストから利用できる", async () => {
   for (const appEnv of ["dev", "development", "stg", "staging"]) {
     const store = new MemoryStore();

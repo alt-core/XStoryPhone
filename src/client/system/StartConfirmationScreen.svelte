@@ -2,8 +2,24 @@
   import { Check, CircleHelp, Fullscreen, Hash, Headphones, ShieldCheck, Smartphone } from "@lucide/svelte";
 
   export let variant: "confirmation" | "hold" = "confirmation";
-  export let onConfirm: () => void = () => {};
+  export let onConfirm: () => void | Promise<{ ok: boolean; error?: string }> = () => {};
   export let browserMode = false;
+
+  let busy = false;
+  let errorMessage = "";
+
+  async function confirm() {
+    if (busy) return;
+    busy = true;
+    errorMessage = "";
+    const result = await onConfirm();
+    if (result && !result.ok) {
+      errorMessage = result.error === "rate_limited"
+        ? "少し待ってから、もう一度お試しください。"
+        : "通信できませんでした。もう一度お試しください。";
+      busy = false;
+    }
+  }
 </script>
 
 <section
@@ -56,10 +72,13 @@
     </div>
 
     <footer class="confirmation-actions">
-      <button class="confirm-button" type="button" on:click={onConfirm}>
+      <button class="confirm-button" type="button" disabled={busy} on:click={confirm}>
         <Check size={20} strokeWidth={2.4} />
-        <span>確認して開始</span>
+        <span>{busy ? "準備中…" : "確認して開始"}</span>
       </button>
+      {#if errorMessage}
+        <p class="confirmation-submit-error" role="alert">{errorMessage}</p>
+      {/if}
       <a class="privacy-link" href="/privacy-policy.html" target="_blank" rel="noreferrer">プライバシーポリシー／お問い合わせ</a>
     </footer>
   {/if}

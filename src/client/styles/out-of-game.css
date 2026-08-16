@@ -135,6 +135,68 @@
   padding-top: 13px;
 }
 
+.passcode-entry-panel {
+  align-content: center;
+  gap: 18px;
+}
+
+.passcode-form {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid rgba(38, 122, 108, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 14px 34px rgba(31, 94, 82, 0.08);
+}
+
+.passcode-form label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(17, 49, 43, 0.78);
+  font-size: 0.8rem;
+  font-weight: 780;
+}
+
+.passcode-form input {
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 14px;
+  border: 1px solid rgba(38, 122, 108, 0.22);
+  border-radius: 14px;
+  outline: 0;
+  background: rgba(245, 252, 249, 0.92);
+  color: #12322d;
+  font: inherit;
+  font-size: 1.28rem;
+  font-weight: 820;
+  letter-spacing: 0.28em;
+  text-align: center;
+}
+
+.passcode-form input:focus-visible {
+  border-color: rgba(29, 133, 115, 0.58);
+  box-shadow: 0 0 0 3px rgba(95, 216, 190, 0.18);
+}
+
+.passcode-form .passcode-length,
+.passcode-form .passcode-entry-error {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.passcode-form .passcode-length {
+  color: rgba(17, 49, 43, 0.54);
+}
+
+.passcode-form .passcode-entry-error {
+  color: #a44629;
+  font-weight: 760;
+}
+
 .confirm-button,
 .out-game-primary-button {
   display: flex;
@@ -163,12 +225,27 @@
   transform: translateY(1px);
 }
 
+.confirm-button:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .privacy-link {
   justify-self: center;
   color: rgba(17, 49, 43, 0.58);
   font-size: 0.74rem;
   line-height: 1.35;
   text-decoration: none;
+}
+
+.confirmation-submit-error {
+  margin: 0;
+  color: #a44629;
+  font-size: 0.74rem;
+  font-weight: 760;
+  line-height: 1.4;
+  text-align: center;
 }
 
 .privacy-link:hover,

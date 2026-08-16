@@ -254,7 +254,7 @@ export type TodoItem = {
 };
 
 export type ScenarioTime = {
-  dateLabel: string;
+  date: string;
   timeLabel: string;
 };
 
@@ -288,7 +288,7 @@ export type DeviceState = {
   revision: string;
   batteryLevel: number;
   signalLabel: string;
-  currentDateLabel: string;
+  currentDate: string;
   currentTimeLabel: string;
   wallpaperUrl?: string;
   apps: AppCatalogEntry[];

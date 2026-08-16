@@ -2,7 +2,7 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "498df06cee058913",
+  "revision": "84a05034d116baa5",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -10,7 +10,10 @@ export const workerScenario: WorkerScenario = {
     "osName": "StoryOS",
     "assistantName": "ナビ",
     "accentColor": "#8fd2ff",
-    "dateLabel": "8月12日（水）",
+    "lockScreen": {
+      "method": "none"
+    },
+    "date": "2026-08-12",
     "timeLabel": "20:14",
     "batteryLevel": 72,
     "signalLabel": "4G",
@@ -272,7 +275,7 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "端末の写真を整理",
-        "date": "8/12",
+        "date": "2026-08-12",
         "time": "20:30",
         "place": "自宅",
         "memo": "「雨の日の窓」の写真を確認する。"

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BatteryMedium, Moon, Radio, ShieldCheck, Signal } from "@lucide/svelte";
+  import { BatteryMedium, Moon, Radio, RotateCcw, ShieldCheck, Signal } from "@lucide/svelte";
   import type { NotificationItem } from "../scenario-runtime/types";
   import NotificationCard from "./NotificationCard.svelte";
 
@@ -7,7 +7,8 @@
   export let batteryLevel = 0;
   export let signalLabel = "";
   export let open = false;
-  export let onLock: () => void | Promise<void> = () => {};
+  export let protectionAction: "reset" | "lock" | "none" = "lock";
+  export let onProtectionAction: () => void | Promise<void> = () => {};
   export let onOpenNotification: (notificationId: string) => void = () => {};
 </script>
 
@@ -23,10 +24,23 @@
         <Signal size={17} strokeWidth={2.1} />
         <span>{signalLabel}</span>
       </div>
-      <button class="quick-tile" type="button" aria-label="ロック画面に戻る" title="ロック画面に戻る" on:click={onLock}>
-        <ShieldCheck size={17} strokeWidth={2.1} />
-        <span>保護中</span>
-      </button>
+      {#if protectionAction !== "none"}
+        <button
+          class="quick-tile"
+          type="button"
+          aria-label={protectionAction === "reset" ? "進行をリセットして最初から始める" : "ロック画面に戻る"}
+          title={protectionAction === "reset" ? "最初から" : "ロック画面に戻る"}
+          on:click={onProtectionAction}
+        >
+          {#if protectionAction === "reset"}
+            <RotateCcw size={17} strokeWidth={2.1} />
+            <span>最初から</span>
+          {:else}
+            <ShieldCheck size={17} strokeWidth={2.1} />
+            <span>保護中</span>
+          {/if}
+        </button>
+      {/if}
       <div class="quick-tile">
         <Moon size={17} strokeWidth={2.1} />
         <span>夜間</span>

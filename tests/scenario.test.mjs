@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateScenario } from "../scripts/scenario-lib.mjs";
 import { parseRegexCriteria } from "../src/shared/conversation.ts";
+import { formatStoryDateCompact, formatStoryDateLabel, parseStoryDate, storyWeekFor } from "../src/shared/storyDate.ts";
 import {
   createInitialPlayerState,
   notificationIdsForTarget,
@@ -18,6 +19,10 @@ import {
 
 test("デモシナリオは検索アプリを作らず、修復対象を保持する", () => {
   const scenario = loadAndValidateScenario();
+  assert.equal(scenario.worker.project.lockScreen.method, "none");
+  assert.equal(scenario.projectConstants["device.lock_method"], "none");
+  assert.equal(scenario.projectConstants["device.lock_pin_length"], 0);
+  assert.equal("pin" in scenario.projectConstants, false);
   assert.equal(scenario.worker.apps.some((app) => app.id === "search"), false);
   assert.equal(scenario.worker.apps.find((app) => app.id === "chat")?.initialState, "repairable");
   assert.equal(scenario.worker.contents.find((content) => content.id === "old_note")?.initialState, "repairable");
@@ -131,6 +136,17 @@ test("未使用の全アプリ用クライアントシナリオを生成しな�
   assert.equal(fs.existsSync("src/generated/clientScenario.generated.ts"), false);
 });
 
+test("作中日付をタイムゾーン変換せず表示と週へ展開する", () => {
+  assert.deepEqual(parseStoryDate("2026-08-12"), { year: 2026, month: 8, day: 12 });
+  assert.equal(parseStoryDate("2026-02-29"), null);
+  assert.equal(formatStoryDateLabel("2026-08-12"), "8月12日（水）");
+  assert.equal(formatStoryDateCompact("2026-08-12"), "8/12");
+  assert.deepEqual(
+    storyWeekFor("2026-08-12").map((day) => day.value),
+    ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16"]
+  );
+});
+
 test("シナリオ検証は不正なcondと未定義変数を実行前に拒否する", () => {
   const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-scenario-"));
   try {
@@ -163,6 +179,54 @@ test("シナリオ検証は不正なcondと未定義変数を実行前に拒否�
     const invalidTagsResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
     assert.equal(invalidTagsResult.status, 1);
     assert.match(invalidTagsResult.stderr, /welcome_note: record.tags は文字列の配列にし、空文字を含めないでください/u);
+
+    scenario.contents.find((content) => content.id === "welcome_note").record.tags = ["案内", "操作"];
+    scenario.project.date = "2026-02-29";
+    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
+    const invalidProjectDateResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(invalidProjectDateResult.status, 1);
+    assert.match(invalidProjectDateResult.stderr, /project.date は YYYY-MM-DD 形式の実在する日付にしてください/u);
+
+    scenario.project.date = "2026-08-12";
+    scenario.contents.find((content) => content.id === "owner_schedule").record.date = "8/12";
+    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
+    const invalidCalendarDateResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(invalidCalendarDateResult.status, 1);
+    assert.match(invalidCalendarDateResult.stderr, /owner_schedule: record.date は YYYY-MM-DD 形式の実在する日付にしてください/u);
+
+    scenario.contents.find((content) => content.id === "owner_schedule").record.date = "2026-08-12";
+    scenario.project.lockScreen = { method: "fixed-pin", pin: "123" };
+    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
+    const invalidFixedPinResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(invalidFixedPinResult.status, 1);
+    assert.match(invalidFixedPinResult.stderr, /project.lockScreen.pin は4桁から8桁の数字文字列にしてください/u);
+
+    scenario.project.lockScreen = { method: "player-passcode" };
+    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
+    const invalidBrowserPasscodeResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(invalidBrowserPasscodeResult.status, 1);
+    assert.match(invalidBrowserPasscodeResult.stderr, /browserモードでは project.lockScreen.method に player-passcode を指定できません/u);
+
+    scenario.project.lockScreen = { method: "fixed-pin", pin: "0420" };
+    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
+    const scenarioLibUrl = new URL("../scripts/scenario-lib.mjs", import.meta.url).href;
+    const fixedPinGenerationResult = spawnSync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import(${JSON.stringify(scenarioLibUrl)}).then(({ loadAndValidateScenario }) => {
+        const generated = loadAndValidateScenario();
+        console.log(JSON.stringify({
+          workerPin: generated.worker.project.lockScreen.pin,
+          projectConstants: generated.projectConstants
+        }));
+      })`
+    ], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(fixedPinGenerationResult.status, 0, fixedPinGenerationResult.stderr);
+    const fixedPinGeneration = JSON.parse(fixedPinGenerationResult.stdout);
+    assert.equal(fixedPinGeneration.workerPin, "0420");
+    assert.equal(fixedPinGeneration.projectConstants["device.lock_method"], "fixed-pin");
+    assert.equal(fixedPinGeneration.projectConstants["device.lock_pin_length"], 4);
+    assert.equal(JSON.stringify(fixedPinGeneration.projectConstants).includes("0420"), false);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }

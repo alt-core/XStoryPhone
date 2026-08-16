@@ -346,6 +346,18 @@ export async function startSession(serialCode: string) {
   return readJson<{ ok: true; sessionToken: string; playerState: PlayerState }>(response);
 }
 
+export async function verifyDevicePin(pin: string) {
+  const response = await fetch("/api/device-pin/verify", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ pin })
+  });
+
+  return readJson<{ ok: true }>(response);
+}
+
 export async function loadPlayerState(sessionToken: string) {
   return playerRequest<{ ok: true; playerState: PlayerState }>("/api/player-state", sessionToken);
 }

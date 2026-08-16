@@ -2,10 +2,10 @@
 import type { DeviceState } from "../scenario-runtime/types";
 
 export const demoDeviceStateGenerated: DeviceState = {
-  "revision": "498df06cee058913",
+  "revision": "84a05034d116baa5",
   "batteryLevel": 72,
   "signalLabel": "4G",
-  "currentDateLabel": "8月12日（水）",
+  "currentDate": "2026-08-12",
   "currentTimeLabel": "20:14",
   "wallpaperUrl": "/demo/wallpaper.svg",
   "apps": [

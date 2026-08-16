@@ -1,12 +1,18 @@
 export type ContentInitialState = "normal" | "repairable" | "hidden";
 
+export type DeviceLockSettings =
+  | { method: "player-passcode" }
+  | { method: "fixed-pin"; pin: string }
+  | { method: "none" };
+
 export type ProjectSettings = {
   id: string;
   name: string;
   osName: string;
   assistantName: string;
   accentColor: string;
-  dateLabel: string;
+  lockScreen: DeviceLockSettings;
+  date: string;
   timeLabel: string;
   batteryLevel: number;
   signalLabel: string;

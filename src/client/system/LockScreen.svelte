@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Delete } from "@lucide/svelte";
+  import { formatStoryDateLabel } from "../../shared/storyDate";
   import type { DeviceState } from "../scenario-runtime/types";
   import NotificationCard from "./NotificationCard.svelte";
 
@@ -8,7 +9,7 @@
   export let onUnlock: (serialCode: string) => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false });
   export let onOpenNotification: (notificationId: string) => void = () => {};
   export let pinLength = 8;
-  export let browserMode = false;
+  export let unlockMethod: "player-passcode" | "fixed-pin" = "player-passcode";
 
   let digits = "";
   let pulse = false;
@@ -22,6 +23,7 @@
   $: lockNotifications = deviceState.notifications.filter(
     (notification) => notification.id !== delayedNotificationId || delayedNotificationVisible
   );
+  $: currentDateLabel = formatStoryDateLabel(deviceState.currentDate);
 
   onMount(() => {
     const timer = window.setTimeout(() => {
@@ -44,11 +46,7 @@
       return "少し待ってから入力してください";
     }
 
-    if (browserMode && error !== "unauthorized" && error !== "invalid") {
-      return "回線が不安定です";
-    }
-
-    return "コードを確認してください";
+    return unlockMethod === "fixed-pin" ? "暗証番号を確認してください" : "パスコードを確認してください";
   }
 
   function pressKey(key: string) {
@@ -101,58 +99,48 @@
     digits = "";
     busy = false;
   }
-
-  function openDevice() {
-    if (!busy) void submitCode("");
-  }
 </script>
 
 <section class="lock-screen" class:pulse aria-label="ロック画面">
   <div class="lock-top">
-    <p>{deviceState.currentDateLabel}</p>
+    <p>{currentDateLabel}</p>
     <h1>{deviceState.currentTimeLabel}</h1>
   </div>
 
   <div class="lock-panel">
-    {#if browserMode}
-      <button class="open-device" type="button" disabled={busy} on:click={openDevice}>
-        {busy ? "接続中…" : "端末を開く"}
-      </button>
-    {:else}
-      <div class="keypad">
-        {#each keys as key}
-          {#if key === ""}
-            <div class="key-spacer"></div>
-          {:else}
-            <button
-              class="key"
-              class:pressed={pressedKey === key}
-              type="button"
-              aria-label={key === "delete" ? "削除" : `${key}を入力`}
-              title={key === "delete" ? "削除" : key}
-              on:pointerdown={(event) => startKeyPress(event, key)}
-              on:pointerup={endKeyPress}
-              on:pointercancel={endKeyPress}
-              on:pointerleave={endKeyPress}
-              on:lostpointercapture={endKeyPress}
-              on:blur={endKeyPress}
-              on:click={() => pressKey(key)}
-            >
-              {#if key === "delete"}
-                <Delete size={19} strokeWidth={2} />
-              {:else}
-                {key}
-              {/if}
-            </button>
-          {/if}
-        {/each}
-      </div>
-      <div class="dots" aria-label="入力桁数">
-        {#each Array(pinLength) as _, index}
-          <span class:filled={index < digits.length}></span>
-        {/each}
-      </div>
-    {/if}
+    <div class="keypad">
+      {#each keys as key}
+        {#if key === ""}
+          <div class="key-spacer"></div>
+        {:else}
+          <button
+            class="key"
+            class:pressed={pressedKey === key}
+            type="button"
+            aria-label={key === "delete" ? "削除" : `${key}を入力`}
+            title={key === "delete" ? "削除" : key}
+            on:pointerdown={(event) => startKeyPress(event, key)}
+            on:pointerup={endKeyPress}
+            on:pointercancel={endKeyPress}
+            on:pointerleave={endKeyPress}
+            on:lostpointercapture={endKeyPress}
+            on:blur={endKeyPress}
+            on:click={() => pressKey(key)}
+          >
+            {#if key === "delete"}
+              <Delete size={19} strokeWidth={2} />
+            {:else}
+              {key}
+            {/if}
+          </button>
+        {/if}
+      {/each}
+    </div>
+    <div class="dots" aria-label="入力桁数">
+      {#each Array(pinLength) as _, index}
+        <span class:filled={index < digits.length}></span>
+      {/each}
+    </div>
     {#if errorMessage}
       <p class="lock-error">{errorMessage}</p>
     {/if}
@@ -259,25 +247,6 @@
     display: grid;
     grid-template-columns: repeat(3, 68px);
     gap: 12px 16px;
-  }
-
-  .open-device {
-    min-width: 190px;
-    padding: 15px 24px;
-    border: 1px solid rgba(255, 255, 255, 0.34);
-    border-radius: 999px;
-    background: rgba(7, 11, 17, 0.64);
-    backdrop-filter: blur(8px);
-    color: #fff;
-    font: inherit;
-    font-weight: 760;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-  }
-
-  .open-device:disabled {
-    opacity: 0.68;
-    cursor: wait;
   }
 
   .key,
