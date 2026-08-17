@@ -2,6 +2,7 @@ import type {
   AppStore,
   GeneratedAudioJob,
   InputEventRecord,
+  PlayerInputReviewEvent,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
@@ -17,12 +18,14 @@ import type {
 } from "../../server/store.ts";
 import {
   MAX_SESSIONS_PER_PLAYER,
-  normalizeStoredPlayerState,
+  limitedTranscript,
+  normalizeStoredState,
   nowIso,
   scheduledEventLeaseCutoff,
   scheduledEventLeaseWakeAt,
   sha256
 } from "../../server/store.ts";
+import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
 
 function stringArray(value: string) {
   try {
@@ -39,6 +42,15 @@ function stringRecord(value: string) {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, entry]) => [key, String(entry)]))
       : {};
+  } catch {
+    return {};
+  }
+}
+
+function jsonRecord(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
   }
@@ -112,6 +124,37 @@ export class D1Store implements AppStore {
     return { playerId: player.id, sessionToken, created: !playerBeforeInsert };
   }
 
+  async isAccessCodeLocked(counter: string, at: string) {
+    const row = await this.db.prepare("SELECT locked_until FROM access_code_attempts WHERE counter_text = ?")
+      .bind(counter)
+      .first<{ locked_until: string | null }>();
+    return Boolean(row?.locked_until && Date.parse(row.locked_until) > Date.parse(at));
+  }
+
+  async recordAccessCodeAttempt(counter: string, success: boolean, at: string) {
+    if (success) {
+      await this.db.prepare("DELETE FROM access_code_attempts WHERE counter_text = ?").bind(counter).run();
+      return;
+    }
+    const current = await this.db.prepare("SELECT failed_count, updated_at FROM access_code_attempts WHERE counter_text = ?")
+      .bind(counter)
+      .first<{ failed_count: number; updated_at: string }>();
+    const atMs = Date.parse(at);
+    const withinWindow = current && atMs - Date.parse(current.updated_at) < ACCESS_CODE_ATTEMPT_WINDOW_MS;
+    const failedCount = withinWindow ? current.failed_count + 1 : 1;
+    const lockedUntil = failedCount >= ACCESS_CODE_MAX_FAILED_ATTEMPTS
+      ? new Date(atMs + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString()
+      : null;
+    await this.db.prepare(
+      `INSERT INTO access_code_attempts (counter_text, failed_count, locked_until, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(counter_text) DO UPDATE SET
+         failed_count = excluded.failed_count,
+         locked_until = excluded.locked_until,
+         updated_at = excluded.updated_at`
+    ).bind(counter, failedCount, lockedUntil, at).run();
+  }
+
   async prunePlayerSessions(playerId: string, currentTokenHash: string) {
     await this.db.prepare(
       `DELETE FROM sessions
@@ -134,12 +177,10 @@ export class D1Store implements AppStore {
     ).bind(tokenHash).first<{ id: string; state_json: string; state_version: number }>();
     if (!row) return null;
     await this.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?").bind(nowIso(), tokenHash).run();
-    const normalized = normalizeStoredPlayerState(JSON.parse(row.state_json) as StoredPlayerState);
     return {
       id: row.id,
-      state: normalized.state,
-      stateVersion: row.state_version,
-      ...(normalized.legacyTranscripts.length ? { legacyTranscripts: normalized.legacyTranscripts } : {})
+      state: normalizeStoredState(JSON.parse(row.state_json) as StoredPlayerState),
+      stateVersion: row.state_version
     };
   }
 
@@ -152,7 +193,7 @@ export class D1Store implements AppStore {
     }
     try {
       const messages = JSON.parse(row.messages_json) as unknown;
-      return { streamId, transcriptKey, messages: Array.isArray(messages) ? messages : [] };
+      return limitedTranscript({ streamId, transcriptKey, messages: Array.isArray(messages) ? messages : [] });
     } catch {
       return { streamId, transcriptKey, messages: [] };
     }
@@ -173,7 +214,7 @@ export class D1Store implements AppStore {
       `UPDATE players SET state_json = ?, state_version = state_version + 1, updated_at = ?, last_mutation_id = ?
        WHERE id = ? AND state_version = ?`
     ).bind(JSON.stringify(nextState), now, mutationId, player.id, player.stateVersion);
-    const updateTranscripts = transcripts.map((transcript) => this.db.prepare(
+    const updateTranscripts = transcripts.map(limitedTranscript).map((transcript) => this.db.prepare(
       `INSERT INTO player_transcripts (player_id, stream_id, transcript_key, messages_json, updated_at)
        SELECT ?, ?, ?, ?, ?
        WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)
@@ -239,7 +280,7 @@ export class D1Store implements AppStore {
       `SELECT id, schedule_id, event_id, payload_json FROM scheduled_events
        WHERE player_id = ? AND due_at <= ?
          AND (status = 'queued' OR (status = 'running' AND updated_at <= ?))
-       ORDER BY due_at ASC LIMIT 20`
+       ORDER BY due_at ASC LIMIT 5`
     ).bind(playerId, at, leaseCutoff).all<{ id: string; schedule_id: string; event_id: string; payload_json: string }>();
     return (result.results ?? []).map((row) => ({
       id: row.id,
@@ -296,6 +337,70 @@ export class D1Store implements AppStore {
       event.nextFromId ?? null,
       JSON.stringify(event.responseSnapshot ?? {})
     ).run();
+  }
+
+  async playerInputEvents(filters: {
+    eventType?: "search" | "talk_send";
+    playerId?: string;
+    talkId?: string;
+    query?: string;
+    limit: number;
+  }): Promise<PlayerInputReviewEvent[]> {
+    const clauses = ["1 = 1"];
+    const values: unknown[] = [];
+    if (filters.eventType) {
+      clauses.push("event_type = ?");
+      values.push(filters.eventType);
+    }
+    if (filters.playerId) {
+      clauses.push("player_id = ?");
+      values.push(filters.playerId);
+    }
+    if (filters.talkId) {
+      clauses.push("talk_id = ?");
+      values.push(filters.talkId);
+    }
+    if (filters.query) {
+      clauses.push("instr(normalized_input, ?) > 0");
+      values.push(filters.query.normalize("NFC").trim().toLocaleLowerCase("ja"));
+    }
+    values.push(filters.limit);
+    const result = await this.db.prepare(
+      `SELECT id, event_type, player_id, occurred_at, app_id, talk_id, from_id, user_input,
+              status, matched, rule_id, next_from_id, response_snapshot_json
+       FROM player_input_events
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY occurred_at DESC, id DESC LIMIT ?`
+    ).bind(...values).all<{
+      id: string;
+      event_type: "search" | "talk_send";
+      player_id: string;
+      occurred_at: string;
+      app_id: string;
+      talk_id: string | null;
+      from_id: string | null;
+      user_input: string;
+      status: string;
+      matched: number;
+      rule_id: string | null;
+      next_from_id: string | null;
+      response_snapshot_json: string;
+    }>();
+    return (result.results ?? []).map((row) => ({
+      id: row.id,
+      eventType: row.event_type,
+      playerId: row.player_id,
+      occurredAt: row.occurred_at,
+      appId: row.app_id,
+      talkId: row.talk_id,
+      fromId: row.from_id,
+      userInput: row.user_input,
+      status: row.status,
+      matched: row.matched === 1,
+      ruleId: row.rule_id,
+      nextFromId: row.next_from_id,
+      responseSnapshot: jsonRecord(row.response_snapshot_json)
+    }));
   }
 
   private generatedAudioSelect() {

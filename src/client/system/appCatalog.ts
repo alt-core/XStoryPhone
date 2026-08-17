@@ -1,6 +1,8 @@
 import {
   Album,
   CalendarDays,
+  Globe2,
+  Mail,
   MessageCircle,
   MessageSquareText,
   NotebookPen,
@@ -14,6 +16,8 @@ import type { AppCatalogEntry, AppId } from "../scenario-runtime/types";
 const iconByKey: Record<string, Component> = {
   album: Album,
   calendar_days: CalendarDays,
+  globe_2: Globe2,
+  mail: Mail,
   message_circle: MessageCircle,
   message_square_text: MessageSquareText,
   notebook_pen: NotebookPen,

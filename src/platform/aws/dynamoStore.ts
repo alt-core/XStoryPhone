@@ -2,6 +2,7 @@ import type {
   AppStore,
   GeneratedAudioJob,
   InputEventRecord,
+  PlayerInputReviewEvent,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
@@ -15,10 +16,12 @@ import type {
   StoredTranscript,
   TranscriptUpdate
 } from "../../server/store.ts";
+import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
 import {
   DYNAMO_PLAYER_STATE_WARNING_BYTES,
   MAX_SESSIONS_PER_PLAYER,
-  normalizeStoredPlayerState,
+  limitedTranscript,
+  normalizeStoredState,
   nowIso,
   scheduledEventLeaseCutoff,
   scheduledEventLeaseWakeAt,
@@ -272,6 +275,39 @@ export class DynamoStore implements AppStore {
     return { playerId, sessionToken, created };
   }
 
+  async isAccessCodeLocked(counter: string, at: string) {
+    const current = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
+    const lockedUntil = stringValue(current?.lockedUntil);
+    return Boolean(lockedUntil && Date.parse(lockedUntil) > Date.parse(at));
+  }
+
+  async recordAccessCodeAttempt(counter: string, success: boolean, at: string) {
+    const key = item({ PK: `ACCESS_ATTEMPT#${counter}`, SK: "META" });
+    if (success) {
+      await this.transport.execute("DeleteItem", { TableName: this.tableName, Key: key });
+      return;
+    }
+    const current = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
+    const atMs = Date.parse(at);
+    const updatedAt = stringValue(current?.updatedAt);
+    const withinWindow = updatedAt && atMs - Date.parse(updatedAt) < ACCESS_CODE_ATTEMPT_WINDOW_MS;
+    const failedCount = withinWindow ? Number(current?.failedCount ?? 0) + 1 : 1;
+    const lockedUntil = failedCount >= ACCESS_CODE_MAX_FAILED_ATTEMPTS
+      ? new Date(atMs + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString()
+      : null;
+    await this.transport.execute("PutItem", {
+      TableName: this.tableName,
+      Item: item({
+        PK: `ACCESS_ATTEMPT#${counter}`,
+        SK: "META",
+        entityType: "ACCESS_ATTEMPT",
+        failedCount,
+        lockedUntil,
+        updatedAt: at
+      })
+    });
+  }
+
   private async prunePlayerSessions(playerId: string, currentTokenHash: string) {
     const sessions = (await this.queryGsi(playerPk(playerId), "SESSION#"))
       .sort((left, right) => stringValue(right.lastSeenAt).localeCompare(stringValue(left.lastSeenAt)));
@@ -296,12 +332,10 @@ export class DynamoStore implements AppStore {
       UpdateExpression: "SET lastSeenAt = :now, GSI1SK = :gsi",
       ExpressionAttributeValues: item({ ":now": now, ":gsi": `SESSION#${now}#${tokenHash}` })
     });
-    const normalized = normalizeStoredPlayerState(row.state as StoredPlayerState);
     return {
       id: playerId,
-      state: normalized.state,
-      stateVersion: Number(row.stateVersion),
-      ...(normalized.legacyTranscripts.length ? { legacyTranscripts: normalized.legacyTranscripts } : {})
+      state: normalizeStoredState(row.state as StoredPlayerState),
+      stateVersion: Number(row.stateVersion)
     };
   }
 
@@ -310,14 +344,15 @@ export class DynamoStore implements AppStore {
     if (!row || row.transcriptKey !== transcriptKey) {
       return { streamId, transcriptKey, messages: [] };
     }
-    return {
+    return limitedTranscript({
       streamId,
       transcriptKey,
       messages: Array.isArray(row.messages) ? row.messages as StoredTranscript["messages"] : []
-    };
+    });
   }
 
   async savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts: TranscriptUpdate[] = []) {
+    transcripts = transcripts.map(limitedTranscript);
     const bytes = storedPlayerStateBytes(nextState);
     if (bytes > PLAYER_STATE_HARD_LIMIT_BYTES) {
       throw new Error(`player_state_too_large:${bytes}`);
@@ -453,7 +488,7 @@ export class DynamoStore implements AppStore {
         row.status === "queued" || (row.status === "running" && stringValue(row.updatedAt) <= leaseCutoff)
       ))
       .sort((left, right) => stringValue(left.dueAt).localeCompare(stringValue(right.dueAt)))
-      .slice(0, 20)
+      .slice(0, 5)
       .map((row) => ({
         id: stringValue(row.scheduleId),
         scheduleId: stringValue(row.scheduleId),
@@ -521,6 +556,8 @@ export class DynamoStore implements AppStore {
           ...event,
           normalizedInput: event.userInput.normalize("NFC").trim().toLocaleLowerCase("ja"),
           occurredAt,
+          GSI2PK: "INPUT_REVIEW",
+          GSI2SK: `INPUT#${event.eventType}#${occurredAt}#${event.requestKey}`,
           ...(event.talkId && event.fromId ? {
             GSI1PK: "REVIEW_SOURCE",
             GSI1SK: `INPUT#${event.talkId}#${event.fromId}#${occurredAt}#${event.requestKey}`
@@ -531,6 +568,56 @@ export class DynamoStore implements AppStore {
     } catch (error) {
       if (!conditionalFailure(error)) throw error;
     }
+  }
+
+  async playerInputEvents(filters: {
+    eventType?: "search" | "talk_send";
+    playerId?: string;
+    talkId?: string;
+    query?: string;
+    limit: number;
+  }): Promise<PlayerInputReviewEvent[]> {
+    const rows: Record<string, unknown>[] = [];
+    const normalizedQuery = filters.query?.normalize("NFC").trim().toLocaleLowerCase("ja");
+    let startKey: DynamoItem | undefined;
+    const prefix = filters.eventType ? `INPUT#${filters.eventType}#` : "INPUT#";
+    do {
+      const result = await this.transport.execute("Query", {
+        TableName: this.tableName,
+        IndexName: "GSI2",
+        KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :sk)",
+        ExpressionAttributeNames: { "#pk": "GSI2PK", "#sk": "GSI2SK" },
+        ExpressionAttributeValues: item({ ":pk": "INPUT_REVIEW", ":sk": prefix }),
+        ScanIndexForward: false,
+        Limit: Math.max(50, Math.min(500, filters.limit * 2)),
+        ...(startKey ? { ExclusiveStartKey: startKey } : {})
+      });
+      for (const row of (result.Items ?? []).map(valueFromItem)) {
+        const matches = (!filters.playerId || stringValue(row.playerId) === filters.playerId)
+          && (!filters.talkId || stringValue(row.talkId) === filters.talkId)
+          && (!normalizedQuery || stringValue(row.normalizedInput).includes(normalizedQuery));
+        if (matches) rows.push(row);
+        if (rows.length >= filters.limit) break;
+      }
+      startKey = result.LastEvaluatedKey;
+    } while (startKey && rows.length < filters.limit);
+    return rows.slice(0, filters.limit).map((row) => ({
+      id: stringValue(row.id),
+      eventType: row.eventType as "search" | "talk_send",
+      playerId: stringValue(row.playerId),
+      occurredAt: stringValue(row.occurredAt),
+      appId: stringValue(row.appId),
+      talkId: nullableString(row.talkId),
+      fromId: nullableString(row.fromId),
+      userInput: stringValue(row.userInput),
+      status: stringValue(row.status),
+      matched: row.matched === true,
+      ruleId: nullableString(row.ruleId),
+      nextFromId: nullableString(row.nextFromId),
+      responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
+        ? row.responseSnapshot as Record<string, unknown>
+        : {}
+    }));
   }
 
   async generatedAudioJob(playerId: string, audioId: string) {

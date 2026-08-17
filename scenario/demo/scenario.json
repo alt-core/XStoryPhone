@@ -26,9 +26,23 @@
     "chat_auth_link_sent": false,
     "chat_auth_verified": false,
     "demo_completed": false,
+    "demo_call_completed": false,
+    "demo_chat_cross_received": false,
+    "demo_chat_message_received": false,
     "session_started": false,
+    "demo_delayed_message_received": false,
+    "demo_image_received": false,
+    "demo_sms_cross_received": false,
+    "demo_sms_message_received": false,
     "sealed_note_unlocked": false,
     "radio_playback_completed": false
+  },
+  "photoDescriptions": {
+    "evening_platform": "夕暮れの駅のホーム。黄色い点字ブロックと遠くの列車が写っている。",
+    "rainy_window": "雨粒の付いた窓越しに夜景が見え、中央付近の黄色い灯りが最も大きく写っている。",
+    "coffee_table": "コーヒーカップと開いたノートが木製の机に置かれている。",
+    "demo_received_image": "メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。",
+    "demo_video": "プログラムで生成したカラーバーが動くデモ動画。"
   },
   "apps": [
     {
@@ -45,7 +59,15 @@
       "icon": "message_circle",
       "accent": "#5cc8a7",
       "initialState": "normal",
-      "search": ["メッセージ", "ナビ"]
+      "search": ["メッセージ", "デモ進行係"]
+    },
+    {
+      "id": "mail",
+      "label": "メール",
+      "icon": "mail",
+      "accent": "#aebcff",
+      "initialState": "normal",
+      "search": ["メール", "電子メール"]
     },
     {
       "id": "notes",
@@ -80,6 +102,14 @@
       "search": ["ラジオ", "放送"]
     },
     {
+      "id": "browser",
+      "label": "ブラウザ",
+      "icon": "globe_2",
+      "accent": "#79b9ff",
+      "initialState": "normal",
+      "search": ["ブラウザ", "タブ", "Web"]
+    },
+    {
       "id": "chat",
       "label": "チャット",
       "repairLabel": "チャ▗▛▞▐▀",
@@ -104,6 +134,148 @@
       }
     },
     {
+      "id": "dummy_call_1",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "dummy_call_2",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "dummy_call_3",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "dummy_call_4",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "dummy_call_5",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "dummy_call_6",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
+    },
+    {
+      "id": "demo_call_history",
+      "appId": "phone",
+      "initialState": "normal",
+      "cond": "demo_call_completed",
+      "search": ["電話", "着信", "書き起こし"],
+      "record": {
+        "name": "着信テスト",
+        "kind": "incoming",
+        "at": "20:16",
+        "durationLabel": "6秒",
+        "audioUrl": "/system/call-caption-sample.wav",
+        "transcript": [
+          { "atMs": 0, "text": "［低い確認音］" },
+          { "atMs": 2000, "text": "［中くらいの確認音］" },
+          { "atMs": 4000, "text": "［高い確認音］" }
+        ]
+      }
+    },
+    {
+      "id": "mail_guide",
+      "appId": "mail",
+      "initialState": "normal",
+      "search": ["メール", "メール機能"],
+      "record": {
+        "from": "デモ運営",
+        "to": "プレイヤー",
+        "subject": "メール機能の確認",
+        "date": "2026年8月12日 18:30",
+        "body": "メールは、件名と日付の一覧から選んで内容を確認できます。ナビで「未整理メール」と検索すると、破損したメールの修復も試せます。"
+      }
+    },
+    {
+      "id": "guide_history_archive_a",
+      "appId": "messages",
+      "initialState": "repairable",
+      "repairLabel": "破損した履歴",
+      "search": ["消えた連絡記録", "履歴修復A"],
+      "record": { "talk": "guide", "block": "history_archive_a" }
+    },
+    {
+      "id": "guide_history_archive_b",
+      "appId": "messages",
+      "initialState": "repairable",
+      "repairLabel": "破損した履歴",
+      "search": ["連続破損の記録", "履歴修復B"],
+      "record": { "talk": "guide", "block": "history_archive_b" }
+    },
+    {
+      "id": "lobby_history_archive",
+      "appId": "chat",
+      "initialState": "repairable",
+      "repairLabel": "破損した履歴",
+      "cond": "sealed_note_unlocked",
+      "search": ["消えた談話記録", "チャット履歴修復"],
+      "record": { "talk": "lobby", "block": "history_archive" }
+    },
+    {
+      "id": "damaged_mail",
+      "appId": "mail",
+      "initialState": "repairable",
+      "repairLabel": "未▚▐▀▜メール",
+      "search": ["未整理メール", "破損メール", "メール修復"],
+      "record": {
+        "from": "確認担当",
+        "to": "プレイヤー",
+        "cc": "デモ運営",
+        "subject": "修復されたメール",
+        "date": "2026年8月12日 18:45",
+        "body": "メール単位の修復が完了しました。Ccが設定された場合は、宛先情報の中に表示されます。"
+      }
+    },
+    {
+      "id": "dummy_mail_1",
+      "appId": "mail",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "from": "ダミーデータ", "to": "プレイヤー", "subject": "ダミーデータ", "date": "2026年8月12日 12:00", "body": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_mail_2",
+      "appId": "mail",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "from": "ダミーデータ", "to": "プレイヤー", "subject": "ダミーデータ", "date": "2026年8月12日 12:00", "body": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_mail_3",
+      "appId": "mail",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "from": "ダミーデータ", "to": "プレイヤー", "subject": "ダミーデータ", "date": "2026年8月12日 12:00", "body": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_mail_4",
+      "appId": "mail",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "from": "ダミーデータ", "to": "プレイヤー", "subject": "ダミーデータ", "date": "2026年8月12日 12:00", "body": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
       "id": "welcome_note",
       "appId": "notes",
       "initialState": "normal",
@@ -115,6 +287,17 @@
       }
     },
     {
+      "id": "feature_test_guide",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["機能テスト", "試し方", "着信テスト", "遅延メッセージ"],
+      "record": {
+        "title": "機能テスト一覧",
+        "body": "ナビで「消えた連絡記録」と検索すると、メッセージ内の破損した初期履歴を修復できます。\n\nメッセージの「デモ進行係」へ、次の語を1つずつ送信できます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・メッセージ連携：別のメッセージルームへ届きます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャット復旧後は、ナビで「消えた談話記録」と検索するとチャット内の破損履歴を修復できます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\n各受信では通知も表示されます。繰り返す場合は通知シェードのテスト用リセットを使ってください。",
+        "tags": ["案内", "機能テスト"]
+      }
+    },
+    {
       "id": "old_note",
       "appId": "notes",
       "initialState": "repairable",
@@ -122,9 +305,51 @@
       "search": ["古いメモ", "ふるいメモ", "手がかり"],
       "record": {
         "title": "古いメモ",
-        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでナビにその色を伝えてください。",
+        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでデモ進行係にその色を伝えてください。",
         "tags": ["操作", "画像"]
       }
+    },
+    {
+      "id": "dummy_note_1",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_note_2",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_note_3",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_note_4",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_note_5",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_note_6",
+      "appId": "notes",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "body": "一覧スクロール確認用のダミーデータです。", "tags": ["ダミーデータ"] }
     },
     {
       "id": "sealed_note",
@@ -173,6 +398,73 @@
       }
     },
     {
+      "id": "demo_video",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["動画", "デモ動画", "カラーバー"],
+      "record": {
+        "title": "デモ動画",
+        "mediaKind": "video",
+        "imageUrl": "/demo/dummy-data.svg",
+        "videoUrl": "/demo/demo-video.mp4",
+        "tags": ["動画", "動作確認"]
+      }
+    },
+    {
+      "id": "demo_received_image",
+      "appId": "photos",
+      "initialState": "hidden",
+      "cond": "demo_image_received",
+      "search": ["受信画像", "画像受信テスト"],
+      "record": {
+        "title": "受信したダミー画像",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": ["受信", "ダミーデータ"]
+      }
+    },
+    {
+      "id": "dummy_photo_1",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_photo_2",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_photo_3",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_photo_4",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_photo_5",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
+      "id": "dummy_photo_6",
+      "appId": "photos",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "imageUrl": "/demo/dummy-data.svg", "tags": ["ダミーデータ"] }
+    },
+    {
       "id": "owner_schedule",
       "appId": "calendar",
       "initialState": "normal",
@@ -186,14 +478,175 @@
       }
     },
     {
+      "id": "dummy_schedule_1",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_2",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_3",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_4",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_5",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_6",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_7",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "dummy_schedule_8",
+      "appId": "calendar",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "date": "2026-08-12", "time": "12:00", "place": "ダミーデータ", "memo": "一覧スクロール確認用のダミーデータです。" }
+    },
+    {
+      "id": "browser_guide",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ブラウザ", "タブ", "Web", "案内"],
+      "record": {
+        "title": "ブラウザ操作ガイド",
+        "url": "/demo/browser/start.html",
+        "allowedUrls": ["/demo/browser/details.html"]
+      }
+    },
+    {
+      "id": "dummy_browser_1",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "dummy_browser_2",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "dummy_browser_3",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "dummy_browser_4",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "dummy_browser_5",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "dummy_browser_6",
+      "appId": "browser",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "title": "ダミーデータ", "url": "/demo/browser/dummy.html" }
+    },
+    {
+      "id": "browser_archive",
+      "appId": "browser",
+      "initialState": "repairable",
+      "repairLabel": "タ▚▐▀▜ブ",
+      "search": ["アーカイブタブ", "ブラウザの記録"],
+      "record": {
+        "title": "アーカイブ",
+        "url": "/demo/browser/archive-k7m2q.html"
+      }
+    },
+    {
       "id": "sample_radio",
       "appId": "radio",
       "initialState": "normal",
       "search": ["ラジオ", "放送", "音声"],
       "record": {
         "programTitle": "接続テスト放送",
-        "genAudioId": "demo_voice"
+        "audioUrl": "/system/radio-caption-sample.wav",
+        "genAudioId": "demo_voice",
+        "transcript": [
+          { "atMs": 0, "text": "ラジオ字幕の表示テストを開始します。" },
+          { "atMs": 3000, "text": "再生位置に合わせて字幕が切り替わります。" },
+          { "atMs": 6000, "text": "字幕データがなければ、この欄は表示されません。" }
+        ]
       }
+    },
+    {
+      "id": "dummy_radio_1",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "programTitle": "ダミーデータ" }
+    },
+    {
+      "id": "dummy_radio_2",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "programTitle": "ダミーデータ" }
+    },
+    {
+      "id": "dummy_radio_3",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "programTitle": "ダミーデータ" }
+    },
+    {
+      "id": "dummy_radio_4",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "programTitle": "ダミーデータ" }
+    },
+    {
+      "id": "dummy_radio_5",
+      "appId": "radio",
+      "initialState": "normal",
+      "search": ["ダミーデータ"],
+      "record": { "programTitle": "ダミーデータ" }
     }
   ],
   "talkPeople": [
@@ -204,7 +657,7 @@
     },
     {
       "id": "guide",
-      "name": "ナビ",
+      "name": "デモ進行係",
       "role": "npc"
     },
     {
@@ -228,6 +681,24 @@
       "lock": "password",
       "title": "鍵付きのメモ",
       "body": "鍵付き添付を開封できました。"
+    },
+    {
+      "id": "demo_received_image_attachment",
+      "type": "image",
+      "asset": "/demo/dummy-data.svg",
+      "content": "demo_received_image"
+    },
+    {
+      "id": "demo_video_poster",
+      "type": "image",
+      "asset": "/demo/dummy-data.svg"
+    },
+    {
+      "id": "demo_video_attachment",
+      "type": "video",
+      "asset": "/demo/demo-video.mp4",
+      "content": "demo_video",
+      "poster": "demo_video_poster"
     }
   ],
   "talks": [
@@ -235,14 +706,126 @@
       "id": "guide",
       "kind": "sms",
       "appId": "messages",
-      "label": "ナビ",
-      "startBlocks": ["intro"]
+      "label": "デモ進行係",
+      "startBlocks": ["history_archive_a", "history_archive_b", "intro"]
+    },
+    {
+      "id": "sms_receiver",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "テスト受信箱",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "sms_media_receiver",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "画像受信",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_1",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_2",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_3",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_4",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_5",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_sms_6",
+      "kind": "sms",
+      "appId": "messages",
+      "label": "ダミーデータ",
+      "startBlocks": ["start"]
     },
     {
       "id": "lobby",
       "kind": "chat",
       "appId": "chat",
       "label": "サンプルルーム",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["history_archive", "start"]
+    },
+    {
+      "id": "chat_receiver",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "連携受信ログ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_1",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_2",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_3",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_4",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_5",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
+      "cond": "sealed_note_unlocked",
+      "startBlocks": ["start"]
+    },
+    {
+      "id": "dummy_chat_6",
+      "kind": "chat",
+      "appId": "chat",
+      "label": "ダミーデータ",
       "cond": "sealed_note_unlocked",
       "startBlocks": ["start"]
     }
@@ -260,7 +843,7 @@
     },
     {
       "id": "report_clue",
-      "text": "メッセージでナビに灯りの色を伝える",
+      "text": "メッセージでデモ進行係に灯りの色を伝える",
       "cond": "rainy_window_opened && !image_color_reported"
     },
     {
@@ -289,7 +872,7 @@
       "id": "welcome",
       "appId": "messages",
       "targetTalkId": "guide",
-      "title": "ナビ",
+      "title": "デモ進行係",
       "body": "ナビ検索とコンテンツ修復を試してみよう。",
       "cond": "!old_note_opened"
     },
@@ -300,6 +883,54 @@
       "title": "チャット認証",
       "body": "再認証用のリンクを発行しました。",
       "cond": "chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "id": "demo_sms_message_received",
+      "appId": "messages",
+      "targetTalkId": "sms_receiver",
+      "title": "テスト受信箱",
+      "body": "別のメッセージルームから新着メッセージが届きました。",
+      "cond": "demo_sms_message_received"
+    },
+    {
+      "id": "demo_sms_cross_received",
+      "appId": "messages",
+      "targetTalkId": "sms_receiver",
+      "title": "テスト受信箱",
+      "body": "チャットからメッセージアプリへ新着が届きました。",
+      "cond": "demo_sms_cross_received"
+    },
+    {
+      "id": "demo_delayed_message_received",
+      "appId": "messages",
+      "targetTalkId": "sms_receiver",
+      "title": "テスト受信箱",
+      "body": "遅延イベントから新着メッセージが届きました。",
+      "cond": "demo_delayed_message_received"
+    },
+    {
+      "id": "demo_image_received",
+      "appId": "messages",
+      "targetTalkId": "sms_media_receiver",
+      "title": "画像受信",
+      "body": "アルバム未登録の画像が届きました。",
+      "cond": "demo_image_received"
+    },
+    {
+      "id": "demo_chat_message_received",
+      "appId": "chat",
+      "targetTalkId": "chat_receiver",
+      "title": "連携受信ログ",
+      "body": "別のチャットルームから新着が届きました。",
+      "cond": "demo_chat_message_received"
+    },
+    {
+      "id": "demo_chat_cross_received",
+      "appId": "chat",
+      "targetTalkId": "chat_receiver",
+      "title": "連携受信ログ",
+      "body": "メッセージアプリからチャットへ新着が届きました。",
+      "cond": "demo_chat_cross_received"
     }
   ],
   "assistantMessages": [
@@ -372,7 +1003,7 @@
       "id": "hint_report",
       "when": "",
       "search": ["ヒント"],
-      "body": "メッセージでナビに、写真で一番大きく見えた灯りの色を送って。",
+      "body": "メッセージでデモ進行係に、写真で一番大きく見えた灯りの色を送って。",
       "cond": "rainy_window_opened && !image_color_reported",
       "suppressResults": true
     },
@@ -442,7 +1073,13 @@
   "incomingCalls": [
     {
       "id": "demo_call",
-      "name": "着信テスト"
+      "name": "着信テスト",
+      "audioUrl": "/system/call-caption-sample.wav",
+      "transcript": [
+        { "atMs": 0, "text": "［低い確認音］" },
+        { "atMs": 2000, "text": "［中くらいの確認音］" },
+        { "atMs": 4000, "text": "［高い確認音］" }
+      ]
     }
   ],
   "initialSchedules": [],
@@ -468,6 +1105,17 @@
       "cond": "!rainy_window_opened"
     },
     {
+      "event": "talk_sent",
+      "target": "guide",
+      "handler": "activate_unlock_todo",
+      "cond": "image_color_reported && !sealed_note_unlocked"
+    },
+    {
+      "event": "talk_sent",
+      "target": "guide",
+      "handler": "handle_demo_test_command"
+    },
+    {
       "event": "content_unlocked",
       "target": "sealed_note",
       "handler": "mark_sealed_note_unlocked",
@@ -482,6 +1130,17 @@
       "event": "scenario_event",
       "target": "show_demo_call",
       "handler": "show_demo_call"
+    },
+    {
+      "event": "scenario_event",
+      "target": "deliver_demo_delayed_message",
+      "handler": "deliver_demo_delayed_message"
+    },
+    {
+      "event": "scenario_event",
+      "target": "incoming_call_completed",
+      "handler": "mark_demo_call_completed",
+      "cond": "!demo_call_completed"
     },
     {
       "event": "scenario_event",
@@ -509,6 +1168,17 @@
       "target": "message_link_opened",
       "handler": "verify_chat_auth",
       "cond": "chat_auth_link_sent && !chat_auth_verified"
+    },
+    {
+      "event": "talk_sent",
+      "target": "lobby",
+      "handler": "complete_demo_todo",
+      "cond": "demo_completed"
+    },
+    {
+      "event": "talk_sent",
+      "target": "lobby",
+      "handler": "handle_demo_chat_test_command"
     },
     {
       "event": "scenario_event",

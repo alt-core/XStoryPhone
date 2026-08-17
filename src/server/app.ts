@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { registerProjectRoutes } from "../project/routes.ts";
+import { evaluateCondition } from "../shared/condition.ts";
 import type { ScenarioHookEvent } from "../shared/hooks.ts";
 import type { StoredTalkMessage } from "../shared/scenario.ts";
 import { APP_VERSION } from "../shared/version.ts";
@@ -12,7 +13,7 @@ import type {
   StoredTranscriptMessage,
   TranscriptUpdate
 } from "./store.ts";
-import { copyStoredPlayerState } from "./store.ts";
+import { copyStoredPlayerState, sha256 } from "./store.ts";
 import { createStructuredOutputProvider } from "../worker/providers/structuredOutput.ts";
 import {
   appById,
@@ -21,14 +22,22 @@ import {
   contentByInternalId,
   contentByPublicId,
   createInitialPlayerState,
+  internalAttachmentId,
+  internalFormId,
+  internalIncomingCallId,
+  lockedContentPasswordHash,
   messagesForTalkBlocks,
+  nextTalkTurnKey,
   notificationIdsForTarget,
+  observedAlbumMediaContentIds,
   openTargetExists,
   publicPlayerState,
   publicTalkMessage,
+  radioAudioCueForEvent,
   reconcileScenarioState,
   revealTalkMessages,
   repairTarget,
+  restoredTalkHistoryMessages,
   searchScenario,
   searchResponseFor,
   talkAvailable,
@@ -44,6 +53,7 @@ import { resolveScenarioTalkRule } from "../worker/services/talkResolver.ts";
 import { applyCompactStateAssignments, effectiveStateValues } from "../worker/stateValues.ts";
 import { registerTalkBranchReviewRoutes } from "../worker/admin/talkBranchReviewRoutes.ts";
 import { BrowserProgressTooLargeError, decodeBrowserProgress, encodeBrowserProgress } from "./browserProgress.ts";
+import { accessCodeCheckDigits } from "./accessCode.ts";
 import { isProductionEnvironment, isResetForTestingAllowed } from "./environment.ts";
 
 type AppContext = Context<ServerEnv>;
@@ -88,18 +98,38 @@ function bearerToken(value: string | undefined) {
   return /^Bearer\s+([^\s]+)$/iu.exec(value ?? "")?.[1] ?? "";
 }
 
+async function browserProgressToken(c: AppContext) {
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  return typeof body?.progressToken === "string" ? body.progressToken : "";
+}
+
 function cleanText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.normalize("NFC").trim().slice(0, maxLength) : "";
+}
+
+function cleanScenarioField(value: unknown, maxLength: number) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value).slice(0, maxLength);
+  if (typeof value === "boolean") return String(value);
+  return cleanText(value, maxLength);
 }
 
 function internalScenarioField(key: string, value: string) {
   if (key === "contentId") return contentByPublicId(value)?.id ?? value;
   if (key === "talkId") return talkByPublicId(value)?.id ?? value;
+  if (key === "attachmentId") return internalAttachmentId(value) || value;
+  if (key === "callId") return internalIncomingCallId(value) || value;
+  if (key === "formId") return internalFormId(value) || value;
   return value;
 }
 
 function unique(items: readonly string[]) {
   return [...new Set(items)];
+}
+
+function requestedMediaContentIds(body: Record<string, unknown> | null) {
+  return Array.isArray(body?.mediaContentIds)
+    ? body.mediaContentIds.slice(0, 100).map((item) => cleanText(item, 160)).filter(Boolean)
+    : [];
 }
 
 function repairTargetWasFound(state: StoredPlayerState, contentId: string, appId: string) {
@@ -123,6 +153,32 @@ function syncTalkReadCursors(state: StoredPlayerState, body: Record<string, unkn
     changed = true;
   }
   return changed;
+}
+
+function cleanRecentMessages(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-4).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const speaker = cleanText(record.speaker, 40) || "other";
+    const messageBody = cleanText(record.body, 500);
+    return messageBody ? [{ speaker, body: messageBody }] : [];
+  });
+}
+
+async function recentMessagesForTalk(
+  c: AppContext,
+  player: PlayerRecord,
+  talkId: string,
+  transcriptKey: string,
+  clientValue: unknown
+) {
+  if (browserMode()) return cleanRecentMessages(clientValue);
+  const transcript = await dependencies(c).store.loadTranscript(player.id, `talk:${talkId}`, transcriptKey);
+  return transcript.messages.filter((message): message is StoredTalkMessage => "sender" in message).slice(-4).map((message) => ({
+    speaker: message.sender === "owner" ? "player" : message.senderName || "other",
+    body: message.body
+  }));
 }
 
 async function queueInitialSchedules(c: AppContext, playerId: string) {
@@ -223,16 +279,14 @@ async function commitPlayer(
   requestedState: StoredPlayerState,
   transcriptAppends: readonly TranscriptUpdate[] = []
 ): Promise<{ ok: true; player: PlayerRecord } | { ok: false }> {
-  const reconciled = reconcileScenarioState(requestedState, player.legacyTranscripts);
+  const reconciled = await reconcileScenarioState(requestedState, player.id);
   const appends = mergeTranscriptAppends([
-    ...(player.legacyTranscripts ?? []),
     ...transcriptAppends,
     ...reconciled.transcriptAppends
   ]);
   const stateChanged = JSON.stringify(reconciled.state) !== JSON.stringify(player.state);
   if (!stateChanged && !appends.length) {
-    const { legacyTranscripts: _legacyTranscripts, ...current } = player;
-    return { ok: true, player: { ...current, state: reconciled.state } };
+    return { ok: true, player: { ...player, state: reconciled.state } };
   }
   if (browserMode()) {
     return {
@@ -262,7 +316,7 @@ async function commitPlayer(
 
 async function resolvePlayer(c: AppContext, applyScheduledEvents = true) {
   if (browserMode()) {
-    const token = c.req.header("x-xstoryphone-progress") ?? "";
+    const token = await browserProgressToken(c);
     const player = await decodeBrowserProgress(browserStateSecret(c), workerScenario.project.id, token);
     if (!player) return null;
     const committed = await commitPlayer(c, player, player.state);
@@ -280,6 +334,12 @@ async function resolvePlayer(c: AppContext, applyScheduledEvents = true) {
   return null;
 }
 
+async function resolveMutationPlayer(c: AppContext) {
+  const player = await resolvePlayer(c, false);
+  if (!player) return null;
+  return applyDueScheduledEventsResult(c, player);
+}
+
 async function stateJson(c: AppContext, player: PlayerRecord, state = player.state, version = player.stateVersion) {
   if (browserMode()) {
     const generatedAudio = workerScenario.generatedAudio.map((definition) => ({
@@ -292,7 +352,7 @@ async function stateJson(c: AppContext, player: PlayerRecord, state = player.sta
     }));
     const wakeAt = state.browserScheduledEvents[0]?.dueAt ?? null;
     return {
-      ...publicPlayerState(state, version, generatedAudio, wakeAt, player.transcriptDeltas ?? []),
+      ...await publicPlayerState(state, version, generatedAudio, wakeAt, player.transcriptDeltas ?? []),
       progressToken: await encodeBrowserProgress(browserStateSecret(c), workerScenario.project.id, workerScenario.revision, {
         id: player.id,
         state,
@@ -318,7 +378,7 @@ async function conflict(c: AppContext, player: PlayerRecord, applyScheduledEvent
 
 async function applyHookResult(c: AppContext, playerId: string, state: StoredPlayerState, event: ScenarioHookEvent) {
   const llmProvider = workerScenario.features.llm ? createStructuredOutputProvider(dependencies(c).config.llm) ?? undefined : undefined;
-  const result = await runScenarioHooks(state, event, { llmProvider });
+  const result = await runScenarioHooks(state, event, { llmProvider, playerId });
   if (result.outcome?.kind === "form_error") return result;
   if (browserMode()) {
     result.state = await applyBrowserSchedules(result.state, result.scheduleEffects);
@@ -359,18 +419,25 @@ function clientScenarioEventAllowed(eventId: string) {
   return coreClientScenarioEvents.has(eventId) || workerScenario.clientCallableEvents.includes(eventId);
 }
 
-function formAvailable(formId: string, state: StoredPlayerState) {
-  return workerScenario.contents.some((content) => {
+function availableFormContent(formId: string, state: StoredPlayerState) {
+  return workerScenario.contents.find((content) => {
     const form = content.record.form;
+    const disabledCond = typeof content.record.formDisabledCond === "string" ? content.record.formDisabledCond : "";
     return contentAvailable(content, state)
       && form !== null
       && typeof form === "object"
       && !Array.isArray(form)
-      && (form as { id?: unknown }).id === formId;
+      && (form as { id?: unknown; disabled?: unknown }).id === formId
+      && (form as { disabled?: unknown }).disabled !== true
+      && !(disabledCond && evaluateCondition(
+        disabledCond,
+        effectiveStateValues(workerScenario.stateVariables, state.stateValues)
+      ));
   });
 }
 
-async function applyDueScheduledEvents(c: AppContext, initialPlayer: PlayerRecord) {
+async function applyDueScheduledEventsResult(c: AppContext, initialPlayer: PlayerRecord) {
+  if (initialPlayer.state.incomingCallId) return { player: initialPlayer, interrupted: true };
   if (browserMode()) {
     let player = initialPlayer;
     const now = new Date().toISOString();
@@ -400,12 +467,13 @@ async function applyDueScheduledEvents(c: AppContext, initialPlayer: PlayerRecor
             ...(committed.player.transcriptDeltas ?? [])
           ])
         };
+        if (player.state.incomingCallId) return { player, interrupted: true };
       } catch (error) {
         console.error("[browser_scheduled_event]", error);
         throw new RetryableScheduledEventError(error);
       }
     }
-    return player;
+    return { player, interrupted: false };
   }
   let player = initialPlayer;
   const due = await dependencies(c).store.dueScheduledEvents(player.id, new Date().toISOString());
@@ -427,6 +495,7 @@ async function applyDueScheduledEvents(c: AppContext, initialPlayer: PlayerRecor
         ])
       };
       await dependencies(c).store.completeScheduledEvent(player.id, event.id);
+      if (player.state.incomingCallId) return { player, interrupted: true };
     } catch (error) {
       try {
         await dependencies(c).store.requeueScheduledEvent(player.id, event.id);
@@ -437,7 +506,11 @@ async function applyDueScheduledEvents(c: AppContext, initialPlayer: PlayerRecor
       throw new RetryableScheduledEventError(error);
     }
   }
-  return player;
+  return { player, interrupted: false };
+}
+
+async function applyDueScheduledEvents(c: AppContext, player: PlayerRecord) {
+  return (await applyDueScheduledEventsResult(c, player)).player;
 }
 
 export function createApp(appDependencies: AppDependencies) {
@@ -507,7 +580,7 @@ app.post("/api/session/start", async (c) => {
     if (!browserStateSecret(c)) return c.json({ ok: false, error: "browser_state_secret_missing" }, 500);
     const initialState = await withInitialBrowserSchedules(createInitialPlayerState());
     const player: PlayerRecord = { id: crypto.randomUUID(), state: initialState, stateVersion: 0 };
-    const reconciled = reconcileScenarioState(player.state);
+    const reconciled = await reconcileScenarioState(player.state, player.id);
     const hookResult = await applyHookResult(c, player.id, reconciled.state, {
       event: "session_started",
       target: "session_started"
@@ -533,13 +606,30 @@ app.post("/api/session/start", async (c) => {
   if (!validCode) {
     return c.json({ ok: false, error: "invalid" }, 400);
   }
-  const created = await dependencies(c).store.createPasscodeSession(serialCode, createInitialPlayerState());
+  const accessCodeSecret = dependencies(c).config.accessCodeSecret?.trim() ?? "";
+  let playerAccessCode = serialCode;
+  if (!localDevelopment && accessCodeSecret) {
+    const checkDigits = serialCode.slice(0, 4);
+    const counter = serialCode.slice(4);
+    const attemptedAt = new Date().toISOString();
+    if (await dependencies(c).store.isAccessCodeLocked(counter, attemptedAt)) {
+      return c.json({ ok: false, error: "rate_limited" }, 429);
+    }
+    const expected = await accessCodeCheckDigits(counter, accessCodeSecret);
+    if (checkDigits !== expected) {
+      await dependencies(c).store.recordAccessCodeAttempt(counter, false, attemptedAt);
+      return c.json({ ok: false, error: "invalid" }, 400);
+    }
+    await dependencies(c).store.recordAccessCodeAttempt(counter, true, attemptedAt);
+    playerAccessCode = counter;
+  }
+  const created = await dependencies(c).store.createPasscodeSession(playerAccessCode, createInitialPlayerState());
   if (created.created) {
     await queueInitialSchedules(c, created.playerId);
   }
   const player = await dependencies(c).store.playerForSession(created.sessionToken);
   if (!player) return c.json({ ok: false, error: "session_create_failed" }, 500);
-  const reconciled = reconcileScenarioState(player.state, player.legacyTranscripts);
+  const reconciled = await reconcileScenarioState(player.state, player.id);
   const hookResult = await applyHookResult(c, player.id, reconciled.state, { event: "session_started", target: "session_started" });
   const committed = await commitPlayer(c, player, hookResult.state, [
     ...reconciled.transcriptAppends,
@@ -550,11 +640,13 @@ app.post("/api/session/start", async (c) => {
   return c.json({ ok: true, sessionToken: created.sessionToken, playerState: await stateJson(c, sessionPlayer) });
 });
 
-app.get("/api/player-state", async (c) => {
+const handlePlayerState = async (c: AppContext) => {
   const player = await resolvePlayer(c);
   if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
   return c.json({ ok: true, playerState: await stateJson(c, player) });
-});
+};
+
+app.post("/api/player-state", handlePlayerState);
 
 app.get("/api/transcript/:stream", async (c) => {
   const player = await resolvePlayer(c);
@@ -601,18 +693,24 @@ app.post("/api/reset-for-testing", async (c) => {
   const nextState = browserMode()
     ? await withInitialBrowserSchedules(createInitialPlayerState())
     : createInitialPlayerState();
-  const committed = await commitPlayer(c, player, nextState);
-  if (!committed.ok) return conflict(c, player);
   if (!browserMode()) {
     await dependencies(c).store.clearPlayerRuntimeJobs(player.id);
     await queueInitialSchedules(c, player.id);
   }
+  const hookResult = await applyHookResult(c, player.id, nextState, {
+    event: "session_started",
+    target: "session_started"
+  });
+  const committed = await commitPlayer(c, player, hookResult.state, hookResult.transcriptAppends);
+  if (!committed.ok) return conflict(c, player);
   return c.json({ ok: true, playerState: await stateJson(c, committed.player) });
 });
 
 app.post("/api/search-agent/search", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const query = cleanText(body?.query, 500);
   const requestId = cleanText(body?.requestId, 120) || crypto.randomUUID();
@@ -690,8 +788,10 @@ app.post("/api/search-agent/search", async (c) => {
 });
 
 app.post("/api/content/opened", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const contentId = cleanText(body?.contentId, 160);
   const appId = cleanText(body?.appId, 64);
@@ -701,6 +801,7 @@ app.post("/api/content/opened", async (c) => {
     return c.json({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
   }
 
+  const notificationIdsToClear = notificationIdsForTarget(contentId, player.state);
   let nextState = copyStoredPlayerState(player.state);
   syncTalkReadCursors(nextState, body);
   const target = repairTarget(contentId, appId);
@@ -720,6 +821,15 @@ app.post("/api/content/opened", async (c) => {
     }
     nextState.repairedContentIds = unique([...nextState.repairedContentIds, target.internalId]);
     internalTargetId = target.internalId;
+    const restoredHistory = restoredTalkHistoryMessages(nextState, target.internalId);
+    if (restoredHistory?.messages.length) {
+      nextState = revealTalkMessages(nextState, restoredHistory.talk.id, restoredHistory.messages);
+      transcriptAppends.push({
+        streamId: `talk:${restoredHistory.talk.id}`,
+        transcriptKey: nextState.talks[restoredHistory.talk.id].transcriptKey,
+        messages: restoredHistory.messages
+      });
+    }
     repaired = true;
   }
   if (repaired) {
@@ -727,53 +837,65 @@ app.post("/api/content/opened", async (c) => {
     nextState = hookResult.state;
     transcriptAppends.push(...hookResult.transcriptAppends);
   }
-  nextState.openedContentIds = unique([...nextState.openedContentIds, internalTargetId]);
   const openedHookResult = await applyHooks(c, player.id, nextState, { event: "content_opened", target: internalTargetId, fields: { appId } });
   nextState = openedHookResult.state;
   transcriptAppends.push(...openedHookResult.transcriptAppends);
-  const cleared = new Set(notificationIdsForTarget(contentId, nextState));
-  nextState.clearedNotificationIds = unique([...nextState.clearedNotificationIds, ...cleared]);
+  const openedTalk = talkByPublicId(contentId);
+  if (openedTalk && openedTalk.appId === appId) {
+    nextState.repairedContentIds = unique([
+      ...nextState.repairedContentIds,
+      ...observedAlbumMediaContentIds(openedTalk, nextState, requestedMediaContentIds(body))
+    ]);
+  }
+  nextState.clearedNotificationIds = unique([...nextState.clearedNotificationIds, ...notificationIdsToClear]);
   const committed = await commitPlayer(c, player, nextState, transcriptAppends);
   if (!committed.ok) return conflict(c, player);
   return c.json({ ok: true, playerState: await stateJson(c, committed.player) });
 });
 
 app.post("/api/content/media-observed", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-  const publicContentId = cleanText(body?.contentId, 160);
+  const publicTalkId = cleanText(body?.contentId, 160);
   const appId = cleanText(body?.appId, 64);
-  const content = contentByPublicId(publicContentId);
-  if (!content || content.appId !== appId || !contentAvailable(content, player.state)) return c.json({ ok: false, error: "not_available" }, 409);
-  const hookResult = await applyHooks(c, player.id, player.state, {
-    event: "scenario_event",
-    target: "content_media_observed",
-    fields: { contentId: content.id, appId }
-  });
-  if (JSON.stringify(hookResult.state) === JSON.stringify(player.state) && !hookResult.transcriptAppends.length) {
+  const mediaContentIds = requestedMediaContentIds(body);
+  const talk = talkByPublicId(publicTalkId);
+  if (!talk || talk.appId !== appId || !talkAvailable(talk, player.state)) {
+    return c.json({ ok: false, error: "not_available" }, 409);
+  }
+  const repairedContentIds = observedAlbumMediaContentIds(talk, player.state, mediaContentIds);
+  if (!repairedContentIds.length) {
     return c.json({ ok: true, playerState: await stateJson(c, player) });
   }
-  const committed = await commitPlayer(c, player, hookResult.state, hookResult.transcriptAppends);
+  const nextState = copyStoredPlayerState(player.state);
+  nextState.repairedContentIds = unique([...nextState.repairedContentIds, ...repairedContentIds]);
+  const committed = await commitPlayer(c, player, nextState);
   if (!committed.ok) return conflict(c, player);
   return c.json({ ok: true, playerState: await stateJson(c, committed.player) });
 });
 
 app.post("/api/content/unlock", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const contentId = cleanText(body?.contentId, 160);
   const password = cleanText(body?.password, 100);
   const content = contentByPublicId(contentId);
-  const expected = typeof content?.record.unlockCode === "string" ? content.record.unlockCode : "";
+  const expectedHash = content ? lockedContentPasswordHash(content.id) : "";
   const attachmentVisible = content
     && openTargetExists(content.publicId, content.appId, player.state)
     && player.state.revealedAttachmentContentIds.includes(content.id);
   if (!content || !attachmentVisible) {
     return c.json({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
   }
-  if (!expected || password !== expected) return c.json({ ok: false, error: "invalid" }, 400);
+  if (!password || !expectedHash || await sha256(password.normalize("NFKC")) !== expectedHash) {
+    return c.json({ ok: false, error: "invalid" }, 400);
+  }
   const nextState = copyStoredPlayerState(player.state);
   nextState.unlockedContentIds = unique([...nextState.unlockedContentIds, content.id]);
   const hookResult = await applyHooks(c, player.id, nextState, { event: "content_unlocked", target: content.id });
@@ -786,8 +908,13 @@ app.post("/api/scenario/event", async (c) => {
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const eventId = cleanText(body?.eventId, 160);
   const deferScheduledEvents = completionScenarioEvents.has(eventId);
-  const player = await resolvePlayer(c, !deferScheduledEvents);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const playerBeforeDueEvents = deferScheduledEvents ? await resolvePlayer(c, false) : null;
+  const resolved = deferScheduledEvents
+    ? playerBeforeDueEvents && { player: playerBeforeDueEvents, interrupted: false }
+    : await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   if (!eventId) return c.json({ ok: false, error: "invalid" }, 400);
   if (!clientScenarioEventAllowed(eventId)) return c.json({ ok: false, error: "event_not_callable" }, 403);
   const nestedFields = body?.fields && typeof body.fields === "object" && !Array.isArray(body.fields)
@@ -795,9 +922,16 @@ app.post("/api/scenario/event", async (c) => {
     : {};
   const rootFields = Object.fromEntries(Object.entries(body ?? {}).filter(([key]) => key !== "eventId" && key !== "fields"));
   const fields = Object.fromEntries(Object.entries({ ...rootFields, ...nestedFields }).slice(0, 20)
-    .map(([key, value]) => [cleanText(key, 80), cleanText(value, 500)])
+    .map(([key, value]) => [cleanText(key, 80), cleanScenarioField(value, 500)])
     .filter(([key]) => key)
     .map(([key, value]) => [key, internalScenarioField(key, value)]));
+  if (eventId === "audio_cue_reached") {
+    const cue = radioAudioCueForEvent(fields.contentId ?? "", Number(fields.cueIndex), player.state);
+    if (!cue) return c.json({ ok: false, error: "invalid" }, 400);
+    fields.cueId = cue.cueId;
+    fields.cueTarget = cue.cueTarget;
+    fields.cueIndex = String(cue.cueIndex);
+  }
   if (eventId === "incoming_call_completed" && fields.callId !== player.state.incomingCallId) {
     const current = deferScheduledEvents ? await applyDueScheduledEvents(c, player) : player;
     return c.json({ ok: true, playerState: await stateJson(c, current) });
@@ -823,8 +957,10 @@ app.post("/api/scenario/event", async (c) => {
 });
 
 app.post("/api/message-link/open", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const publicTalkId = cleanText(body?.talkId, 160);
   const messageRef = cleanText(body?.messageRef, 200);
@@ -859,6 +995,8 @@ app.post("/api/message-link/open", async (c) => {
       fields: {
         actionId: link.actionId,
         talkId: talk.id,
+        appId: link.appId,
+        contentId: link.contentId,
         linkId: link.id
       }
     });
@@ -879,8 +1017,10 @@ app.post("/api/message-link/open", async (c) => {
 });
 
 app.post("/api/talk/send", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   const publicTalkId = cleanText(body?.talkId, 160);
   const message = internalizeTalkCommand(cleanText(body?.message, 1_000));
@@ -900,6 +1040,7 @@ app.post("/api/talk/send", async (c) => {
   if (!talkCommandAvailable(message, player.state)) return c.json({ ok: false, error: "invalid_attachment" }, 400);
 
   const fromId = storedTalk.from;
+  const recentMessages = await recentMessagesForTalk(c, player, talk.id, storedTalk.transcriptKey, body?.recentMessages);
   const selection = await resolveScenarioTalkRule({
     env: dependencies(c).config.llm,
     llmEnabled: workerScenario.features.llm,
@@ -907,7 +1048,8 @@ app.post("/api/talk/send", async (c) => {
     from: fromId,
     playerInput: message,
     semanticPlayerInput: semanticInputForTalkCommand(message),
-    stateValues: effectiveStateValues(workerScenario.stateVariables, player.state.stateValues)
+    stateValues: effectiveStateValues(workerScenario.stateVariables, player.state.stateValues),
+    recentMessages
   });
   if (!selection.ok) {
     const error = selection.error.startsWith("provider_") ? "llm_unavailable" : selection.error;
@@ -925,10 +1067,11 @@ app.post("/api/talk/send", async (c) => {
     workerScenario.stateVariables,
     nextState.stateValues,
     selection.rule.set,
-    selection.matchGroups
+    selection.matchGroups,
+    workerScenario.stateVariableDefinitions
   );
   nextTalk.from = nextFrom;
-  nextTalk.turnKey = crypto.randomUUID();
+  nextTalk.turnKey = await nextTalkTurnKey(player.id, talk.id, turnKey, nextFrom);
 
   const ownerMessage: StoredTalkMessage = {
     seq: nextTalk.lastMessageSeq + 1,
@@ -977,7 +1120,13 @@ app.post("/api/talk/send", async (c) => {
     event: "talk_sent",
     target: talk.id,
     playerInput: message,
-    ruleId: selection.rule.id
+    ruleId: selection.rule.id,
+    fields: {
+      kind: talk.kind,
+      fromId,
+      nextFromId: nextFrom,
+      ruleId: selection.rule.id
+    }
   });
   const hookedState = talkHookResult.state;
   if (talkHookResult.outcome?.kind === "form_error") {
@@ -1034,12 +1183,17 @@ app.post("/api/talk/send", async (c) => {
 });
 
 app.post("/api/form/submit", async (c) => {
-  const player = await resolvePlayer(c);
-  if (!player) return c.json({ ok: false, error: "unauthorized" }, 401);
+  const resolved = await resolveMutationPlayer(c);
+  if (!resolved) return c.json({ ok: false, error: "unauthorized" }, 401);
+  if (resolved.interrupted) return c.json({ ok: false, error: "incoming_call_active", playerState: await stateJson(c, resolved.player) }, 409);
+  const player = resolved.player;
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
-  const formId = cleanText(body?.formId, 160);
-  if (!formId) return c.json({ ok: false, error: "invalid" }, 400);
-  if (!formAvailable(formId, player.state)) {
+  const publicFormId = cleanText(body?.formId, 160);
+  if (!publicFormId) return c.json({ ok: false, error: "invalid" }, 400);
+  const formId = internalFormId(publicFormId);
+  if (!formId) return c.json({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+  const formContent = availableFormContent(formId, player.state);
+  if (!formContent) {
     return c.json({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
   }
   const fields = body?.fields && typeof body.fields === "object" && !Array.isArray(body.fields)
@@ -1051,7 +1205,12 @@ app.post("/api/form/submit", async (c) => {
   const hookResult = await applyHookResult(c, player.id, player.state, {
     event: "scenario_event",
     target: formId,
-    fields
+    fields: {
+      ...fields,
+      formId,
+      appId: formContent.appId,
+      contentId: formContent.id
+    }
   });
   const nextState = hookResult.state;
   if (hookResult.outcome?.kind === "form_error") {

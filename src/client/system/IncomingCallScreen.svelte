@@ -3,6 +3,7 @@
   import { PhoneCall, PhoneOff, RotateCcw } from "@lucide/svelte";
   import type { IncomingCallItem } from "../scenario-runtime/types";
   import { playAudio, stopAudioPlayback } from "./audioEngine";
+  import { captionAt } from "./timedTranscript";
 
   export let call: IncomingCallItem;
   export let onComplete: (callId: string) => void = () => {};
@@ -15,6 +16,9 @@
   let audioErrorVisible = false;
   let bellWanted = true;
   let bellRetryArmed = false;
+  let playbackCurrentMs = 0;
+
+  $: activeCaption = captionAt(call.transcript, playbackCurrentMs);
 
   onMount(() => {
     void startBell();
@@ -84,6 +88,7 @@
     stopBell();
     answered = true;
     audioCompleted = false;
+    playbackCurrentMs = 0;
 
     if (!call.audioUrl) {
       completeCall();
@@ -96,6 +101,9 @@
       segments: [{ url: call.audioUrl }],
       onStarted: () => {
         callStarting = false;
+      },
+      onProgress: (progress) => {
+        playbackCurrentMs = progress.currentMs;
       },
       onEnded: completeCall,
       onStop: () => {
@@ -113,6 +121,7 @@
     answered = false;
     audioCompleted = false;
     callStarting = false;
+    playbackCurrentMs = 0;
     audioErrorVisible = true;
   }
 
@@ -138,6 +147,7 @@
   function callPlaybackId() {
     return `incoming-call:${call.id}`;
   }
+
 </script>
 
 <section class="incoming-call" class:answered aria-label={answered ? "通話中" : "着信"}>
@@ -146,10 +156,13 @@
     <strong>{call.name}</strong>
   </div>
 
-  <div class="call-visual" class:active={answered} aria-hidden="true">
+  <div class="call-visual" class:active={answered}>
     <span></span>
     <span></span>
     <span></span>
+    {#if answered && activeCaption}
+      <p class="call-caption" aria-live="polite">{activeCaption}</p>
+    {/if}
   </div>
 
   {#if answered}
@@ -324,6 +337,26 @@
     width: 190px;
     height: 190px;
     animation-delay: 720ms;
+  }
+
+  .call-caption {
+    position: absolute;
+    z-index: 2;
+    bottom: -3px;
+    width: min(304px, calc(100vw - 58px));
+    max-height: 4.5em;
+    overflow: hidden;
+    margin: 0;
+    padding: 8px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 11px;
+    background: rgba(2, 6, 8, 0.82);
+    color: rgba(255, 255, 255, 0.94);
+    font-size: 0.8rem;
+    font-weight: 650;
+    line-height: 1.5;
+    text-align: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   }
 
   .call-action {

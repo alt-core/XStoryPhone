@@ -71,4 +71,6 @@ context.schedule.after("scheduled_call", 30_000, "show_scheduled_call");
 context.incomingCall.show("scheduled_call");
 ```
 
-`scenario.json` の `incomingCalls` へ表示名と任意の音声URLを定義します。初回ログインからの相対時間で開始するものは `initialSchedules` に定義できます。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。
+`scenario.json` の `incomingCalls` へ表示名と任意の音声URLを定義します。`transcript` に音声開始からのミリ秒と本文を並べると、通話中の字幕として同期表示されます。電話アプリの履歴で音声と全文書き起こしを提供する場合は、別途 `phone` コンテンツの `record.audioUrl` と `record.transcript` に同じ形式で定義します。
+
+初回ログインからの相対時間で開始するものは `initialSchedules` に定義できます。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。

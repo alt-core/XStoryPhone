@@ -3,10 +3,9 @@ import { safeLocalStorage } from "./browserStorage";
 
 const STORAGE_KEY = "xstoryphone.ui";
 const START_CONFIRMATION_STORAGE_KEY = "xstoryphone.start-confirmation";
-const LEGACY_PRIVACY_CONSENT_STORAGE_KEY = "xstoryphone.privacy-consent";
 const currentVersion = 5;
 const startConfirmationVersion = 3;
-const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "calendar", "radio"]);
+const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
 
 export type PersistedUiState = {
   version: 5;
@@ -84,7 +83,7 @@ export function loadUiState(): PersistedUiState {
   try {
     const parsed = JSON.parse(rawValue) as StoredUiState;
 
-    if (parsed.version !== currentVersion && parsed.version !== 4) {
+    if (parsed.version !== currentVersion) {
       safeLocalStorage.removeItem(STORAGE_KEY);
       return defaultUiState;
     }
@@ -113,8 +112,6 @@ export function saveUiState(state: PersistedUiState) {
 }
 
 export function hasStartConfirmation() {
-  safeLocalStorage.removeItem(LEGACY_PRIVACY_CONSENT_STORAGE_KEY);
-
   const rawValue = safeLocalStorage.getItem(START_CONFIRMATION_STORAGE_KEY);
 
   if (!rawValue) {
@@ -136,8 +133,6 @@ export function hasStartConfirmation() {
 }
 
 export function saveStartConfirmation() {
-  safeLocalStorage.removeItem(LEGACY_PRIVACY_CONSENT_STORAGE_KEY);
-
   safeLocalStorage.setItem(
     START_CONFIRMATION_STORAGE_KEY,
     JSON.stringify({
@@ -150,5 +145,4 @@ export function saveStartConfirmation() {
 
 export function clearStartConfirmation() {
   safeLocalStorage.removeItem(START_CONFIRMATION_STORAGE_KEY);
-  safeLocalStorage.removeItem(LEGACY_PRIVACY_CONSENT_STORAGE_KEY);
 }

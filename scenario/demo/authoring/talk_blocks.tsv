@@ -1,5 +1,10 @@
 comment	sender	body	attachment	time	delay_ms	notes	updated_at	source
 *guide
+history_archive_a
+	guide	これは修復対象になる過去のメッセージ履歴です。		2026-08-11T19:10:00+09:00			2026-08-12	human
+	owner	block内の複数メッセージもまとめて復元されます。		2026-08-11T19:11:00+09:00			2026-08-12	human
+history_archive_b
+	guide	連続する破損blockは、修復前には一つの破損表示へまとまります。		2026-08-11T19:12:00+09:00			2026-08-12	human
 intro
 	guide	XStoryPhoneの基本操作を順に試します。まず右下のナビで「古いメモ」と検索してください。		20:14			2026-08-12	human
 intro_prompt
@@ -23,11 +28,106 @@ chat_auth_link
 	guide	チャットの再認証リンクを発行しました。[チャットを開く](open:chat:lobby;action:chat_auth_link_opened)			500		2026-08-12	human
 sealed_note_opened
 	guide	鍵付き添付を開封できました。ホームに壊れたチャットが現れたので、ナビで「チャット」と検索して開いてください。			500		2026-08-12	human
+call_history_guide
+	guide	聞き逃した着信音声は、[着信履歴](open:phone:demo_call_history)から再生できます。音声書き起こしも同じ画面で最後まで読めます。			500		2026-08-12	human
+demo_test_ack
+	guide	機能テストを受け付けました。別ルームへの受信や、数秒後に起きる変化を確認してください。			350		2026-08-12	human
 *lobby
+history_archive
+	visitor	これは修復対象になる過去のチャット履歴です。		2026-08-11T20:00:00+09:00			2026-08-12	human
 start
 	visitor	チャットUIとdefault分岐の確認です。何かメッセージを送ってください。		20:14			2026-08-12	human
+chat_test_ack
+	visitor	連携テストを受け付けました。別のルームまたはメッセージアプリを確認してください。			350		2026-08-12	human
 lobby_reply
 	visitor	メッセージを受け取りました。			400		2026-08-12	human
 	guide	検索・修復・会話・添付解錠・チャット再認証のデモは完了です。			650		2026-08-12	human
 lobby_done
 	visitor	追加のメッセージも受け取りました。			400		2026-08-12	human
+*sms_receiver
+start
+	owner	機能テスト用の受信箱です。		20:14			2026-08-12	human
+receiver_reply
+	guide	このルームは受信結果の確認用です。			350		2026-08-12	human
+received_from_sms
+	guide	「デモ進行係」から、別のメッセージルームへ届きました。			500		2026-08-12	human
+received_from_chat
+	guide	チャットの「サンプルルーム」から、メッセージアプリへ届きました。			500		2026-08-12	human
+received_delayed
+	guide	予定イベントの時刻になったため、遅延メッセージが届きました。			500		2026-08-12	human
+*sms_media_receiver
+start
+	owner	アルバム未登録画像の受信確認用です。		20:14			2026-08-12	human
+receiver_reply
+	guide	このルームは画像受信の確認用です。			350		2026-08-12	human
+received_image
+	guide	アルバムにまだ表示されていない画像です。このルームで表示するとアルバムへ自動登録されます。	demo_received_image_attachment		500		2026-08-12	human
+*chat_receiver
+start
+	owner	機能テスト用の連携受信ログです。		20:14			2026-08-12	human
+receiver_reply
+	visitor	このルームは連携結果の確認用です。			350		2026-08-12	human
+received_from_sms
+	visitor	メッセージアプリの「デモ進行係」からチャットへ届きました。			500		2026-08-12	human
+received_from_chat
+	visitor	「サンプルルーム」から別のチャットルームへ届きました。			500		2026-08-12	human
+*dummy_sms_1
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_sms_2
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_sms_3
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_sms_4
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_sms_5
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_sms_6
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	guide	ダミーデータ			250		2026-08-12	human
+*dummy_chat_1
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human
+*dummy_chat_2
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human
+*dummy_chat_3
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human
+*dummy_chat_4
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human
+*dummy_chat_5
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human
+*dummy_chat_6
+start
+	owner	ダミーデータ		20:14			2026-08-12	human
+dummy_reply
+	visitor	ダミーデータ			250		2026-08-12	human

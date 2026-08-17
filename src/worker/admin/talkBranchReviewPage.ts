@@ -63,11 +63,9 @@ export function talkBranchReviewPageHtml() {
     body.source-colors .source-human .script-body { color: #234c74; }
     body.source-colors .source-ai .script-body { color: #6a4274; }
     body.source-colors .source-ai_edited .script-body { color: #68562f; }
-    body.source-colors .source-legacy .script-body { color: #20242b; }
     body.source-colors .branch-tabs button.source-human { color: #234c74; }
     body.source-colors .branch-tabs button.source-ai { color: #6a4274; }
     body.source-colors .branch-tabs button.source-ai_edited { color: #68562f; }
-    body.source-colors .branch-tabs button.source-legacy { color: #20242b; }
     body.source-colors .branch-tabs button.active { border-bottom-color: currentColor; }
     .example-line { color: #8a5a00; }
     .example-line .speaker { color: #8a5a00; }
@@ -228,14 +226,13 @@ export function talkBranchReviewPageHtml() {
     }
 
     function lineSource(message) {
-      const value = text(message && message.source) || 'legacy';
-      return value === 'human' || value === 'ai' || value === 'ai_edited' || value === 'legacy' ? value : 'legacy';
+      const value = text(message && message.source);
+      return value === 'human' || value === 'ai' || value === 'ai_edited' ? value : '';
     }
 
     function sourceRank(source) {
       return source === 'ai' ? 4
         : source === 'ai_edited' ? 3
-        : source === 'legacy' ? 2
         : source === 'human' ? 1
         : 0;
     }
@@ -405,7 +402,8 @@ export function talkBranchReviewPageHtml() {
     function appendScriptLine(parent, speaker, body, className = '', meta = null) {
       if (!body) return;
       const row = document.createElement('div');
-      const sourceClass = meta ? 'source-' + lineSource(meta) : '';
+      const source = meta ? lineSource(meta) : '';
+      const sourceClass = source ? 'source-' + source : '';
       row.className = ['script-line', className, sourceClass, messageHasUpdated(meta) ? 'updated-line' : ''].filter(Boolean).join(' ');
       const s = document.createElement('div');
       s.className = 'speaker';

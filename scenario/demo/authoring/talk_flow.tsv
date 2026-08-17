@@ -1,9 +1,26 @@
 comment	talk	from	cond	intent	criteria	example	match	next	mode	set	notes
 	guide	*		ヘルプ	/^(?:help|ヘルプ)$/i	ヘルプ		common_help	stay		どの状態からでも利用できる共通分岐
+	guide	*		機能テスト	/^(?:着信テスト|遅延メッセージ|メッセージ連携|画像受信テスト|チャットへ送る)$/u	着信テスト		demo_test_ack	stay		機能テスト一覧メモに記載したデモコマンド
 	guide	intro	rainy_window_opened	灯りの色を報告	/(?:黄色?|きいろ|オレンジ(?:色)?|橙色)/u	黄色です		"found_lead
 found_done"		image_color_reported=true	正規表現だけで選択するデモ
 	guide	intro						intro_prompt	stay
 	guide	found_done		ゲームオーバー確認	/^終了$/u	終了		game_over_reply	game_over		ゲームオーバーUIのデモ
 	guide	found_done						done_repeat	stay
 	lobby	start						lobby_reply		demo_completed=true
+	lobby	*		機能テスト	/^(?:チャット連携|メッセージへ送る)$/u	チャット連携		chat_test_ack	stay		別ルーム・別アプリへの連携確認
 	lobby	lobby_reply						lobby_done	stay
+	sms_receiver	start						receiver_reply	stay
+	sms_media_receiver	start						receiver_reply	stay
+	dummy_sms_1	start						dummy_reply	stay
+	dummy_sms_2	start						dummy_reply	stay
+	dummy_sms_3	start						dummy_reply	stay
+	dummy_sms_4	start						dummy_reply	stay
+	dummy_sms_5	start						dummy_reply	stay
+	dummy_sms_6	start						dummy_reply	stay
+	chat_receiver	start						receiver_reply	stay
+	dummy_chat_1	start						dummy_reply	stay
+	dummy_chat_2	start						dummy_reply	stay
+	dummy_chat_3	start						dummy_reply	stay
+	dummy_chat_4	start						dummy_reply	stay
+	dummy_chat_5	start						dummy_reply	stay
+	dummy_chat_6	start						dummy_reply	stay

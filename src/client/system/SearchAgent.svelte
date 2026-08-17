@@ -318,8 +318,10 @@
       deviceState.messages,
       deviceState.photos,
       deviceState.notes,
+      deviceState.mails,
       deviceState.calendarEvents,
       deviceState.callLogs,
+      deviceState.browserTabs,
       deviceState.radioItems,
       deviceState.chatThreads
     ];

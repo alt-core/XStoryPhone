@@ -59,6 +59,20 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
         initialState: "normal" as const
       }))
     : [];
+  const extraMails = stressContent
+    ? Array.from({ length: 8 }, (_, index) => ({
+        id: `qa-mail-extra-${index + 1}`,
+        contentId: `qa-mail-extra-${index + 1}`,
+        from: `確認担当 ${index + 1}`,
+        to: "プレイヤー",
+        subject: index === 7 ? "一覧で省略されることを確認するための非常に長いメール件名" : `確認用メール ${index + 1}`,
+        date: `2026年8月12日 ${String(10 + index).padStart(2, "0")}:00`,
+        body: index === 0
+          ? "長文のスクロールを確認するためのメール本文です。".repeat(48)
+          : `これは${index + 1}件目のQA表示専用メールです。`,
+        initialState: "normal" as const
+      }))
+    : [];
   const extraCalendarEvents = stressContent
     ? Array.from({ length: 6 }, (_, index) => ({
         id: `qa-calendar-extra-${index + 1}`,
@@ -118,8 +132,21 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
         available: true
       }
     ],
-    messages: [{ id: qaSmsId, contentId: qaSmsId, contactName: "案内役", messages: [], unread: true }, ...extraSmsThreads],
-    chatThreads: [{ id: qaChatId, contentId: qaChatId, roomName: "テストルーム", messages: [] }, ...extraChatThreads],
+    messages: [{
+      id: qaSmsId,
+      contentId: qaSmsId,
+      contactName: "案内役",
+      messages: [],
+      brokenHistoryRanges: [{ beforeSeq: 40 }],
+      unread: true
+    }, ...extraSmsThreads],
+    chatThreads: [{
+      id: qaChatId,
+      contentId: qaChatId,
+      roomName: "テストルーム",
+      messages: [],
+      brokenHistoryRanges: [{ beforeSeq: 40 }]
+    }, ...extraChatThreads],
     photos: [{
       id: "qa-photo",
       contentId: "qa-photo",
@@ -157,6 +184,32 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       },
       ...extraNotes
     ],
+    mails: [
+      {
+        id: "qa-mail",
+        contentId: "qa-mail",
+        from: "表示確認担当",
+        to: "プレイヤー",
+        cc: "関係者",
+        subject: "表示確認用メール",
+        date: "2026年8月12日 20:14",
+        body: "これはQA表示専用のメール本文です。",
+        initialState: "normal"
+      },
+      {
+        id: "qa-corrupted-mail",
+        contentId: "qa-corrupted-mail",
+        from: "取得不能",
+        to: "取得不能",
+        subject: "メ▚▐▀▜ル",
+        date: "----/--/-- --:--",
+        body: "<ERROR コンテンツへのリンクが破損しています>",
+        initialState: "repairable",
+        repairLabel: "メ▚▐▀▜ル",
+        corrupted: true
+      },
+      ...extraMails
+    ],
     calendarEvents: [{
       id: "qa-calendar",
       contentId: "qa-calendar",
@@ -171,11 +224,36 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       id: "qa-call",
       contentId: "qa-call",
       name: "非通知",
-      kind: "missed",
+      kind: "incoming",
       at: "20:02",
-      durationLabel: "応答なし",
+      durationLabel: "1分12秒",
+      audioUrl: "/system/call-caption-sample.wav",
+      transcript: [
+        { atMs: 0, text: "［低い確認音］" },
+        { atMs: 2_000, text: "［中くらいの確認音］" },
+        { atMs: 4_000, text: "［高い確認音］" },
+        ...Array.from({ length: 12 }, (_, index) => ({
+          atMs: 6_000 + index * 1_000,
+          text: `表示確認用の書き起こし ${index + 1}行目です。`
+        }))
+      ],
       initialState: "normal"
     }, ...extraCallLogs],
+    browserTabs: [{
+      id: "qa-browser-tab",
+      contentId: "qa-browser-tab",
+      title: "ブラウザ表示確認",
+      url: "/demo/browser/start.html",
+      allowedUrls: ["/demo/browser/details.html"],
+      initialState: "normal"
+    }, {
+      id: "qa-corrupted-browser-tab",
+      contentId: "qa-corrupted-browser-tab",
+      title: "タ▚▐▀▜ブ",
+      initialState: "repairable",
+      repairLabel: "タ▚▐▀▜ブ",
+      corrupted: true
+    }],
     radioItems: [{
       id: qaRadioId,
       contentId: qaRadioId,
@@ -260,7 +338,8 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
           canPost: true,
           turnKey: `${thread.id}-turn`,
           transcriptKey: `${thread.id}-key`,
-          lastMessageSeq: 0
+          lastMessageSeq: 0,
+          historyRevision: 0
         })),
         ...visibleDeviceState.chatThreads.slice(1).map((thread) => ({
           talkId: thread.id,
@@ -268,7 +347,8 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
           canPost: true,
           turnKey: `${thread.id}-turn`,
           transcriptKey: `${thread.id}-key`,
-          lastMessageSeq: 0
+          lastMessageSeq: 0,
+          historyRevision: 0
         }))
       ]
     : [];
@@ -299,8 +379,8 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
       body: "添付内容の表示確認です。"
     }],
     talks: [
-      { talkId: qaSmsId, kind: "sms", canPost: true, turnKey: "qa-sms-turn", transcriptKey: "qa-sms-key", lastMessageSeq: smsMessages.length },
-      { talkId: qaChatId, kind: "chat", canPost: true, turnKey: "qa-chat-turn", transcriptKey: "qa-chat-key", lastMessageSeq: chatMessages.length },
+      { talkId: qaSmsId, kind: "sms", canPost: true, turnKey: "qa-sms-turn", transcriptKey: "qa-sms-key", lastMessageSeq: smsMessages.length, historyRevision: 0 },
+      { talkId: qaChatId, kind: "chat", canPost: true, turnKey: "qa-chat-turn", transcriptKey: "qa-chat-key", lastMessageSeq: chatMessages.length, historyRevision: 0 },
       ...extraTalks
     ],
     searchTranscript: { transcriptKey: "qa-search", lastMessageSeq: 1 },
@@ -323,6 +403,11 @@ export function createQaIncomingCall(): IncomingCallItem {
   return {
     id: "qa-incoming-call",
     name: "非通知",
-    audioUrl: "/system/incoming-call-bell.wav"
+    audioUrl: "/system/call-caption-sample.wav",
+    transcript: [
+      { atMs: 0, text: "［低い確認音］" },
+      { atMs: 2_000, text: "［中くらいの確認音］" },
+      { atMs: 4_000, text: "［高い確認音］" }
+    ]
   };
 }

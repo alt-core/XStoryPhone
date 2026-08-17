@@ -9,6 +9,7 @@
   } from "../system/audioEngine";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
   import ScrollHint from "../system/ScrollHint.svelte";
+  import { captionAt } from "../system/timedTranscript";
   import AppShell from "./AppShell.svelte";
   import ShareTargetPicker from "./ShareTargetPicker.svelte";
 
@@ -128,6 +129,7 @@
   $: isSelectedPlaying = Boolean(selectedItem && playbackItemId === selectedItem.id);
   $: isSelectedLoading = Boolean(selectedItem && (playbackLoadingItemId === selectedItem.id || playlistLoading));
   $: currentMs = isSelectedPlaying ? playbackCurrentMs : 0;
+  $: activeCaption = isSelectedPlaying ? captionAt(selectedItem?.transcript, currentMs) : "";
   $: durationMs = isSelectedPlaying ? playbackDurationMs : preloadDurationMs;
   $: progressPercent = durationMs > 0 ? Math.min(100, Math.max(0, (currentMs / durationMs) * 100)) : 0;
   $: currentTimeLabel = formatPlaybackTime(currentMs);
@@ -452,7 +454,7 @@
   }
 </script>
 
-<AppShell title="ラジオ" accent="#f4c86a" immersive>
+<AppShell title="ラジオ" accent="#f4c86a">
   <div class="radio-app">
     <section
       class="playback-panel"
@@ -527,6 +529,9 @@
             {/if}
             {#if playbackBlocked}
               <span class="transport-disabled-reason" aria-hidden="true">{playbackBlockedReason}</span>
+            {/if}
+            {#if activeCaption}
+              <p class="radio-caption" aria-live="polite">{activeCaption}</p>
             {/if}
           </div>
           <div
@@ -886,6 +891,27 @@
       0 20px 36px rgba(0, 0, 0, 0.38),
       inset 0 1px 0 rgba(255, 255, 255, 0.48),
       inset 0 -8px 16px rgba(88, 42, 0, 0.16);
+  }
+
+  .radio-caption {
+    position: absolute;
+    z-index: 2;
+    right: 8px;
+    bottom: 0;
+    left: 8px;
+    margin: 0;
+    padding: 7px 10px;
+    border: 1px solid rgba(255, 237, 184, 0.18);
+    border-radius: 9px;
+    background: rgba(3, 7, 11, 0.76);
+    color: #fff6dc;
+    font-size: 0.72rem;
+    font-weight: 730;
+    line-height: 1.45;
+    text-align: center;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
   }
 
   .transport-button:active:not(:disabled) {

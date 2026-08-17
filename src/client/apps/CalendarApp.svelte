@@ -143,8 +143,10 @@
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 12px;
+    box-sizing: border-box;
     min-height: 0;
     height: 100%;
+    padding: 14px 14px 118px;
   }
 
   .calendar-layout :global(.scroll-hint-shell) {

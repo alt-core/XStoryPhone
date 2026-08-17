@@ -15,7 +15,7 @@ export type PhoneHistoryState = {
 
 type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
 
-const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "calendar", "radio"]);
+const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
 
 function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

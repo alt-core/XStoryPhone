@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import type { ServerEnv } from "../../server/store.ts";
 import { isProductionEnvironment } from "../../server/environment.ts";
 import { talkBranchReviewPageHtml } from "./talkBranchReviewPage.ts";
+import { playerInputReviewPageHtml } from "./playerInputReviewPage.ts";
 import {
   cleanId,
   cleanMessage,
@@ -97,6 +98,28 @@ function cleanAnalysisClusters(value: unknown) {
   return clusters;
 }
 
+function inputReviewFilters(c: AppContext) {
+  const rawType = c.req.query("eventType");
+  const eventType: "search" | "talk_send" | undefined = rawType === "search" || rawType === "talk_send" ? rawType : undefined;
+  const playerId = cleanId(c.req.query("playerId"), 160);
+  const talkId = cleanId(c.req.query("talkId"), 160);
+  const query = cleanMessage(c.req.query("q"), 200);
+  const limit = Math.max(1, Math.min(500, Number.parseInt(c.req.query("limit") ?? "100", 10) || 100));
+  return {
+    ...(eventType ? { eventType } : {}),
+    ...(playerId ? { playerId } : {}),
+    ...(talkId ? { talkId } : {}),
+    ...(query ? { query } : {}),
+    limit
+  };
+}
+
+function csvCell(value: unknown) {
+  let text = String(value ?? "");
+  if (/^[=+\-@]/u.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/gu, '""')}"`;
+}
+
 export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
   app.get("/api/admin/talk-branch-review", () => new Response(talkBranchReviewPageHtml(), {
     headers: {
@@ -104,6 +127,37 @@ export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
       "cache-control": "no-store"
     }
   }));
+
+  app.get("/api/admin/player-input-review", () => new Response(playerInputReviewPageHtml(), {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
+  }));
+
+  app.get("/api/admin/player-input-review/events", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const items = await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
+    return c.json({ ok: true, items });
+  });
+
+  app.get("/api/admin/player-input-review.csv", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const items = await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
+    const rows = [
+      ["occurred_at", "event_type", "user_input", "matched", "talk_id", "from_id", "rule_id", "next_from_id", "player_id", "response_snapshot_json"],
+      ...items.map((item) => [
+        item.occurredAt, item.eventType, item.userInput, item.matched, item.talkId, item.fromId, item.ruleId,
+        item.nextFromId, item.playerId, JSON.stringify(item.responseSnapshot)
+      ])
+    ];
+    return new Response(`\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`, {
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=xstoryphone-inputs.csv",
+        "cache-control": "no-store"
+      }
+    });
+  });
 
   app.get("/api/admin/talk-branch-review/froms", async (c) => {
     const auth = await authorize(c);

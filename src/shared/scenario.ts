@@ -1,3 +1,5 @@
+import type { ConditionStateDefinition } from "./condition";
+
 export type ContentInitialState = "normal" | "repairable" | "hidden";
 
 export type DeviceLockSettings =
@@ -26,7 +28,7 @@ export type ScenarioApp = {
   icon: string;
   accent: string;
   initialState: ContentInitialState;
-  search: readonly string[];
+  search: readonly (string | readonly string[])[];
   cond: string;
 };
 
@@ -36,7 +38,7 @@ export type ScenarioContent = {
   appId: string;
   initialState: ContentInitialState;
   repairLabel?: string;
-  search: readonly string[];
+  search: readonly (string | readonly string[])[];
   cond: string;
   record: Record<string, unknown>;
 };
@@ -83,7 +85,7 @@ export type ScenarioMessageSegment =
 
 export type ScenarioMessageAttachment =
   | { kind: "locked"; contentId: string; locked: true; title?: string }
-  | { kind: "image" | "audio"; attachmentId: string; contentId?: string; imageUrl?: string; audioUrl?: string };
+  | { kind: "image" | "audio" | "video"; attachmentId: string; contentId?: string; imageUrl?: string; audioUrl?: string; videoUrl?: string };
 
 export type ScenarioTalkBlockMessage = {
   id: string;
@@ -109,7 +111,7 @@ export type ScenarioTalkBlock = {
 
 export type ScenarioAttachmentDefinition = {
   id: string;
-  type: "image" | "audio";
+  type: "image" | "audio" | "video";
   asset: string;
   content?: string;
   lock?: "password";
@@ -120,8 +122,13 @@ export type ScenarioAttachmentDefinition = {
 
 export type ScenarioIncomingCall = {
   id: string;
+  publicId: string;
   name: string;
   audioUrl?: string;
+  transcript?: readonly {
+    atMs: number;
+    text: string;
+  }[];
 };
 
 export type ScenarioScheduleDefinition = {
@@ -153,7 +160,7 @@ export type ScenarioAssistantMessage = {
 export type ScenarioSearchResponse = {
   id: string;
   when: "" | "found" | "not_found";
-  search: readonly string[];
+  search: readonly (string | readonly string[])[];
   cond: string;
   body: string;
   suppressResults: boolean;
@@ -176,7 +183,9 @@ export type WorkerScenario = ClientScenario & {
     llm: boolean;
   };
   stateVariables: Record<string, string | number | boolean>;
+  stateVariableDefinitions: Record<string, ConditionStateDefinition>;
   publicStateVariables: readonly string[];
+  photoDescriptions: Record<string, string>;
   contents: readonly ScenarioContent[];
   talks: readonly ScenarioTalk[];
   talkPeople: readonly ScenarioTalkPerson[];
@@ -193,9 +202,15 @@ export type WorkerScenario = ClientScenario & {
   clientCallableEvents: readonly string[];
   hooks: readonly ScenarioHookDefinition[];
   generatedAudio: readonly GeneratedAudioDefinition[];
+  albumMediaAttachmentLinks: readonly { attachmentId: string; photoId: string }[];
+  lockedContentPasswords: readonly { contentId: string; passwordHash: string }[];
   publicIds: {
     content: Record<string, string>;
     talk: Record<string, string>;
+    attachment: Record<string, string>;
+    incomingCall: Record<string, string>;
+    form: Record<string, string>;
+    notification: Record<string, string>;
     generatedAudio: Record<string, string>;
     scenarioEvent: Record<string, string>;
   };
@@ -239,4 +254,6 @@ export type StoredTalkMessage = {
   delayOnFirstDisplay?: boolean;
   attachment: ScenarioMessageAttachment | null;
   sentAt: string;
+  scenarioBlockId?: string;
+  historyRepairId?: string;
 };

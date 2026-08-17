@@ -10,6 +10,7 @@ declare module "@aws-sdk/client-dynamodb" {
   }
 
   export class BatchWriteItemCommand extends DynamoCommand {}
+  export class DeleteItemCommand extends DynamoCommand {}
   export class GetItemCommand extends DynamoCommand {}
   export class PutItemCommand extends DynamoCommand {}
   export class QueryCommand extends DynamoCommand {}

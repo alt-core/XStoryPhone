@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { evaluateCondition } from "../src/shared/condition.ts";
+import { evaluateCondition, validateConditionExpression, validateStateAssignments } from "../src/shared/condition.ts";
+import { parseTalkMatchSpec } from "../src/shared/talkMatch.ts";
 import { parseStoryDate } from "../src/shared/storyDate.ts";
 import { collectScopedTalkBlocks, resolveScopedTalkBlockId } from "./lib/talk-blocks.mjs";
 
@@ -11,8 +12,66 @@ const scenarioPath = path.join(scenarioDir, "scenario.json");
 const talkFlowPath = path.join(scenarioDir, "authoring/talk_flow.tsv");
 const talkBlocksPath = path.join(scenarioDir, "authoring/talk_blocks.tsv");
 const idPattern = /^[a-z][a-z0-9_-]*$/u;
-const supportedAppIds = new Set(["phone", "messages", "photos", "chat", "notes", "calendar", "radio"]);
+const supportedAppIds = new Set(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
 const initialStates = new Set(["normal", "repairable", "hidden"]);
+const systemStateVariableIds = new Set(["os_date", "os_time_label"]);
+const reservedStateVariableIds = new Set([...systemStateVariableIds, "player_input"]);
+
+function stateVariableConfigurationFor(source, errors = []) {
+  const values = {};
+  const definitions = {};
+  for (const [id, raw] of Object.entries(source.stateVariables ?? {})) {
+    if (!idPattern.test(id)) {
+      errors.push(`stateVariablesのIDが不正です: ${id}`);
+      continue;
+    }
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const type = raw.type;
+      const initial = raw.initial;
+      if (!new Set(["boolean", "enum", "integer", "string"]).has(type)) {
+        errors.push(`stateVariables.${id}.type が不正です。`);
+        continue;
+      }
+      const valuesList = Array.isArray(raw.values) ? raw.values : [];
+      const initialValid = type === "boolean" ? typeof initial === "boolean"
+        : type === "integer" ? Number.isInteger(initial)
+          : typeof initial === "string";
+      if (!initialValid) errors.push(`stateVariables.${id}.initial が${type}型ではありません。`);
+      if (type === "enum") {
+        if (!valuesList.length || valuesList.some((value) => typeof value !== "string" || !value.trim())) {
+          errors.push(`stateVariables.${id}.values は空でない文字列の配列にしてください。`);
+        } else if (new Set(valuesList).size !== valuesList.length) {
+          errors.push(`stateVariables.${id}.values が重複しています。`);
+        } else if (typeof initial === "string" && !valuesList.includes(initial)) {
+          errors.push(`stateVariables.${id}.initial がvaluesにありません。`);
+        }
+      } else if (raw.values !== undefined) {
+        errors.push(`stateVariables.${id}.values はenumの場合だけ指定してください。`);
+      }
+      values[id] = initial;
+      definitions[id] = { type, ...(type === "enum" ? { values: valuesList } : {}) };
+      continue;
+    }
+    const type = typeof raw === "boolean" ? "boolean"
+      : typeof raw === "string" ? "string"
+        : Number.isInteger(raw) ? "integer" : null;
+    if (!type) {
+      errors.push(`stateVariables.${id} はboolean、整数、文字列、または型定義objectにしてください。`);
+      continue;
+    }
+    values[id] = raw;
+    definitions[id] = { type };
+  }
+  values.os_date = source.project?.date ?? "";
+  values.os_time_label = source.project?.timeLabel ?? "";
+  definitions.os_date = { type: "string" };
+  definitions.os_time_label = { type: "string" };
+  return { values, definitions };
+}
+
+function stateVariablesFor(source) {
+  return stateVariableConfigurationFor(source).values;
+}
 
 function parseTsv(source, label) {
   const rows = [];
@@ -65,6 +124,30 @@ function parseTsv(source, label) {
 
 function splitList(value) {
   return String(value ?? "").split(/\r?\n|;/u).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeSearchTerms(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => Array.isArray(item)
+    ? item.map((term) => String(term).trim())
+    : String(item).trim());
+}
+
+function validateSearchTerms(label, value, errors, required = true) {
+  if (!Array.isArray(value) || (required && value.length === 0)) {
+    errors.push(`${label}: search ${required ? "が必要" : "は配列に"}です。`);
+    return;
+  }
+  if (value.some((item) => (
+    (typeof item === "string" && !item.trim())
+    || (typeof item !== "string" && (
+      !Array.isArray(item)
+      || item.length === 0
+      || item.some((term) => typeof term !== "string" || !term.trim())
+    ))
+  ))) {
+    errors.push(`${label}: search は文字列、またはAND条件にする文字列配列の配列にしてください。`);
+  }
 }
 
 function parseMessageLinkTarget(value) {
@@ -141,24 +224,14 @@ function splitAssignments(value) {
   return String(value ?? "").split(";").map((item) => item.trim()).filter(Boolean);
 }
 
-function validateCondition(label, value, stateVariables, errors) {
+function validateCondition(label, value, stateVariableDefinitions, errors) {
   if (value === undefined) return;
   if (typeof value !== "string") {
     errors.push(`${label}: cond は文字列にしてください。`);
     return;
   }
-  try {
-    const knownStateVariables = new Proxy(stateVariables, {
-      get(target, key) {
-        if (typeof key === "string" && !Object.hasOwn(target, key)) {
-          throw new Error(`未定義の状態変数です: ${key}`);
-        }
-        return Reflect.get(target, key);
-      }
-    });
-    evaluateCondition(value, knownStateVariables);
-  } catch (error) {
-    errors.push(`${label}: cond が不正です: ${error instanceof Error ? error.message : String(error)}`);
+  for (const error of validateConditionExpression(value, new Map(Object.entries(stateVariableDefinitions)))) {
+    errors.push(`${label}: cond が不正です: ${error}`);
   }
 }
 
@@ -194,6 +267,32 @@ function validateProject(project, playerMode, errors) {
   }
 }
 
+function validateCallTranscript(label, value, errors) {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || !value.length) {
+    errors.push(`${label} は1件以上の配列にしてください。`);
+    return;
+  }
+  let previousAtMs = -1;
+  for (const [index, cue] of value.entries()) {
+    if (!cue || typeof cue !== "object" || Array.isArray(cue)
+      || !Number.isInteger(cue.atMs) || cue.atMs < 0
+      || typeof cue.text !== "string" || !cue.text.trim()) {
+      errors.push(`${label}[${index}] は0以上の整数atMsと空でないtextを持つobjectにしてください。`);
+      continue;
+    }
+    if (cue.atMs < previousAtMs) {
+      errors.push(`${label} はatMsの昇順にしてください。`);
+      break;
+    }
+    previousAtMs = cue.atMs;
+  }
+}
+
+function isRootRelativeUrl(value) {
+  return typeof value === "string" && /^\/(?!\/)[^\s]*$/u.test(value);
+}
+
 function validateRecord(content, errors) {
   const record = content?.record;
   if (!record || typeof record !== "object" || Array.isArray(record)) {
@@ -203,29 +302,62 @@ function validateRecord(content, errors) {
   const requiredByApp = {
     phone: ["name", "kind", "at", "durationLabel"],
     notes: ["title", "body"],
+    mail: ["from", "to", "subject", "date", "body"],
     photos: ["title"],
     calendar: ["title", "date", "time", "place", "memo"],
-    radio: ["programTitle"]
+    radio: ["programTitle"],
+    browser: ["title", "url"]
   };
   for (const key of requiredByApp[content.appId] ?? []) {
     if (typeof record[key] !== "string") {
       errors.push(`${content.id}: record.${key} は文字列にしてください。`);
     }
   }
+  if (content.appId === "mail" && record.cc !== undefined && typeof record.cc !== "string") {
+    errors.push(`${content.id}: record.cc は文字列にしてください。`);
+  }
   if (["notes", "photos"].includes(content.appId) && record.tags !== undefined) {
     if (!Array.isArray(record.tags) || record.tags.some((tag) => typeof tag !== "string" || !tag.trim())) {
       errors.push(`${content.id}: record.tags は文字列の配列にし、空文字を含めないでください。`);
     }
   }
+  if (content.appId === "photos" && record.mediaKind !== undefined) {
+    if (!new Set(["still_video", "video"]).has(record.mediaKind)) {
+      errors.push(`${content.id}: record.mediaKind は still_video または video にしてください。`);
+    }
+    if (record.mediaKind === "still_video" && !isRootRelativeUrl(record.audioUrl)) {
+      errors.push(`${content.id}: still_videoのrecord.audioUrlは / から始めてください。`);
+    }
+    if (record.mediaKind === "video" && !isRootRelativeUrl(record.videoUrl)) {
+      errors.push(`${content.id}: videoのrecord.videoUrlは / から始めてください。`);
+    }
+  }
   if (content.appId === "calendar" && typeof record.date === "string" && !parseStoryDate(record.date)) {
     errors.push(`${content.id}: record.date は YYYY-MM-DD 形式の実在する日付にしてください。`);
+  }
+  if (content.appId === "phone") {
+    validateCallTranscript(`${content.id}: record.transcript`, record.transcript, errors);
+  }
+  if (content.appId === "radio") {
+    validateCallTranscript(`${content.id}: record.transcript`, record.transcript, errors);
+  }
+  if (content.appId === "browser") {
+    if (!isRootRelativeUrl(record.url)) {
+      errors.push(`${content.id}: record.url は / から始まる同一オリジンURLにしてください。`);
+    }
+    if (record.allowedUrls !== undefined && (
+      !Array.isArray(record.allowedUrls)
+      || record.allowedUrls.some((url) => !isRootRelativeUrl(url))
+    )) {
+      errors.push(`${content.id}: record.allowedUrls は / から始まる同一オリジンURLの配列にしてください。`);
+    }
   }
 }
 
 function deviceStateFor(source, publicIds, revision) {
-  const initialState = source.stateVariables ?? {};
+  const initialState = stateVariablesFor(source);
   const notifications = source.notifications.filter((notification) => evaluateCondition(String(notification.cond ?? ""), initialState)).map((notification) => ({
-    id: stableId("notification", notification.id),
+    id: publicIds.notification[notification.id],
     appId: notification.appId,
     targetContentId: notification.targetTalkId
       ? publicIds.talk[notification.targetTalkId]
@@ -251,8 +383,10 @@ function deviceStateFor(source, publicIds, revision) {
     messages: [],
     photos: [],
     notes: [],
+    mails: [],
     calendarEvents: [],
     callLogs: [],
+    browserTabs: [],
     radioItems: [],
     chatThreads: [],
     notifications,
@@ -272,6 +406,16 @@ export function loadAndValidateScenario() {
   const playerMode = source.playerMode ?? "server";
   if (!new Set(["server", "browser"]).has(playerMode)) errors.push("playerMode は server または browser にしてください。");
   validateProject(source.project, playerMode, errors);
+  const stateConfiguration = stateVariableConfigurationFor(source, errors);
+  const stateVariables = stateConfiguration.values;
+  const stateVariableDefinitions = stateConfiguration.definitions;
+  for (const id of reservedStateVariableIds) {
+    if (Object.hasOwn(source.stateVariables ?? {}, id)) {
+      errors.push(systemStateVariableIds.has(id)
+        ? `stateVariables.${id} はprojectから自動設定される予約変数です。`
+        : `stateVariables.${id} はシステムの予約変数です。`);
+    }
+  }
   const publicStateVariables = Array.isArray(source.publicStateVariables)
     ? source.publicStateVariables.map((id) => String(id).trim())
     : [];
@@ -280,7 +424,7 @@ export function loadAndValidateScenario() {
   }
   const seenPublicStateVariables = new Set();
   for (const id of publicStateVariables) {
-    if (!idPattern.test(id) || !Object.hasOwn(source.stateVariables ?? {}, id)) {
+    if (!idPattern.test(id) || !Object.hasOwn(stateVariables, id)) {
       errors.push(`publicStateVariables の状態変数が未定義です: ${id}`);
     } else if (seenPublicStateVariables.has(id)) {
       errors.push(`publicStateVariables が重複しています: ${id}`);
@@ -296,21 +440,8 @@ export function loadAndValidateScenario() {
     appIds.add(app.id);
     if (!initialStates.has(app?.initialState)) errors.push(`${app?.id ?? "app"}: initialState が不正です。`);
     if (app?.initialState !== "normal" && !app?.repairLabel) errors.push(`${app?.id ?? "app"}: repairLabel が必要です。`);
-    if (!Array.isArray(app?.search) || !app.search.length) errors.push(`${app?.id ?? "app"}: search が必要です。`);
-    validateCondition(`app ${app?.id ?? ""}`, app?.cond, source.stateVariables ?? {}, errors);
-  }
-
-  const contents = Array.isArray(source.contents) ? source.contents : [];
-  const contentIds = new Set();
-  for (const content of contents) {
-    if (!idPattern.test(content?.id ?? "")) errors.push(`content id が不正です: ${content?.id ?? ""}`);
-    else if (contentIds.has(content.id)) errors.push(`content id が重複しています: ${content.id}`);
-    contentIds.add(content.id);
-    if (!appIds.has(content?.appId) || content.appId === "messages" || content.appId === "chat") errors.push(`${content?.id ?? "content"}: appId が不正です。`);
-    if (!initialStates.has(content?.initialState)) errors.push(`${content?.id ?? "content"}: initialState が不正です。`);
-    if (!Array.isArray(content?.search) || !content.search.length) errors.push(`${content?.id ?? "content"}: search が必要です。`);
-    validateCondition(`content ${content?.id ?? ""}`, content?.cond, source.stateVariables ?? {}, errors);
-    validateRecord(content, errors);
+    validateSearchTerms(app?.id ?? "app", app?.search, errors);
+    validateCondition(`app ${app?.id ?? ""}`, app?.cond, stateVariableDefinitions, errors);
   }
 
   const talks = Array.isArray(source.talks) ? source.talks : [];
@@ -323,7 +454,40 @@ export function loadAndValidateScenario() {
     if (!talk?.label || !Array.isArray(talk?.startBlocks) || talk.startBlocks.length === 0) {
       errors.push(`${talk?.id ?? "talk"}: label と startBlocks は必須です。`);
     }
-    validateCondition(`talk ${talk?.id ?? ""}`, talk?.cond, source.stateVariables ?? {}, errors);
+    validateCondition(`talk ${talk?.id ?? ""}`, talk?.cond, stateVariableDefinitions, errors);
+  }
+
+  const contents = Array.isArray(source.contents) ? source.contents : [];
+  const contentIds = new Set();
+  const repairableTalkBlockIds = new Set();
+  for (const content of contents) {
+    if (!idPattern.test(content?.id ?? "")) errors.push(`content id が不正です: ${content?.id ?? ""}`);
+    else if (contentIds.has(content.id)) errors.push(`content id が重複しています: ${content.id}`);
+    contentIds.add(content.id);
+    if (!appIds.has(content?.appId)) errors.push(`${content?.id ?? "content"}: appId が不正です。`);
+    if (!initialStates.has(content?.initialState)) errors.push(`${content?.id ?? "content"}: initialState が不正です。`);
+    validateSearchTerms(content?.id ?? "content", content?.search, errors);
+    validateCondition(`content ${content?.id ?? ""}`, content?.cond, stateVariableDefinitions, errors);
+    validateRecord(content, errors);
+    if (content?.appId === "messages" || content?.appId === "chat") {
+      const record = content?.record && typeof content.record === "object" && !Array.isArray(content.record)
+        ? content.record
+        : {};
+      const talk = talks.find((item) => item.id === record.talk);
+      const blockId = talk ? resolveScopedTalkBlockId(blockScope, talk.id, record.block) : "";
+      if (content.initialState !== "repairable" || !content.repairLabel) {
+        errors.push(`${content.id}: talk初期履歴は initialState=repairable と repairLabel が必要です。`);
+      }
+      if (!talk || talk.appId !== content.appId) {
+        errors.push(`${content.id}: record.talk は同じアプリのtalkを指定してください。`);
+      } else if (!blockId || !Array.isArray(talk.startBlocks) || talk.startBlocks.filter((item) => item === record.block).length !== 1) {
+        errors.push(`${content.id}: record.block は指定talkのstartBlocksに含まれるblockを指定してください。`);
+      } else if (repairableTalkBlockIds.has(blockId)) {
+        errors.push(`${content.id}: 同じ初期履歴blockを複数の修復対象にできません。`);
+      } else {
+        repairableTalkBlockIds.add(blockId);
+      }
+    }
   }
 
   const talkPeople = Array.isArray(source.talkPeople) ? source.talkPeople : [];
@@ -340,7 +504,7 @@ export function loadAndValidateScenario() {
   const attachments = Array.isArray(source.attachments) ? source.attachments : [];
   const attachmentsById = new Map();
   for (const attachment of attachments) {
-    if (!idPattern.test(attachment?.id ?? "") || !["image", "audio"].includes(attachment?.type) || !attachment?.asset) {
+    if (!idPattern.test(attachment?.id ?? "") || !["image", "audio", "video"].includes(attachment?.type) || !attachment?.asset) {
       errors.push(`attachment が不正です: ${attachment?.id ?? ""}`);
       continue;
     }
@@ -400,11 +564,74 @@ export function loadAndValidateScenario() {
       })
     };
   });
+  for (const blockId of repairableTalkBlockIds) {
+    const block = talkBlocks.find((item) => item.id === blockId);
+    if (!block?.messages.length) {
+      errors.push(`${blockId}: 修復対象の初期履歴blockにはメッセージが必要です。`);
+      continue;
+    }
+    if (block.messages.some((message) => !message.sentAt)) {
+      errors.push(`${blockId}: 修復対象の初期履歴blockでは全メッセージのtimeを指定してください。`);
+    }
+  }
 
   const generatedAudio = Array.isArray(source.generatedAudio) ? source.generatedAudio : [];
   const generatedAudioIds = new Set(generatedAudio.map((item) => item.id));
   for (const audio of generatedAudio) {
     if (!idPattern.test(audio?.id ?? "") || !idPattern.test(audio?.provider ?? "") || !audio?.title) errors.push(`generatedAudio が不正です: ${audio?.id ?? ""}`);
+  }
+  const formIds = new Set();
+  for (const content of contents) {
+    const record = content.record ?? {};
+    if (record.form !== undefined) {
+      if (!record.form || typeof record.form !== "object" || Array.isArray(record.form) || !idPattern.test(record.form.id ?? "")) {
+        errors.push(`${content.id}: record.form.id が不正です。`);
+      } else if (formIds.has(record.form.id)) {
+        errors.push(`${content.id}: record.form.id が重複しています: ${record.form.id}`);
+      } else {
+        formIds.add(record.form.id);
+      }
+    }
+    const genAudioIds = [record.genAudioId];
+    if (Array.isArray(record.audioSegments)) {
+      for (const [index, segment] of record.audioSegments.entries()) {
+        if (!segment || typeof segment !== "object" || Array.isArray(segment)) {
+          errors.push(`${content.id}: record.audioSegments[${index}] が不正です。`);
+          continue;
+        }
+        if (segment.kind === "audio") {
+          if (!isRootRelativeUrl(segment.audioUrl)) errors.push(`${content.id}: 音声segmentのaudioUrlは / から始めてください。`);
+        } else if (segment.kind === "generated") {
+          genAudioIds.push(segment.genAudioId);
+        } else {
+          errors.push(`${content.id}: audioSegments.kind は audio または generated にしてください。`);
+        }
+      }
+    }
+    for (const id of genAudioIds.filter((item) => item !== undefined && item !== "")) {
+      if (typeof id !== "string" || !generatedAudioIds.has(id)) errors.push(`${content.id}: genAudioId が未定義です: ${String(id)}`);
+    }
+    if (content.appId !== "radio") continue;
+    validateCondition(`${content.id}: record.playbackCond`, record.playbackCond, stateVariableDefinitions, errors);
+    validateCondition(`${content.id}: record.formDisabledCond`, record.formDisabledCond, stateVariableDefinitions, errors);
+    if (record.playbackDisabledLabel !== undefined && (typeof record.playbackDisabledLabel !== "string" || !record.playbackDisabledLabel.trim())) {
+      errors.push(`${content.id}: record.playbackDisabledLabel は空でない文字列にしてください。`);
+    }
+    if (record.audioCues !== undefined && !Array.isArray(record.audioCues)) {
+      errors.push(`${content.id}: record.audioCues は配列にしてください。`);
+    }
+    const cueIds = new Set();
+    let previousAtMs = -1;
+    for (const [index, cue] of (Array.isArray(record.audioCues) ? record.audioCues : []).entries()) {
+      if (!cue || typeof cue !== "object" || Array.isArray(cue) || !idPattern.test(cue.id ?? "") || !Number.isInteger(cue.atMs) || cue.atMs < 0) {
+        errors.push(`${content.id}: record.audioCues[${index}] が不正です。`);
+        continue;
+      }
+      if (cueIds.has(cue.id)) errors.push(`${content.id}: audio cue id が重複しています: ${cue.id}`);
+      if (cue.atMs < previousAtMs) errors.push(`${content.id}: record.audioCues はatMsの昇順にしてください。`);
+      cueIds.add(cue.id);
+      previousAtMs = cue.atMs;
+    }
   }
 
   const incomingCalls = Array.isArray(source.incomingCalls) ? source.incomingCalls : [];
@@ -412,6 +639,13 @@ export function loadAndValidateScenario() {
   for (const call of incomingCalls) {
     if (!idPattern.test(call?.id ?? "") || !call?.name) errors.push(`incomingCall が不正です: ${call?.id ?? ""}`);
     if (incomingCallIds.has(call.id)) errors.push(`incomingCall id が重複しています: ${call.id}`);
+    if (call.audioUrl !== undefined && (typeof call.audioUrl !== "string" || !call.audioUrl.trim())) {
+      errors.push(`${call.id}: incomingCall.audioUrl は空でない文字列にしてください。`);
+    }
+    validateCallTranscript(`${call.id}: incomingCall.transcript`, call.transcript, errors);
+    if (call.transcript !== undefined && !call.audioUrl) {
+      errors.push(`${call.id}: incomingCall.transcriptを使う場合はaudioUrlが必要です。`);
+    }
     incomingCallIds.add(call.id);
   }
 
@@ -438,7 +672,7 @@ export function loadAndValidateScenario() {
     if (["content_repaired", "content_opened", "content_unlocked"].includes(hook.event) && !contentIds.has(hook.target)) errors.push(`${hook.handler}: targetが未定義です。`);
     if (source.features?.llm !== true && hook?.llm === true) errors.push(`${hook.handler}: LLM無効時はllm hookを使用できません。`);
     if (hook?.clientCallable !== undefined) errors.push(`${hook.handler}: clientCallable はhookではなくclientCallableEventsへ指定してください。`);
-    validateCondition(`hook ${hook?.handler ?? ""}`, hook?.cond, source.stateVariables ?? {}, errors);
+    validateCondition(`hook ${hook?.handler ?? ""}`, hook?.cond, stateVariableDefinitions, errors);
   }
 
   const clientCallableEvents = Array.isArray(source.clientCallableEvents)
@@ -472,20 +706,23 @@ export function loadAndValidateScenario() {
     if (source.features?.llm !== true && criteria && !criteria.startsWith("/")) errors.push(`${label}: LLM無効時は自然文criteriaを使用できません。`);
     if (source.features?.llm !== true && match) errors.push(`${label}: LLM無効時はmatchを使用できません。`);
     if (match) {
-      try {
-        const parsed = JSON.parse(match);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-      } catch {
-        errors.push(`${label}: match はJSON objectにしてください。`);
-      }
+      const parsed = parseTalkMatchSpec(match);
+      if (!parsed.ok) errors.push(`${label}: ${parsed.error}`);
     }
     const mode = String(row.mode ?? "").trim();
     if (!["", "stay", "game_over"].includes(mode)) errors.push(`${label}: modeが不正です。`);
     const assignments = splitAssignments(row.set);
-    validateCondition(label, row.cond, source.stateVariables ?? {}, errors);
-    for (const assignment of assignments) {
-      const found = /^([A-Za-z_][A-Za-z0-9_.-]*)\s*=/u.exec(assignment);
-      if (!found || !(found[1] in (source.stateVariables ?? {}))) errors.push(`${label}: 状態更新が不正です: ${assignment}`);
+    validateCondition(label, row.cond, stateVariableDefinitions, errors);
+    let matchIds = new Set();
+    if (match) {
+      try {
+        matchIds = new Set(Object.keys(JSON.parse(match)));
+      } catch {
+        // JSON自体のエラーは直前で報告済み。
+      }
+    }
+    for (const error of validateStateAssignments(assignments, new Map(Object.entries(stateVariableDefinitions)), matchIds)) {
+      errors.push(`${label}: 状態更新が不正です: ${error}`);
     }
     return {
       id: stableId("rule", `${row.talk}\0${row.from}\0${order}\0${criteria}\0${row.next}`),
@@ -536,22 +773,58 @@ export function loadAndValidateScenario() {
     ["searchResponse", source.searchResponses]
   ]) {
     for (const item of Array.isArray(items) ? items : []) {
-      validateCondition(`${collection} ${item?.id ?? ""}`, item?.cond, source.stateVariables ?? {}, errors);
+      validateCondition(`${collection} ${item?.id ?? ""}`, item?.cond, stateVariableDefinitions, errors);
     }
   }
-  validateCondition("chatAuthGate", source.chatAuthGate?.cond, source.stateVariables ?? {}, errors);
-  validateCondition("chatAuthGate.linkSentCond", source.chatAuthGate?.linkSentCond, source.stateVariables ?? {}, errors);
+  validateCondition("chatAuthGate", source.chatAuthGate?.cond, stateVariableDefinitions, errors);
+  validateCondition("chatAuthGate.linkSentCond", source.chatAuthGate?.linkSentCond, stateVariableDefinitions, errors);
 
   if (errors.length) throw new Error(errors.map((error) => `- ${error}`).join("\n"));
 
   const publicIds = {
     content: Object.fromEntries(contents.map((content) => [content.id, stableId("c", content.id)])),
     talk: Object.fromEntries(talks.map((talk) => [talk.id, stableId("t", talk.id)])),
+    attachment: Object.fromEntries(attachments.map((attachment) => [attachment.id, stableId("a", attachment.id)])),
+    incomingCall: Object.fromEntries(incomingCalls.map((call) => [call.id, stableId("call", call.id)])),
+    form: Object.fromEntries(contents.flatMap((content) => {
+      const form = content.record?.form;
+      return form && typeof form === "object" && !Array.isArray(form) && typeof form.id === "string"
+        ? [[form.id, stableId("form", form.id)]]
+        : [];
+    })),
+    notification: Object.fromEntries((Array.isArray(source.notifications) ? source.notifications : []).map((notification) => [notification.id, stableId("notification", notification.id)])),
     generatedAudio: Object.fromEntries(generatedAudio.map((audio) => [audio.id, stableId("g", audio.id)])),
     scenarioEvent: Object.fromEntries(scenarioEventIds.map((eventId) => [eventId, stableId("e", eventId)]))
   };
-  const normalizedApps = apps.map((app) => ({ ...app, cond: String(app.cond ?? "").trim() }));
-  const normalizedContents = contents.map((content) => ({ ...content, cond: String(content.cond ?? "").trim(), publicId: publicIds.content[content.id] }));
+  const normalizedApps = apps.map((app) => ({
+    ...app,
+    search: normalizeSearchTerms(app.search),
+    cond: String(app.cond ?? "").trim()
+  }));
+  const normalizedContents = contents.map((content) => {
+    const record = Object.fromEntries(Object.entries(content.record ?? {}).filter(([key]) => key !== "unlockCode"));
+    const talk = (content.appId === "messages" || content.appId === "chat")
+      ? talks.find((item) => item.id === record.talk)
+      : undefined;
+    return {
+      ...content,
+      record: talk
+        ? { ...record, block: resolveScopedTalkBlockId(blockScope, talk.id, record.block) }
+        : record,
+      search: normalizeSearchTerms(content.search),
+      cond: String(content.cond ?? "").trim(),
+      publicId: publicIds.content[content.id]
+    };
+  });
+  const photoDescriptions = source.photoDescriptions && typeof source.photoDescriptions === "object" && !Array.isArray(source.photoDescriptions)
+    ? Object.fromEntries(Object.entries(source.photoDescriptions).map(([id, description]) => [id, String(description).trim()]))
+    : {};
+  for (const [id, description] of Object.entries(photoDescriptions)) {
+    if (!contents.some((content) => content.id === id && content.appId === "photos")) {
+      errors.push(`photoDescriptions の対象が写真ではありません: ${id}`);
+    }
+    if (!description) errors.push(`photoDescriptions.${id} は空でない文字列にしてください。`);
+  }
   const normalizedTalks = talks.map((talk) => ({
     ...talk,
     cond: String(talk.cond ?? "").trim(),
@@ -563,8 +836,25 @@ export function loadAndValidateScenario() {
   const normalizedAudio = generatedAudio.map((audio) => ({
     ...audio,
     publicId: publicIds.generatedAudio[audio.id],
-    staticUrl: `/api/generated-audio/static/${publicIds.generatedAudio[audio.id]}`
+    staticUrl: audio.provider === "static" ? `/api/generated-audio/static/${publicIds.generatedAudio[audio.id]}` : ""
   }));
+  const normalizedIncomingCalls = incomingCalls.map((call) => ({
+    ...call,
+    publicId: publicIds.incomingCall[call.id]
+  }));
+  const albumMediaAttachmentLinks = attachments.flatMap((attachment) => {
+    if (attachment.lock || !attachment.content || !["image", "audio", "video"].includes(attachment.type)) return [];
+    const content = contents.find((item) => item.id === attachment.content);
+    return content?.appId === "photos" ? [{ attachmentId: attachment.id, photoId: content.id }] : [];
+  });
+  const lockedContentPasswords = attachments.flatMap((attachment) => {
+    if (attachment.lock !== "password" || !attachment.content) return [];
+    const content = contents.find((item) => item.id === attachment.content);
+    const password = typeof content?.record?.unlockCode === "string" ? content.record.unlockCode : "";
+    return password
+      ? [{ contentId: attachment.content, passwordHash: createHash("sha256").update(password.normalize("NFKC")).digest("hex") }]
+      : [];
+  });
   const canonical = JSON.stringify({ source, rules, talkBlocks });
   const revision = createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   const normalizedHooks = hooks.map((hook) => ({
@@ -590,12 +880,12 @@ export function loadAndValidateScenario() {
     if (!idPattern.test(response?.id ?? "") || !["", "found", "not_found"].includes(response?.when ?? "") || !response?.body) {
       errors.push(`searchResponse が不正です: ${response?.id ?? ""}`);
     }
-    if (response?.search !== undefined && !Array.isArray(response.search)) errors.push(`${response?.id ?? "searchResponse"}: search は配列にしてください。`);
+    if (response?.search !== undefined) validateSearchTerms(response?.id ?? "searchResponse", response.search, errors, false);
   }
   const normalizedSearchResponses = searchResponses.map((response) => ({
     ...response,
     when: response.when ?? "",
-    search: Array.isArray(response.search) ? response.search.map(String) : [],
+    search: normalizeSearchTerms(response.search),
     cond: String(response.cond ?? "").trim(),
     suppressResults: response.suppressResults === true
   }));
@@ -613,15 +903,17 @@ export function loadAndValidateScenario() {
     project: source.project,
     apps: normalizedApps,
     features: { llm: source.features?.llm === true },
-    stateVariables: source.stateVariables ?? {},
+    stateVariables,
+    stateVariableDefinitions,
     publicStateVariables,
+    photoDescriptions,
     contents: normalizedContents,
     talks: normalizedTalks,
     talkPeople,
     talkBlocks,
     attachments,
     repeatTalkBlocks: Object.fromEntries(blockScope.repeatIdsByBase),
-    incomingCalls,
+    incomingCalls: normalizedIncomingCalls,
     initialSchedules: initialSchedules.map((schedule) => ({ ...schedule, fields: schedule.fields ?? {} })),
     todos: normalizedTodos,
     notifications: normalizedNotifications,
@@ -630,6 +922,8 @@ export function loadAndValidateScenario() {
     chatAuthGate,
     clientCallableEvents,
     generatedAudio: normalizedAudio,
+    albumMediaAttachmentLinks,
+    lockedContentPasswords,
     hooks: normalizedHooks,
     publicIds
   };

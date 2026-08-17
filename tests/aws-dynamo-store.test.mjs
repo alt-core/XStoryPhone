@@ -67,6 +67,29 @@ test("DynamoDB版も入力ログが明示的に有効な場合だけ冪等Putす
   assert.equal(saved.SK, "INPUT#talk_send#turn-1");
   assert.equal(saved.GSI1PK, "REVIEW_SOURCE");
   assert.match(saved.GSI1SK, /^INPUT#talk-1#from-1#/u);
+  assert.equal(saved.GSI2PK, "INPUT_REVIEW");
+  assert.match(saved.GSI2SK, /^INPUT#talk_send#/u);
+});
+
+test("DynamoDBの入力ログ確認はGSI2を時系列降順でQueryする", async () => {
+  const row = {
+    id: "input-1", eventType: "search", playerId: "player-1", occurredAt: "2026-08-17T00:00:00.000Z",
+    appId: "search-agent", talkId: null, fromId: null, userInput: "黄色い灯り", normalizedInput: "黄色い灯り",
+    status: "completed", matched: true, ruleId: null, nextFromId: null, responseSnapshot: { resultCount: 1 }
+  };
+  const fake = fakeTransport(async (operation) => operation === "Query" ? { Items: [dynamoDocument.item(row)] } : {});
+  const items = await new DynamoStore(fake.transport, "table").playerInputEvents({
+    eventType: "search",
+    playerId: "player-1",
+    query: "灯り",
+    limit: 100
+  });
+  assert.equal(items[0].userInput, "黄色い灯り");
+  assert.deepEqual(items[0].responseSnapshot, { resultCount: 1 });
+  assert.equal(fake.calls[0].input.IndexName, "GSI2");
+  assert.equal(fake.calls[0].input.ScanIndexForward, false);
+  const values = dynamoDocument.valueFromItem(fake.calls[0].input.ExpressionAttributeValues);
+  assert.equal(values[":sk"], "INPUT#search#");
 });
 
 test("同じパスコードの初回作成競合は先に作られたプレイヤーへ収束する", async () => {
@@ -91,6 +114,52 @@ test("同じパスコードの初回作成競合は先に作られたプレイ�
   const session = dynamoDocument.valueFromItem(sessionPut.input.Item);
   assert.equal(session.playerId, "existing-player");
   assert.equal(session.GSI1PK, "PLAYER#existing-player");
+});
+
+test("DynamoDB版もアクセスコード失敗回数を同じテーブルの有界キーへ保存する", async () => {
+  const at = "2026-08-17T00:00:00.000Z";
+  const fake = fakeTransport(async (operation) => operation === "GetItem"
+    ? { Item: dynamoDocument.item({ failedCount: 19, updatedAt: at, lockedUntil: null }) }
+    : {});
+  const store = new DynamoStore(fake.transport, "table");
+  await store.recordAccessCodeAttempt("0042", false, at);
+  const put = fake.calls.find((call) => call.operation === "PutItem");
+  const saved = dynamoDocument.valueFromItem(put.input.Item);
+  assert.equal(saved.PK, "ACCESS_ATTEMPT#0042");
+  assert.equal(saved.failedCount, 20);
+  assert.equal(saved.lockedUntil, "2026-08-17T00:15:00.000Z");
+
+  const locked = fakeTransport(async (operation) => operation === "GetItem"
+    ? { Item: dynamoDocument.item({ lockedUntil: "2026-08-17T00:15:00.000Z" }) }
+    : {});
+  assert.equal(await new DynamoStore(locked.transport, "table").isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), true);
+
+  const cleared = fakeTransport();
+  await new DynamoStore(cleared.transport, "table").recordAccessCodeAttempt("0042", true, at);
+  assert.equal(cleared.calls[0].operation, "DeleteItem");
+});
+
+test("DynamoDB版も検索履歴だけを直近200メッセージへ制限する", async () => {
+  const fake = fakeTransport();
+  const store = new DynamoStore(fake.transport, "table");
+  const state = createInitialPlayerState();
+  const messages = Array.from({ length: 202 }, (_, index) => ({
+    seq: index + 1,
+    id: `search-${index + 1}`,
+    requestId: `request-${Math.floor(index / 2)}`,
+    role: index % 2 ? "assistant" : "user",
+    body: "検索",
+    sentAt: "2026-08-17T00:00:00.000Z"
+  }));
+  assert.equal(await store.savePlayer({ id: "player-1", state, stateVersion: 1 }, state, [{
+    streamId: "search",
+    transcriptKey: state.searchTranscriptKey,
+    messages
+  }]), true);
+  const transaction = fake.calls[0].input.TransactItems;
+  const transcript = dynamoDocument.valueFromItem(transaction[1].Put.Item);
+  assert.equal(transcript.messages.length, 200);
+  assert.equal(transcript.messages[0].seq, 3);
 });
 
 test("プレイヤー更新はstateVersionの条件付き更新にし、競合をfalseで返す", async () => {
@@ -130,22 +199,17 @@ test("予定イベントのfieldsはDynamoDB式で属性名を明示する", asy
   assert.equal(fake.calls[0].input.ExpressionAttributeNames["#fields"], "fields");
 });
 
-test("予定イベントは期限とleaseを評価してdue順に最大20件返す", async () => {
+test("予定イベントは期限とleaseを評価してdue順に最大5件返す", async () => {
   const rows = [
-    {
-      PK: "PLAYER#player-1", SK: "SCHEDULE#later", entityType: "SCHEDULE", scheduleId: "later",
-      eventId: "event-later", fields: { value: "2" }, dueAt: "2026-08-13T10:00:00.000Z", status: "queued",
-      updatedAt: "2026-08-13T09:00:00.000Z"
-    },
+    ...Array.from({ length: 6 }, (_, index) => ({
+      PK: "PLAYER#player-1", SK: `SCHEDULE#queued-${index}`, entityType: "SCHEDULE", scheduleId: `queued-${index}`,
+      eventId: `event-${index}`, fields: { value: String(index) }, dueAt: `2026-08-13T09:0${index}:00.000Z`, status: "queued",
+      updatedAt: "2026-08-13T08:00:00.000Z"
+    })),
     {
       PK: "PLAYER#player-1", SK: "SCHEDULE#leased", entityType: "SCHEDULE", scheduleId: "leased",
       eventId: "event-leased", fields: {}, dueAt: "2026-08-13T08:00:00.000Z", status: "running",
       updatedAt: "2026-08-13T09:59:00.000Z"
-    },
-    {
-      PK: "PLAYER#player-1", SK: "SCHEDULE#first", entityType: "SCHEDULE", scheduleId: "first",
-      eventId: "event-first", fields: { value: "1" }, dueAt: "2026-08-13T09:00:00.000Z", status: "queued",
-      updatedAt: "2026-08-13T08:00:00.000Z"
     }
   ];
   const fake = fakeTransport(async (operation) => operation === "Query"
@@ -153,8 +217,8 @@ test("予定イベントは期限とleaseを評価してdue順に最大20件返�
     : {});
   const due = await new DynamoStore(fake.transport, "table").dueScheduledEvents("player-1", "2026-08-13T10:00:00.000Z");
 
-  assert.deepEqual(due.map((event) => event.id), ["first", "later"]);
-  assert.deepEqual(due[0].fields, { value: "1" });
+  assert.deepEqual(due.map((event) => event.id), ["queued-0", "queued-1", "queued-2", "queued-3", "queued-4"]);
+  assert.deepEqual(due[0].fields, { value: "0" });
 });
 
 test("監修指示はtalkとfromを含む本体キーへ1件だけ保存する", async () => {

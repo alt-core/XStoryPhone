@@ -15,12 +15,14 @@ export default {
           appEnv: env.APP_ENV,
           adminReviewSecret: env.ADMIN_REVIEW_SECRET,
           browserStateSecret: env.BROWSER_STATE_SECRET,
+          accessCodeSecret: env.ACCESS_CODE_SECRET,
           playerInputLogging: env.PLAYER_INPUT_LOGGING === "true",
           llm: {
             LLM_API_KEY: env.LLM_API_KEY,
             LLM_MODEL: env.LLM_MODEL,
             LLM_BASE_URL: env.LLM_BASE_URL,
-            LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS
+            LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS,
+            LLM_REASONING_EFFORT: env.LLM_REASONING_EFFORT
           }
         }
       });

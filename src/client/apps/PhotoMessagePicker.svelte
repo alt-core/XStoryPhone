@@ -11,10 +11,11 @@
   export let onSelect: (photoId: string) => void = () => {};
   export let onClose: () => void = () => {};
 
-  $: selectablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl) && !photo.corrupted);
+  $: selectablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
 
   function isVideoPhoto(photo: PhotoItem) {
-    return photo.mediaKind === "still_video" && Boolean(photo.audioUrl);
+    return (photo.mediaKind === "still_video" && Boolean(photo.audioUrl))
+      || (photo.mediaKind === "video" && Boolean(photo.videoUrl));
   }
 </script>
 

@@ -8,15 +8,16 @@ export type RegexCriteria =
 
 export type SemanticRuleSelector = (input: {
   playerInput: string;
-  rules: readonly Pick<TalkRule, "id" | "criteria">[];
+  rules: readonly Pick<TalkRule, "id" | "from" | "criteria" | "intent" | "mode" | "isDefault">[];
   defaultRuleId: string;
+  recentMessages: readonly { speaker: string; body: string }[];
 }) => Promise<
   | { ok: true; ruleId: string }
   | { ok: false; error: "provider_unavailable" | "provider_error" | "provider_invalid" }
 >;
 
 export type TalkRuleResolution =
-  | { ok: true; rule: TalkRule; source: "regex" | "semantic" | "default" }
+  | { ok: true; rule: TalkRule; defaultRule: TalkRule; source: "regex" | "semantic" | "default" }
   | {
       ok: false;
       error: "missing_default" | "invalid_regex" | "provider_unavailable" | "provider_error" | "provider_invalid";
@@ -66,18 +67,19 @@ export async function resolveTalkRule(input: {
   playerInput: string;
   semanticPlayerInput?: string;
   stateValues: Record<string, unknown>;
+  recentMessages?: readonly { speaker: string; body: string }[];
   semanticSelector?: SemanticRuleSelector;
 }): Promise<TalkRuleResolution> {
+  const normalizedInput = input.playerInput.normalize("NFC").trim();
   const activeRules = input.rules
     .filter((rule) => rule.from === "*" || rule.from === input.from)
-    .filter((rule) => evaluateCondition(rule.cond, input.stateValues))
+    .filter((rule) => evaluateCondition(rule.cond, { ...input.stateValues, player_input: normalizedInput }))
     .sort((left, right) => left.order - right.order);
   const defaultRule = activeRules.find((rule) => rule.from === input.from && rule.isDefault);
   if (!defaultRule) {
     return { ok: false, error: "missing_default" };
   }
 
-  const normalizedInput = input.playerInput.normalize("NFC").trim();
   for (const rule of activeRules) {
     if (rule.isDefault) {
       continue;
@@ -89,7 +91,7 @@ export async function resolveTalkRule(input: {
     if (parsed.kind === "ready") {
       parsed.regex.lastIndex = 0;
       if (parsed.regex.test(normalizedInput)) {
-        return { ok: true, rule, source: "regex" };
+        return { ok: true, rule, defaultRule, source: "regex" };
       }
     }
   }
@@ -98,7 +100,7 @@ export async function resolveTalkRule(input: {
     (rule) => !rule.isDefault && parseRegexCriteria(rule.criteria).kind === "none"
   );
   if (semanticRules.length === 0) {
-    return { ok: true, rule: defaultRule, source: "default" };
+    return { ok: true, rule: defaultRule, defaultRule, source: "default" };
   }
   if (!input.semanticSelector) {
     return { ok: false, error: "provider_unavailable" };
@@ -106,8 +108,19 @@ export async function resolveTalkRule(input: {
 
   const selected = await input.semanticSelector({
     playerInput: input.semanticPlayerInput?.normalize("NFC").trim() || normalizedInput,
-    rules: semanticRules.map(({ id, criteria }) => ({ id, criteria })),
-    defaultRuleId: defaultRule.id
+    rules: [
+      ...semanticRules.map(({ id, from, criteria, intent, mode, isDefault }) => ({ id, from, criteria, intent, mode, isDefault })),
+      {
+        id: defaultRule.id,
+        from: defaultRule.from,
+        criteria: defaultRule.criteria,
+        intent: defaultRule.intent,
+        mode: defaultRule.mode,
+        isDefault: true
+      }
+    ],
+    defaultRuleId: defaultRule.id,
+    recentMessages: input.recentMessages ?? []
   });
   if (!selected.ok) {
     return selected;
@@ -119,6 +132,7 @@ export async function resolveTalkRule(input: {
   return {
     ok: true,
     rule: selectedRule,
+    defaultRule,
     source: selectedRule.isDefault ? "default" : "semantic"
   };
 }

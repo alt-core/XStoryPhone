@@ -50,6 +50,20 @@ npx wrangler secret put BROWSER_STATE_SECRET --env prod
 
 LLMを使う場合は `LLM_API_KEY` もsecretへ登録し、model、base URL、timeoutを対象環境のvarsへ設定します。
 
+serverモードで発行済みの8桁アクセスコードだけを受理する場合は、コード生成と同じ秘密値を登録します。人数限定を行わない場合は不要です。
+
+```sh
+npx wrangler secret put ACCESS_CODE_SECRET --env prod
+```
+
+コードは手元で発行します。連番は `0000` から `9999` までです。
+
+```sh
+ACCESS_CODE_SECRET='登録した値' npm run access-code -- 0001
+```
+
+LLM providerが推論強度の指定に対応している場合だけ、対象環境のvarsへ `LLM_REASONING_EFFORT` も設定できます。未設定ならproviderへこの項目を送りません。
+
 GA4による任意の計測を使う場合だけ、ビルド実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 
 実プレイ入力を分岐監修へ利用する場合だけ、対象環境のvarsへ `PLAYER_INPUT_LOGGING=true` を設定します。未設定または`false`では、検索語・会話入力を追加しません。既存ログは自動削除されません。ゲーム進行と監修画面の試行入力・監修指示には影響しません。
@@ -78,6 +92,7 @@ Cloudflare Vite pluginでは、Cloudflare Environmentをビルド時の `CLOUDFL
 - prodの `APP_ENV` が `production` になっている
 - prodへ `ADMIN_REVIEW_SECRET` を登録した
 - browserモードの場合はprodへ `BROWSER_STATE_SECRET` を登録した
+- 人数限定アクセスコードを使う場合はprodへ `ACCESS_CODE_SECRET` を登録し、同じ値でコードを発行した
 - 実プレイ入力を保存する場合だけprodへ `PLAYER_INPUT_LOGGING=true` を設定した
 - デモ素材とデモ文言を置き換えた
 - 実プレイ入力の保存期間と削除方法を決めた

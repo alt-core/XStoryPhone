@@ -11,6 +11,9 @@
 | `public/icons/*.png` | 一時スクリプトで基本図形だけを描いて生成した汎用PWAアイコン | MIT、追加の帰属表示不要 |
 | `public/search-agent/search-agent-spritesheet.svg` | `scripts/generate-search-agent-sprites.mjs` が円形だけを使って決定論的に生成 | MIT、追加の帰属表示不要 |
 | `public/system/incoming-call-bell.wav` | `scripts/generate-search-agent-sprites.mjs` が波形を決定論的に生成 | MIT、追加の帰属表示不要 |
+| `public/system/call-caption-sample.wav` | `scripts/generate-search-agent-sprites.mjs` が波形を決定論的に生成 | MIT、追加の帰属表示不要 |
+| `public/system/radio-caption-sample.wav` | `scripts/generate-search-agent-sprites.mjs` が波形を決定論的に生成 | MIT、追加の帰属表示不要 |
+| `public/demo/demo-video.mp4` | 一時FFmpegスクリプトがテストパターンと確認音だけを使って決定論的に生成 | MIT、追加の帰属表示不要 |
 
 ## 画像生成を利用したシステム素材
 

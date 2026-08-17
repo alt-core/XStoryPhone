@@ -2,7 +2,7 @@
 import type { DeviceState } from "../scenario-runtime/types";
 
 export const demoDeviceStateGenerated: DeviceState = {
-  "revision": "84a05034d116baa5",
+  "revision": "0b05d677351862db",
   "batteryLevel": 72,
   "signalLabel": "4G",
   "currentDate": "2026-08-12",
@@ -21,6 +21,13 @@ export const demoDeviceStateGenerated: DeviceState = {
       "label": "メッセージ",
       "icon": "message_circle",
       "accent": "#5cc8a7",
+      "available": true
+    },
+    {
+      "id": "mail",
+      "label": "メール",
+      "icon": "mail",
+      "accent": "#aebcff",
       "available": true
     },
     {
@@ -50,13 +57,22 @@ export const demoDeviceStateGenerated: DeviceState = {
       "icon": "radio",
       "accent": "#f4c86a",
       "available": true
+    },
+    {
+      "id": "browser",
+      "label": "ブラウザ",
+      "icon": "globe_2",
+      "accent": "#79b9ff",
+      "available": true
     }
   ],
   "messages": [],
   "photos": [],
   "notes": [],
+  "mails": [],
   "calendarEvents": [],
   "callLogs": [],
+  "browserTabs": [],
   "radioItems": [],
   "chatThreads": [],
   "notifications": [
@@ -64,7 +80,7 @@ export const demoDeviceStateGenerated: DeviceState = {
       "id": "notification_5dd2fa869822",
       "appId": "messages",
       "targetContentId": "t_17f5f84e4690",
-      "title": "ナビ",
+      "title": "デモ進行係",
       "body": "ナビ検索とコンテンツ修復を試してみよう。"
     }
   ],

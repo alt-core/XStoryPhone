@@ -8,8 +8,10 @@
   import ScrollHint from "../system/ScrollHint.svelte";
   import TypingIndicator from "../system/TypingIndicator.svelte";
   import UserAvatar from "../system/UserAvatar.svelte";
+  import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import AppShell from "./AppShell.svelte";
+  import BrokenTalkHistory from "./BrokenTalkHistory.svelte";
   import {
     consumeConversationScroll,
     isConversationNearBottom,
@@ -18,6 +20,7 @@
     scrollConversationToBottomAfterTick
   } from "./conversationScrollMemory";
   import PhotoMessagePicker from "./PhotoMessagePicker.svelte";
+  import { brokenRangesAfterMessages, brokenRangesBeforeMessage } from "./talkHistoryRanges";
   import {
     loadTalkDelaySeenMessages,
     saveTalkDelaySeenMessages,
@@ -44,6 +47,7 @@
   export let photos: PhotoItem[] = [];
   export let focusContentId = "";
   export let focusContentRequestId = 0;
+  export let focusHistoryRepairId = "";
   export let delayMemoryKey = "";
   export let onNoise: () => void = () => {};
   export let onSend: (talkId: string, message: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
@@ -62,8 +66,8 @@
   });
   export let onOpenMessageLink: (talkId: string, messageRef: string, segmentIndex: number) => void | Promise<void> = () => {};
   export let onPickerOpenChange: (open: boolean) => void = () => {};
-  export let onContentOpen: (contentId: string) => void = () => {};
-  export let onMediaObserved: (contentId: string) => void = () => {};
+  export let onContentOpen: (contentId: string, mediaContentIds: string[]) => void = () => {};
+  export let onMediaObserved: (contentId: string, mediaContentIds: string[]) => void = () => {};
   export let onVisibleMediaObserved: (contentId: string) => void = () => {};
   export let onPhotoDraftChange: (active: boolean) => void = () => {};
   export let onRead: (talkId: string, messageId: string) => void | Promise<void> = () => {};
@@ -91,6 +95,7 @@
   let lastReportedVisibleMediaOpenKey = "";
   let lastAppliedFocusContentId = "";
   let lastAppliedFocusContentRequestId = focusContentRequestId;
+  let pendingHistoryRepairId = "";
   let trackedThreadId = "";
   let trackedMessages: DelayedMessage[] = [];
   let visibleMessageIds = new Set<string>();
@@ -117,6 +122,7 @@
   $: if (!focusContentId) {
     lastAppliedFocusContentId = "";
     lastAppliedFocusContentRequestId = focusContentRequestId;
+    pendingHistoryRepairId = "";
   } else if (focusContentId !== lastAppliedFocusContentId || focusContentRequestId !== lastAppliedFocusContentRequestId) {
     const focused = threads.find((thread) => matchesThreadId(thread, focusContentId));
     if (focused) {
@@ -124,6 +130,7 @@
       lastAppliedFocusContentRequestId = focusContentRequestId;
       selectedThreadId = focused.id;
       pickerOpen = focused.corrupted === true;
+      pendingHistoryRepairId = focused.corrupted ? "" : focusHistoryRepairId;
       lastHistorySignature = "";
       lastHistoryThreadId = "";
       if (focused.corrupted) {
@@ -144,12 +151,12 @@
     lastReportedContentId = selectedThreadContentId;
     lastReportedMediaOpenKey = selectedThreadMediaOpenKey;
     lastReportedVisibleMediaOpenKey = "";
-    onContentOpen(selectedThreadContentId);
+    onContentOpen(selectedThreadContentId, mediaAttachmentContentIds(selectedThread?.messages ?? []));
   }
   $: selectedThreadCanPost = selectedThread ? postEnabledByThread[selectedThread.id] === true : false;
   $: conversationVisible = Boolean(threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen && !authGate);
   $: reportDisplayedThread(conversationVisible ? selectedThreadContentId : "");
-  $: sendablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl) && !photo.corrupted);
+  $: sendablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
   $: if (selectedPhotoId && !sendablePhotos.some((photo) => photo.id === selectedPhotoId)) {
     selectedPhotoId = "";
   }
@@ -167,7 +174,7 @@
   );
   $: if (conversationVisible && selectedThreadContentId && selectedThreadMediaOpenKey && selectedThreadMediaOpenKey !== lastReportedMediaOpenKey) {
     lastReportedMediaOpenKey = selectedThreadMediaOpenKey;
-    onMediaObserved(selectedThreadContentId);
+    onMediaObserved(selectedThreadContentId, mediaAttachmentContentIds(selectedThread?.messages ?? []));
   }
   $: if (
     conversationVisible &&
@@ -178,6 +185,7 @@
     selectedThreadVisibleMediaOpenKey !== lastReportedVisibleMediaOpenKey
   ) {
     lastReportedVisibleMediaOpenKey = selectedThreadVisibleMediaOpenKey;
+    onMediaObserved(selectedThreadContentId, mediaAttachmentContentIds(selectedThread?.messages ?? []));
     onVisibleMediaObserved(selectedThreadContentId);
   }
   $: syncVisibleRead(conversationVisible ? selectedThread : undefined);
@@ -200,7 +208,18 @@
       return;
     }
 
-    if (!historyList || !selectedThread || !historySignature || historySignature === lastHistorySignature) {
+    if (!historyList || !selectedThread || !historySignature) {
+      return;
+    }
+
+    if (pendingHistoryRepairId && scrollToHistoryRepair(pendingHistoryRepairId)) {
+      pendingHistoryRepairId = "";
+      lastHistorySignature = historySignature;
+      lastHistoryThreadId = selectedThread.id;
+      return;
+    }
+
+    if (historySignature === lastHistorySignature) {
       return;
     }
 
@@ -229,6 +248,14 @@
 
   function scrollHistoryToBottom() {
     scrollConversationToBottomAfterTick(() => historyList);
+  }
+
+  function scrollToHistoryRepair(repairId: string) {
+    const target = [...historyList.querySelectorAll<HTMLElement>("[data-history-repair-id]")]
+      .find((element) => element.dataset.historyRepairId === repairId);
+    if (!target) return false;
+    historyList.scrollTop = Math.max(0, target.offsetTop - 8);
+    return true;
   }
 
   function isHistoryNearBottom() {
@@ -370,7 +397,8 @@
   }
 
   function isVideoPhoto(photo: PhotoItem | undefined) {
-    return photo?.mediaKind === "still_video" && Boolean(photo.audioUrl);
+    return (photo?.mediaKind === "still_video" && Boolean(photo.audioUrl))
+      || (photo?.mediaKind === "video" && Boolean(photo.videoUrl));
   }
 
   function matchesThreadId(thread: ChatAppThread, id: string) {
@@ -389,7 +417,7 @@
         }
 
         const attachment = message.attachment;
-        if (!attachment || (attachment.kind !== "image" && attachment.kind !== "audio")) {
+        if (!attachment || !isMediaAttachment(attachment)) {
           return "";
         }
 
@@ -397,6 +425,15 @@
       })
       .filter(Boolean)
       .join("|");
+  }
+
+  function mediaAttachmentContentIds(messages: ChatAppThread["messages"]) {
+    return [...new Set(messages.flatMap((message) => {
+      const attachment = message.attachment;
+      return attachment && isMediaAttachment(attachment) && attachment.contentId
+        ? [attachment.contentId]
+        : [];
+    }))];
   }
 
   function readKey(talkId: string, messageId: string) {
@@ -471,12 +508,14 @@
 
   function isMediaAttachment(
     attachment: MessageAttachment
-  ): attachment is Extract<MessageAttachment, { kind: "image" | "audio" }> {
-    return attachment.kind === "image" || attachment.kind === "audio";
+  ): attachment is Extract<MessageAttachment, { kind: "image" | "audio" | "video" }> {
+    return attachment.kind === "image" || attachment.kind === "audio" || attachment.kind === "video";
   }
 
   function notifyAudioPlaybackComplete(attachment: MessageAttachment) {
-    if (attachment.kind !== "audio" || (!attachment.contentId && !attachment.attachmentId)) {
+    if (!isMediaAttachment(attachment)
+      || (attachment.kind !== "audio" && attachment.kind !== "video")
+      || (!attachment.contentId && !attachment.attachmentId)) {
       return;
     }
 
@@ -523,7 +562,7 @@
       .find((message) => isMessageVisibleInPreview(thread.id, message) && (message.body.trim() || message.attachment));
 
     if (!lastMessage) {
-      return "投稿なし";
+      return thread.brokenHistoryRanges?.length ? "履歴データが破損しています" : "投稿なし";
     }
 
     const body = lastMessage.body.trim() || "添付";
@@ -809,7 +848,7 @@
   }
 </script>
 
-<AppShell title="チャット" subtitle={authGate ? "再認証" : `${threads.length}ルーム`} accent="#7ee093" immersive>
+<AppShell title="チャット" subtitle={authGate ? "再認証" : `${threads.length}ルーム`} accent="#7ee093">
   <div class="chat-app">
     {#if authGate}
       <section class="access-panel" aria-label="チャットの再認証">
@@ -842,11 +881,18 @@
             <ScrollHint enabled step={116}>
               <div class="bubble-list" bind:this={historyList} aria-label="会話履歴">
                 {#each selectedThread.messages as message, index}
+                  {#each brokenRangesBeforeMessage(selectedThread.messages, selectedThread.brokenHistoryRanges ?? [], index) as _range}
+                    <BrokenTalkHistory />
+                  {/each}
                   {#if visibleMessageIds.has(message.id)}
                     {#if index === 0 || messageDateLabel(selectedThread.messages, index - 1) !== messageDateLabel(selectedThread.messages, index)}
                       <div class="day-chip">{messageDateLabel(selectedThread.messages, index)}</div>
                     {/if}
-                    <div class="message-row" class:owner={message.sender === "owner"}>
+                    <div
+                      class="message-row"
+                      class:owner={message.sender === "owner"}
+                      data-history-repair-id={message.historyRepairId || undefined}
+                    >
                       {#if message.sender !== "owner"}
                         <UserAvatar name={message.senderName} src={message.avatarUrl ?? ""} size={28} tone="chat" />
                       {/if}
@@ -913,6 +959,22 @@
                                 label="再生"
                                 onComplete={() => message.attachment?.kind === "audio" && notifyAudioPlaybackComplete(message.attachment)}
                               />
+                            {:else if message.attachment.kind === "video" && message.attachment.videoUrl}
+                              <VideoPlayback
+                                src={message.attachment.videoUrl}
+                                poster={message.attachment.imageUrl ?? ""}
+                                label="添付動画"
+                                onComplete={() => message.attachment?.kind === "video" && notifyAudioPlaybackComplete(message.attachment)}
+                              />
+                              {#if albumMediaContentId(message.attachment)}
+                                <button
+                                  class="shared-link-card"
+                                  type="button"
+                                  on:click={() => openAlbumMedia(message.attachment)}
+                                >
+                                  <span>アルバムで表示</span>
+                                </button>
+                              {/if}
                             {/if}
                           </section>
                         {/if}
@@ -922,6 +984,9 @@
                       <div class="read-position-divider" role="separator" aria-label="ここまで既読"></div>
                     {/if}
                   {/if}
+                {/each}
+                {#each brokenRangesAfterMessages(selectedThread.messages, selectedThread.brokenHistoryRanges ?? []) as _range}
+                  <BrokenTalkHistory />
                 {/each}
                 {#if typingVisible}
                   <TypingIndicator owner={typingMessage?.sender === "owner"} variant="chat" ariaLabel={replyDelayAnchor?.waiting ? "返答待ち" : "入力中"} />

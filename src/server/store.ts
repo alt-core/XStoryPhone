@@ -19,7 +19,8 @@ export type StoredSearchAgentMessage = {
   results?: Array<{
     contentId: string;
     appId: string;
-    targetKind: "app" | "content";
+    targetKind: "app" | "content" | "talk_history";
+    targetTalkId?: string;
     title?: string;
     thumbnailUrl?: string;
     repairable?: boolean;
@@ -55,9 +56,8 @@ export type BrowserScheduledEvent = {
 export type StoredPlayerState = {
   repairedContentIds: string[];
   repairedAppIds: string[];
-  openedContentIds: string[];
   unlockedContentIds: string[];
-  clearedTodoIds: string[];
+  activeTodoIds: string[];
   clearedNotificationIds: string[];
   discoveredTargetKeys: string[];
   revealedAttachmentContentIds: string[];
@@ -74,7 +74,6 @@ export type PlayerRecord = {
   id: string;
   state: StoredPlayerState;
   stateVersion: number;
-  legacyTranscripts?: TranscriptUpdate[];
   transcriptDeltas?: TranscriptUpdate[];
 };
 
@@ -98,6 +97,22 @@ export type InputEventRecord = {
   ruleId?: string;
   nextFromId?: string;
   responseSnapshot?: Record<string, unknown>;
+};
+
+export type PlayerInputReviewEvent = {
+  id: string;
+  eventType: "search" | "talk_send";
+  playerId: string;
+  occurredAt: string;
+  appId: string;
+  talkId: string | null;
+  fromId: string | null;
+  userInput: string;
+  status: string;
+  matched: boolean;
+  ruleId: string | null;
+  nextFromId: string | null;
+  responseSnapshot: Record<string, unknown>;
 };
 
 export type GeneratedAudioJob = {
@@ -177,6 +192,8 @@ export interface AppStore {
     created: boolean;
   }>;
   playerForSession(sessionToken: string): Promise<PlayerRecord | null>;
+  isAccessCodeLocked(counter: string, at: string): Promise<boolean>;
+  recordAccessCodeAttempt(counter: string, success: boolean, at: string): Promise<void>;
   loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript>;
   savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts?: TranscriptUpdate[]): Promise<boolean>;
   clearPlayerRuntimeJobs(playerId: string): Promise<void>;
@@ -190,6 +207,13 @@ export interface AppStore {
   requeueScheduledEvent(playerId: string, id: string): Promise<void>;
 
   recordInputEvent(event: InputEventRecord, enabled: boolean): Promise<void>;
+  playerInputEvents(filters: {
+    eventType?: "search" | "talk_send";
+    playerId?: string;
+    talkId?: string;
+    query?: string;
+    limit: number;
+  }): Promise<PlayerInputReviewEvent[]>;
 
   generatedAudioJob(playerId: string, audioId: string): Promise<GeneratedAudioJob | null>;
   saveGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<void>;
@@ -228,12 +252,14 @@ export type AppConfig = {
   appEnv?: string;
   adminReviewSecret?: string;
   browserStateSecret?: string;
+  accessCodeSecret?: string;
   playerInputLogging?: boolean;
   llm: {
     LLM_API_KEY?: string;
     LLM_MODEL?: string;
     LLM_BASE_URL?: string;
     LLM_TIMEOUT_MS?: string;
+    LLM_REASONING_EFFORT?: string;
   };
 };
 
@@ -247,6 +273,13 @@ export type ServerEnv = { Variables: { dependencies: AppDependencies } };
 export const SCHEDULED_EVENT_LEASE_MS = 5 * 60 * 1_000;
 export const MAX_SESSIONS_PER_PLAYER = 5;
 export const DYNAMO_PLAYER_STATE_WARNING_BYTES = 300 * 1024;
+export const MAX_SEARCH_TRANSCRIPT_MESSAGES = 200;
+
+export function limitedTranscript(transcript: StoredTranscript): StoredTranscript {
+  return transcript.streamId === "search" && transcript.messages.length > MAX_SEARCH_TRANSCRIPT_MESSAGES
+    ? { ...transcript, messages: transcript.messages.slice(-MAX_SEARCH_TRANSCRIPT_MESSAGES) }
+    : transcript;
+}
 
 export function nowIso() {
   return new Date().toISOString();
@@ -268,98 +301,45 @@ function transcriptKey(value: unknown) {
   return typeof value === "string" && value.trim() ? value : crypto.randomUUID();
 }
 
-export function normalizeStoredPlayerState(value: StoredPlayerState): {
-  state: StoredPlayerState;
-  legacyTranscripts: TranscriptUpdate[];
-} {
-  const legacyTranscripts: TranscriptUpdate[] = [];
+export function normalizeStoredState(value: StoredPlayerState): StoredPlayerState {
   const rawTalks = value.talks ?? {};
   const talks = Object.fromEntries(Object.entries(rawTalks).map(([talkId, talk]) => {
-    const rawMessages = Array.isArray((talk as StoredTalkState & { messages?: StoredTalkMessage[] }).messages)
-      ? (talk as StoredTalkState & { messages: StoredTalkMessage[] }).messages
-      : [];
-    const messages = rawMessages.map((message, index) => ({
-      ...message,
-      seq: finiteNonNegativeInteger(message.seq) || index + 1
-    }));
     const key = transcriptKey(talk.transcriptKey);
-    const lastMessageSeq = Math.max(
-      finiteNonNegativeInteger(talk.lastMessageSeq),
-      ...messages.map((message) => message.seq)
-    );
-    const lastOtherMessageSeq = Math.max(
-      finiteNonNegativeInteger(talk.lastOtherMessageSeq),
-      ...messages.filter((message) => message.sender === "other").map((message) => message.seq)
-    );
-    const legacyLastReadMessageId = (talk as StoredTalkState & { lastReadMessageId?: string | null }).lastReadMessageId;
-    const legacyLastReadMessageSeq = messages.find((message) => message.id === legacyLastReadMessageId)?.seq ?? 0;
-    if (messages.length) {
-      legacyTranscripts.push({ streamId: `talk:${talkId}`, transcriptKey: key, messages });
-    }
     return [talkId, {
       from: typeof talk.from === "string" ? talk.from : "",
       turnKey: typeof talk.turnKey === "string" ? talk.turnKey : "",
       blockDisplayCounts: talk.blockDisplayCounts ?? {},
       transcriptKey: key,
-      lastMessageSeq,
-      lastOtherMessageSeq,
-      lastReadMessageSeq: Math.max(finiteNonNegativeInteger(talk.lastReadMessageSeq), legacyLastReadMessageSeq)
+      lastMessageSeq: finiteNonNegativeInteger(talk.lastMessageSeq),
+      lastOtherMessageSeq: finiteNonNegativeInteger(talk.lastOtherMessageSeq),
+      lastReadMessageSeq: finiteNonNegativeInteger(talk.lastReadMessageSeq)
     } satisfies StoredTalkState];
   }));
-  const legacySearchMessages = Array.isArray((value as StoredPlayerState & { searchAgentMessages?: StoredSearchAgentMessage[] }).searchAgentMessages)
-    ? (value as StoredPlayerState & { searchAgentMessages: StoredSearchAgentMessage[] }).searchAgentMessages
-    : [];
-  const searchMessages = legacySearchMessages.map((message, index) => ({
-    ...message,
-    seq: finiteNonNegativeInteger(message.seq) || index + 1
-  }));
   const searchTranscriptKey = transcriptKey(value.searchTranscriptKey);
-  if (searchMessages.length) {
-    legacyTranscripts.push({ streamId: "search", transcriptKey: searchTranscriptKey, messages: searchMessages });
-  }
-  const legacyDiscoveredTargetKeys = searchMessages.flatMap((message) =>
-    message.role === "assistant"
-      ? (message.results ?? [])
-          .filter((result) => result.repairable !== false)
-          .map((result) => `${result.appId}:${result.contentId}`)
-      : []
-  );
   return {
-    state: {
     repairedContentIds: value.repairedContentIds ?? [],
     repairedAppIds: value.repairedAppIds ?? [],
-    openedContentIds: value.openedContentIds ?? [],
     unlockedContentIds: value.unlockedContentIds ?? [],
-    clearedTodoIds: value.clearedTodoIds ?? [],
+    activeTodoIds: value.activeTodoIds ?? [],
     clearedNotificationIds: value.clearedNotificationIds ?? [],
-    discoveredTargetKeys: [...new Set([...(value.discoveredTargetKeys ?? []), ...legacyDiscoveredTargetKeys])],
+    discoveredTargetKeys: value.discoveredTargetKeys ?? [],
     revealedAttachmentContentIds: value.revealedAttachmentContentIds ?? [],
     revealedMessageLinks: value.revealedMessageLinks ?? [],
     stateValues: value.stateValues ?? {},
     talks,
     searchTranscriptKey,
-    searchLastMessageSeq: Math.max(
-      finiteNonNegativeInteger(value.searchLastMessageSeq),
-      ...searchMessages.map((message) => message.seq)
-    ),
+    searchLastMessageSeq: finiteNonNegativeInteger(value.searchLastMessageSeq),
     incomingCallId: value.incomingCallId ?? null,
     browserScheduledEvents: value.browserScheduledEvents ?? []
-    },
-    legacyTranscripts
   };
-}
-
-export function normalizeStoredState(value: StoredPlayerState): StoredPlayerState {
-  return normalizeStoredPlayerState(value).state;
 }
 
 export function copyStoredPlayerState(state: StoredPlayerState): StoredPlayerState {
   return {
     repairedContentIds: [...state.repairedContentIds],
     repairedAppIds: [...state.repairedAppIds],
-    openedContentIds: [...state.openedContentIds],
     unlockedContentIds: [...state.unlockedContentIds],
-    clearedTodoIds: [...state.clearedTodoIds],
+    activeTodoIds: [...state.activeTodoIds],
     clearedNotificationIds: [...state.clearedNotificationIds],
     discoveredTargetKeys: [...state.discoveredTargetKeys],
     revealedAttachmentContentIds: [...state.revealedAttachmentContentIds],

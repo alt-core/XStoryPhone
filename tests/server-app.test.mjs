@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createApp } from "../src/server/app.ts";
+import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
 import { scenarioHookHandlers } from "../src/project/hooks.ts";
-import { createInitialPlayerState, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
+import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
 const configuredPlayerMode = workerScenario.playerMode;
 test.before(() => { workerScenario.playerMode = "server"; });
@@ -23,10 +24,23 @@ class MemoryStore {
   savedReviewTrial = null;
   updatedJudgment = null;
   saveConflictsRemaining = 0;
+  accessCodeAttempts = new Map();
+  lastAccessCode = null;
+  playerInputReviewRows = [];
+  playerInputReviewFilters = null;
 
-  async createPasscodeSession() {
+  async createPasscodeSession(accessCode) {
     this.createCalls += 1;
+    this.lastAccessCode = accessCode;
     return { playerId: this.player.id, sessionToken: "memory-token", created: true };
+  }
+  async isAccessCodeLocked(counter, at) {
+    const attempt = this.accessCodeAttempts.get(counter);
+    return Boolean(attempt?.lockedUntil && Date.parse(attempt.lockedUntil) > Date.parse(at));
+  }
+  async recordAccessCodeAttempt(counter, success, at) {
+    if (success) this.accessCodeAttempts.delete(counter);
+    else this.accessCodeAttempts.set(counter, { failedCount: (this.accessCodeAttempts.get(counter)?.failedCount ?? 0) + 1, updatedAt: at });
   }
   async playerForSession(token) {
     this.playerCalls += 1;
@@ -74,6 +88,10 @@ class MemoryStore {
     if (event) event.status = "queued";
   }
   async recordInputEvent() {}
+  async playerInputEvents(filters) {
+    this.playerInputReviewFilters = filters;
+    return this.playerInputReviewRows;
+  }
   async generatedAudioJob() { return null; }
   async saveGeneratedAudioJob() {}
   async pendingGeneratedAudioJobs() { return []; }
@@ -120,10 +138,12 @@ test("共通HonoアプリはStoreを注入してセッション開始と状態�
   assert.ok(store.playerCalls >= 1);
 
   const state = await app.request("http://localhost/api/player-state", {
+    method: "POST",
     headers: { authorization: "Bearer memory-token" }
   });
   assert.equal(state.status, 200);
   assert.equal((await state.json()).playerState.stateVersion, store.player.stateVersion);
+
 });
 
 test("固定PINはクライアントへ正解を渡さずサーバーで一致判定する", async () => {
@@ -157,6 +177,78 @@ test("固定PINはクライアントへ正解を渡さずサーバーで一致�
   }
 });
 
+test("検索でtalk初期履歴blockを修復し、元のseqへ保存する", async () => {
+  const store = new MemoryStore();
+  const initialized = await reconcileScenarioState(store.player.state, store.player.id);
+  store.player.state = initialized.state;
+  for (const transcript of initialized.transcriptAppends) {
+    store.transcripts.set(`${store.player.id}\0${transcript.streamId}`, structuredClone(transcript));
+  }
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const historyContent = workerScenario.contents.find((content) => content.id === "guide_history_archive_a");
+  const guide = workerScenario.talks.find((talk) => talk.id === "guide");
+  assert.ok(historyContent);
+  assert.ok(guide);
+
+  const searched = await app.request("http://localhost/api/search-agent/search", {
+    method: "POST",
+    headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+    body: JSON.stringify({ query: "消えた連絡記録", requestId: "history-repair-search" })
+  });
+  assert.equal(searched.status, 200);
+  const searchBody = await searched.json();
+  assert.equal(searchBody.results[0]?.targetKind, "talk_history");
+  assert.equal(searchBody.results[0]?.targetTalkId, guide.publicId);
+
+  const opened = await app.request("http://localhost/api/content/opened", {
+    method: "POST",
+    headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+    body: JSON.stringify({ appId: "messages", contentId: historyContent.publicId })
+  });
+  assert.equal(opened.status, 200);
+  const openedBody = await opened.json();
+  const restoredDelta = openedBody.playerState.transcriptDeltas.find((delta) => delta.talkId === guide.publicId);
+  assert.deepEqual(restoredDelta?.messages.map((message) => message.seq), [1, 2]);
+  assert.ok(restoredDelta?.messages.every((message) => message.historyRepairId === historyContent.publicId));
+  assert.deepEqual(
+    openedBody.playerState.visibleDeviceState.messages.find((thread) => thread.id === guide.publicId)?.brokenHistoryRanges,
+    [{ beforeSeq: 4 }]
+  );
+  assert.equal(openedBody.playerState.talks.find((talk) => talk.talkId === guide.publicId)?.historyRevision, 1);
+  assert.deepEqual(
+    store.transcripts.get(`${store.player.id}\0talk:guide`).messages.map((message) => message.seq),
+    [1, 2, 4]
+  );
+});
+
+test("設定時だけアクセスコードのHMACチェック桁を検証する", async () => {
+  const store = new MemoryStore();
+  const secret = "paid-experience-secret";
+  const counter = "0042";
+  const checkDigits = await accessCodeCheckDigits(counter, secret);
+  const app = createApp({
+    store,
+    config: { appEnv: "prod", accessCodeSecret: secret, playerInputLogging: false, llm: {} }
+  });
+  const invalidDigits = `${checkDigits[0] === "0" ? "1" : "0"}${checkDigits.slice(1)}`;
+  const rejected = await app.request("https://example.test/api/session/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ serialCode: `${invalidDigits}${counter}` })
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(store.accessCodeAttempts.get(counter)?.failedCount, 1);
+
+  const accepted = await app.request("https://example.test/api/session/start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ serialCode: `${checkDigits}${counter}` })
+  });
+  assert.equal(accepted.status, 200);
+  assert.equal(store.lastAccessCode, counter);
+  assert.equal(store.accessCodeAttempts.has(counter), false);
+});
+
 test("テストプレイ用進行リセットはdevとstgだけで公開ホストから利用できる", async () => {
   for (const appEnv of ["dev", "development", "stg", "staging"]) {
     const store = new MemoryStore();
@@ -167,7 +259,9 @@ test("テストプレイ用進行リセットはdevとstgだけで公開ホス�
     });
 
     assert.equal(response.status, 200, `${appEnv}ではリセットできる`);
-    assert.equal((await response.json()).ok, true);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.playerState.todos.map((todo) => todo.id), ["find_old_note"]);
   }
 
   for (const appEnv of ["prod", "production"]) {
@@ -231,15 +325,19 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
 
     workerScenario.revision = `${originalRevision}-updated`;
     const refreshedAfterUpdate = await app.request("http://localhost/api/player-state", {
-      headers: { "x-xstoryphone-progress": firstToken }
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: firstToken })
     });
     assert.equal(refreshedAfterUpdate.status, 200);
-    firstToken = (await refreshedAfterUpdate.json()).playerState.progressToken;
+    const refreshedAfterUpdateBody = await refreshedAfterUpdate.json();
+    assert.notEqual(refreshedAfterUpdateBody.playerState.progressToken, firstToken);
+    firstToken = refreshedAfterUpdateBody.playerState.progressToken;
 
     const searched = await app.request("http://localhost/api/search-agent/search", {
       method: "POST",
-      headers: { "x-xstoryphone-progress": firstToken, "content-type": "application/json" },
-      body: JSON.stringify({ query: "古いメモ", requestId: "browser-search-1" })
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: firstToken, query: "古いメモ", requestId: "browser-search-1" })
     });
     assert.equal(searched.status, 200);
     const searchBody = await searched.json();
@@ -250,19 +348,16 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     const oldNote = workerScenario.contents.find((content) => content.id === "old_note");
     const opened = await app.request("http://localhost/api/content/opened", {
       method: "POST",
-      headers: { "x-xstoryphone-progress": secondToken, "content-type": "application/json" },
-      body: JSON.stringify({ appId: "notes", contentId: oldNote.publicId })
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: secondToken, appId: "notes", contentId: oldNote.publicId })
     });
     assert.equal(opened.status, 200);
     const openedBody = await opened.json();
 
     const scheduled = await app.request("http://localhost/api/scenario/event", {
       method: "POST",
-      headers: {
-        "x-xstoryphone-progress": openedBody.playerState.progressToken,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({ eventId: "schedule_demo_call" })
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: openedBody.playerState.progressToken, eventId: "schedule_demo_call" })
     });
     assert.equal(scheduled.status, 200);
     const scheduledBody = await scheduled.json();
@@ -273,7 +368,9 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     let failedDue;
     try {
       failedDue = await app.request("http://localhost/api/player-state", {
-        headers: { "x-xstoryphone-progress": scheduledBody.playerState.progressToken }
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ progressToken: scheduledBody.playerState.progressToken })
       });
     } finally {
       console.error = originalConsoleError;
@@ -281,13 +378,17 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     assert.equal(failedDue.status, 503);
     scenarioHookHandlers.show_demo_call = originalShowHandler;
     const due = await app.request("http://localhost/api/player-state", {
-      headers: { "x-xstoryphone-progress": scheduledBody.playerState.progressToken }
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: scheduledBody.playerState.progressToken })
     });
     assert.equal(due.status, 200);
-    assert.equal((await due.json()).playerState.visibleDeviceState.incomingCall.id, "demo_call");
+    assert.equal((await due.json()).playerState.visibleDeviceState.incomingCall.id, workerScenario.publicIds.incomingCall.demo_call);
 
     const rejected = await app.request("http://localhost/api/player-state", {
-      headers: { "x-xstoryphone-progress": `${secondToken}x` }
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: `${secondToken}x` })
     });
     assert.equal(rejected.status, 401);
     assert.equal(store.createCalls, 0);
@@ -318,13 +419,63 @@ test("browserモードの既定署名鍵はローカル開発以外では使わ�
   }
 });
 
+test("browserモードでもtalk初期履歴blockを進行tokenと差分で修復する", async () => {
+  const originalMode = workerScenario.playerMode;
+  workerScenario.playerMode = "browser";
+  try {
+    const app = createApp({
+      store: new MemoryStore(),
+      config: {
+        appEnv: "production",
+        browserStateSecret: "browser-history-repair-secret",
+        playerInputLogging: false,
+        llm: {}
+      }
+    });
+    const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+    const startBody = await started.json();
+    const searched = await app.request("http://localhost/api/search-agent/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: startBody.playerState.progressToken,
+        query: "消えた連絡記録",
+        requestId: "browser-history-repair-search"
+      })
+    });
+    assert.equal(searched.status, 200);
+    const searchBody = await searched.json();
+    const historyContent = workerScenario.contents.find((content) => content.id === "guide_history_archive_a");
+    assert.ok(historyContent);
+    const opened = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: searchBody.playerState.progressToken,
+        appId: "messages",
+        contentId: historyContent.publicId
+      })
+    });
+    assert.equal(opened.status, 200);
+    const openedBody = await opened.json();
+    assert.equal(typeof openedBody.playerState.progressToken, "string");
+    assert.deepEqual(
+      openedBody.playerState.transcriptDeltas.find((delta) => delta.kind === "sms")?.messages.map((message) => message.seq),
+      [1, 2]
+    );
+    assert.equal(openedBody.playerState.talks.find((talk) => talk.kind === "sms")?.historyRevision, 1);
+  } finally {
+    workerScenario.playerMode = originalMode;
+  }
+});
+
 test("browserモードの進行データ上限超過は専用エラーで切り分けられる", async () => {
   const originalMode = workerScenario.playerMode;
   const oversizedSchedule = {
     id: "test_oversized_progress",
     eventId: "schedule_demo_call",
     delayMs: 60_000,
-    fields: { padding: "x".repeat(7_000) }
+    fields: { padding: Array.from({ length: 3_000 }, () => crypto.randomUUID()).join("") }
   };
   workerScenario.playerMode = "browser";
   workerScenario.initialSchedules.push(oversizedSchedule);
@@ -373,31 +524,241 @@ test("prod表記でもlocalhostの認証緩和と監修認証省略を無効に�
 
 test("同じturnKeyの会話再送はstaleとして本文と返信を二重保存しない", async () => {
   const store = new MemoryStore();
+  let capturedTalkEvent = null;
+  const talkHook = {
+    event: "talk_sent",
+    target: "guide",
+    handler: "test_capture_talk_transition",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(talkHook);
+  scenarioHookHandlers.test_capture_talk_transition = (_context, event) => { capturedTalkEvent = structuredClone(event); };
   const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
-  const started = await app.request("http://localhost/api/session/start", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ serialCode: "1234" })
-  });
-  const startBody = await started.json();
-  const talk = startBody.playerState.talks.find((item) => item.talkId === workerScenario.publicIds.talk.guide);
-  assert.ok(talk);
-  const request = () => app.request("http://localhost/api/talk/send", {
+  try {
+    const started = await app.request("http://localhost/api/session/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serialCode: "1234" })
+    });
+    const startBody = await started.json();
+    const talk = startBody.playerState.talks.find((item) => item.talkId === workerScenario.publicIds.talk.guide);
+    assert.ok(talk);
+    const request = () => app.request("http://localhost/api/talk/send", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ talkId: talk.talkId, message: "見つけた", turnKey: talk.turnKey })
+    });
+
+    const sent = await request();
+    assert.equal(sent.status, 200);
+    const sentBody = await sent.json();
+    assert.equal(sentBody.stale, undefined);
+    assert.equal(capturedTalkEvent.target, "guide");
+    assert.equal(capturedTalkEvent.playerInput, "見つけた");
+    assert.equal(capturedTalkEvent.ruleId, capturedTalkEvent.fields.ruleId);
+    assert.equal(capturedTalkEvent.fields.kind, "sms");
+    assert.ok(capturedTalkEvent.fields.fromId);
+    assert.ok(capturedTalkEvent.fields.nextFromId);
+    const nextTalk = sentBody.playerState.talks.find((item) => item.talkId === talk.talkId);
+    assert.equal(
+      nextTalk.turnKey,
+      await nextTalkTurnKey(store.player.id, "guide", talk.turnKey, capturedTalkEvent.fields.nextFromId)
+    );
+    const transcriptAfterSend = structuredClone(store.transcripts.get(`${store.player.id}\0talk:guide`));
+    assert.ok(transcriptAfterSend.messages.some((message) => message.sender === "owner" && message.body === "見つけた"));
+
+    const replayed = await request();
+    assert.equal(replayed.status, 200);
+    assert.equal((await replayed.json()).stale, true);
+    assert.deepEqual(store.transcripts.get(`${store.player.id}\0talk:guide`), transcriptAfterSend);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(talkHook), 1);
+    delete scenarioHookHandlers.test_capture_talk_transition;
+  }
+});
+
+test("会話を開いた時に表示済みの通常添付だけをアルバムへ同期する", async () => {
+  const store = new MemoryStore();
+  store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
+  store.player.state.revealedAttachmentContentIds.push("rainy_window", "sealed_note");
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const response = await app.request("http://localhost/api/content/opened", {
     method: "POST",
     headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-    body: JSON.stringify({ talkId: talk.talkId, message: "見つけた", turnKey: talk.turnKey })
+    body: JSON.stringify({
+      appId: "messages",
+      contentId: workerScenario.publicIds.talk.guide,
+      mediaContentIds: [
+        workerScenario.publicIds.content.rainy_window,
+        workerScenario.publicIds.content.sealed_note
+      ]
+    })
   });
+  assert.equal(response.status, 200);
+  assert.ok(store.player.state.repairedContentIds.includes("rainy_window"));
+  assert.equal(store.player.state.repairedContentIds.includes("sealed_note"), false);
+});
 
-  const sent = await request();
-  assert.equal(sent.status, 200);
-  assert.equal((await sent.json()).stale, undefined);
-  const transcriptAfterSend = structuredClone(store.transcripts.get(`${store.player.id}\0talk:guide`));
-  assert.ok(transcriptAfterSend.messages.some((message) => message.sender === "owner" && message.body === "見つけた"));
+test("修復対象を開く時は修復hookの後に開封hookを実行する", async () => {
+  const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const order = [];
+  const repairedHook = {
+    event: "content_repaired",
+    target: "old_note",
+    handler: "test_capture_repaired_order",
+    cond: "",
+    llm: false
+  };
+  const openedHook = {
+    event: "content_opened",
+    target: "old_note",
+    handler: "test_capture_opened_order",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(repairedHook, openedHook);
+  scenarioHookHandlers.test_capture_repaired_order = () => { order.push("repaired"); };
+  scenarioHookHandlers.test_capture_opened_order = () => { order.push("opened"); };
+  try {
+    const searched = await app.request("http://localhost/api/search-agent/search", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ query: "古いメモ", requestId: "repair-order-search" })
+    });
+    assert.equal(searched.status, 200);
 
-  const replayed = await request();
-  assert.equal(replayed.status, 200);
-  assert.equal((await replayed.json()).stale, true);
-  assert.deepEqual(store.transcripts.get(`${store.player.id}\0talk:guide`), transcriptAfterSend);
+    const opened = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "notes", contentId: workerScenario.publicIds.content.old_note })
+    });
+    assert.equal(opened.status, 200);
+    assert.deepEqual(order, ["repaired", "opened"]);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(repairedHook), 1);
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
+    delete scenarioHookHandlers.test_capture_repaired_order;
+    delete scenarioHookHandlers.test_capture_opened_order;
+  }
+});
+
+test("開封hookは同じコンテンツを開くたびに実行する", async () => {
+  const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  let openedCount = 0;
+  const openedHook = {
+    event: "content_opened",
+    target: "welcome_note",
+    handler: "test_count_content_opened",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(openedHook);
+  scenarioHookHandlers.test_count_content_opened = () => { openedCount += 1; };
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const opened = await app.request("http://localhost/api/content/opened", {
+        method: "POST",
+        headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+        body: JSON.stringify({ appId: "notes", contentId: workerScenario.publicIds.content.welcome_note })
+      });
+      assert.equal(opened.status, 200);
+    }
+    assert.equal(openedCount, 2);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
+    delete scenarioHookHandlers.test_count_content_opened;
+  }
+});
+
+test("開封hookが新しく出した同一対象の通知を同じrequestで消さない", async () => {
+  const store = new MemoryStore();
+  workerScenario.stateVariables.test_open_notification = false;
+  const notification = {
+    id: "test_open_notification",
+    appId: "notes",
+    targetContentId: "welcome_note",
+    title: "新しい通知",
+    body: "hook後に表示",
+    cond: "test_open_notification"
+  };
+  const hook = {
+    event: "content_opened",
+    target: "welcome_note",
+    handler: "test_open_notification",
+    cond: "!test_open_notification",
+    llm: false
+  };
+  workerScenario.notifications.push(notification);
+  workerScenario.publicIds.notification.test_open_notification = "notification_test_open";
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_open_notification = (context) => context.state.set("test_open_notification", true);
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const response = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "notes", contentId: workerScenario.publicIds.content.welcome_note })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.playerState.visibleDeviceState.notifications.some((item) => item.id === "notification_test_open"));
+    assert.equal(store.player.state.clearedNotificationIds.includes(notification.id), false);
+  } finally {
+    workerScenario.notifications.splice(workerScenario.notifications.indexOf(notification), 1);
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete workerScenario.publicIds.notification.test_open_notification;
+    delete workerScenario.stateVariables.test_open_notification;
+    delete scenarioHookHandlers.test_open_notification;
+  }
+});
+
+test("メッセージ内リンクhookへ照合済みの遷移先を渡す", async () => {
+  const store = new MemoryStore();
+  const talk = workerScenario.talks.find((item) => item.id === "guide");
+  const content = workerScenario.contents.find((item) => item.id === "welcome_note");
+  assert.ok(talk);
+  assert.ok(content);
+  store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
+  store.player.state.revealedMessageLinks.push({
+    id: "verified-message:link:1",
+    talkId: talk.id,
+    appId: content.appId,
+    contentId: content.id,
+    actionId: "verified_action"
+  });
+  let capturedEvent = null;
+  const linkHook = {
+    event: "scenario_event",
+    target: "message_link_opened",
+    handler: "test_capture_message_link",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(linkHook);
+  scenarioHookHandlers.test_capture_message_link = (_context, event) => { capturedEvent = structuredClone(event); };
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const response = await app.request("http://localhost/api/message-link/open", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        talkId: talk.publicId,
+        messageRef: "verified-message",
+        segmentIndex: 0
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(capturedEvent?.fields.actionId, "verified_action");
+    assert.equal(capturedEvent?.fields.talkId, talk.id);
+    assert.equal(capturedEvent?.fields.appId, content.appId);
+    assert.equal(capturedEvent?.fields.contentId, content.id);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(linkHook), 1);
+    delete scenarioHookHandlers.test_capture_message_link;
+  }
 });
 
 test("到達済み能力がなければ修復・添付解錠・会話リンクを直接呼べない", async () => {
@@ -454,6 +815,20 @@ test("到達済み能力がなければ修復・添付解錠・会話リンク�
   assert.equal(reachedOpen.status, 200);
 });
 
+test("鍵付き添付は到達後にNFKC正規化したパスワードhashで解錠する", async () => {
+  const store = new MemoryStore();
+  store.player.state.stateValues.image_color_reported = true;
+  store.player.state.revealedAttachmentContentIds.push("sealed_note");
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const response = await app.request("http://localhost/api/content/unlock", {
+    method: "POST",
+    headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+    body: JSON.stringify({ contentId: workerScenario.publicIds.content.sealed_note, password: "０４２０" })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(store.player.state.unlockedContentIds.includes("sealed_note"));
+});
+
 test("完了イベントの状態更新後に期限到来済み予約イベントを評価する", async () => {
   const store = new MemoryStore();
   const completionHook = {
@@ -508,9 +883,65 @@ test("完了イベントの状態更新後に期限到来済み予約イベン�
   }
 });
 
+test("期限到来した着信は後続予約と通常操作を止め、通話完了後に再開する", async () => {
+  const store = new MemoryStore();
+  workerScenario.stateVariables.test_after_incoming = false;
+  const afterIncomingHook = {
+    event: "scenario_event",
+    target: "test_after_incoming",
+    handler: "test_after_incoming",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(afterIncomingHook);
+  scenarioHookHandlers.test_after_incoming = (context) => context.state.set("test_after_incoming", true);
+  for (const [id, eventId] of [["incoming-event", "show_demo_call"], ["after-event", "test_after_incoming"]]) {
+    store.schedules.push({
+      id,
+      scheduleId: id,
+      eventId,
+      fields: {},
+      dueAt: "2000-01-01T00:00:00.000Z",
+      playerId: store.player.id,
+      status: "queued"
+    });
+  }
+
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const interrupted = await app.request("http://localhost/api/search-agent/search", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ query: "古いメモ", requestId: "interrupted-search" })
+    });
+    assert.equal(interrupted.status, 409);
+    const interruptedBody = await interrupted.json();
+    assert.equal(interruptedBody.error, "incoming_call_active");
+    assert.equal(interruptedBody.playerState.visibleDeviceState.incomingCall.id, workerScenario.publicIds.incomingCall.demo_call);
+    assert.equal(store.player.state.incomingCallId, "demo_call");
+    assert.equal(store.schedules[0].status, "completed");
+    assert.equal(store.schedules[1].status, "queued");
+    assert.equal(store.player.state.stateValues.test_after_incoming, undefined);
+
+    const completed = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ eventId: "incoming_call_completed", fields: { callId: workerScenario.publicIds.incomingCall.demo_call } })
+    });
+    assert.equal(completed.status, 200);
+    assert.equal(store.player.state.incomingCallId, null);
+    assert.equal(store.player.state.stateValues.test_after_incoming, true);
+    assert.equal(store.schedules[1].status, "completed");
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(afterIncomingHook), 1);
+    delete scenarioHookHandlers.test_after_incoming;
+    delete workerScenario.stateVariables.test_after_incoming;
+  }
+});
+
 test("完了イベントの保存競合では予約を先に消費せず、再送時に因果順を保つ", async () => {
   const store = new MemoryStore();
-  const initialized = reconcileScenarioState(store.player.state);
+  const initialized = await reconcileScenarioState(store.player.state, store.player.id);
   store.player.state = initialized.state;
   for (const transcript of initialized.transcriptAppends) {
     store.transcripts.set(`${store.player.id}\0${transcript.streamId}`, structuredClone(transcript));
@@ -616,7 +1047,21 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
   const content = workerScenario.contents.find((item) => item.id === "sample_radio");
   assert.ok(content);
   const originalForm = content.record.form;
+  const originalFormDisabledCond = content.record.formDisabledCond;
+  const originalPublicFormId = workerScenario.publicIds.form.demo_form;
+  let capturedEvent = null;
+  const formHook = {
+    event: "scenario_event",
+    target: "demo_form",
+    handler: "test_capture_form_context",
+    cond: "",
+    llm: false
+  };
   content.record.form = { kind: "html", id: "demo_form", label: "テスト", url: "/test" };
+  content.record.formDisabledCond = "radio_playback_completed";
+  workerScenario.publicIds.form.demo_form = "form_demo_public";
+  workerScenario.hooks.push(formHook);
+  scenarioHookHandlers.test_capture_form_context = (_context, event) => { capturedEvent = structuredClone(event); };
   try {
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
     const invalid = await app.request("http://localhost/api/form/submit", {
@@ -629,14 +1074,139 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
     const valid = await app.request("http://localhost/api/form/submit", {
       method: "POST",
       headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-      body: JSON.stringify({ formId: "demo_form", fields: {} })
+      body: JSON.stringify({ formId: workerScenario.publicIds.form.demo_form, fields: { message: "確認" } })
     });
     assert.equal(valid.status, 200);
     assert.equal((await valid.json()).gameOver?.kind, "form");
+    assert.equal(capturedEvent?.fields.message, "確認");
+    assert.equal(capturedEvent?.fields.formId, "demo_form");
+    assert.equal(capturedEvent?.fields.appId, content.appId);
+    assert.equal(capturedEvent?.fields.contentId, content.id);
+
+    store.player.state.stateValues.radio_playback_completed = true;
+    const disabled = await app.request("http://localhost/api/form/submit", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ formId: workerScenario.publicIds.form.demo_form, fields: {} })
+    });
+    assert.equal(disabled.status, 409);
   } finally {
     if (originalForm === undefined) delete content.record.form;
     else content.record.form = originalForm;
+    if (originalFormDisabledCond === undefined) delete content.record.formDisabledCond;
+    else content.record.formDisabledCond = originalFormDisabledCond;
+    if (originalPublicFormId) workerScenario.publicIds.form.demo_form = originalPublicFormId;
+    else delete workerScenario.publicIds.form.demo_form;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(formHook), 1);
+    delete scenarioHookHandlers.test_capture_form_context;
   }
+});
+
+test("音声cueは表示中のラジオ定義と照合して非公開IDをhookへ渡す", async () => {
+  const store = new MemoryStore();
+  const content = workerScenario.contents.find((item) => item.id === "sample_radio");
+  assert.ok(content);
+  const originalCues = content.record.audioCues;
+  let capturedEvent = null;
+  content.record.audioCues = [{ id: "private_marker", atMs: 1_000 }];
+  const cueHook = {
+    event: "scenario_event",
+    target: "audio_cue_reached",
+    handler: "test_capture_audio_cue",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(cueHook);
+  scenarioHookHandlers.test_capture_audio_cue = (_context, event) => { capturedEvent = structuredClone(event); };
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const valid = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        eventId: "audio_cue_reached",
+        contentId: content.publicId,
+        cueIndex: 1
+      })
+    });
+    assert.equal(valid.status, 200);
+    assert.equal(capturedEvent.fields.contentId, "sample_radio");
+    assert.equal(capturedEvent.fields.cueId, "private_marker");
+    assert.equal(capturedEvent.fields.cueTarget, "sample_radio:private_marker");
+    assert.equal(capturedEvent.fields.cueIndex, "1");
+
+    const invalid = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        eventId: "audio_cue_reached",
+        contentId: content.publicId,
+        cueIndex: 2
+      })
+    });
+    assert.equal(invalid.status, 400);
+  } finally {
+    if (originalCues === undefined) delete content.record.audioCues;
+    else content.record.audioCues = originalCues;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(cueHook), 1);
+    delete scenarioHookHandlers.test_capture_audio_cue;
+  }
+});
+
+test("入力ログ確認APIは監修認証・絞り込み・安全なCSVを提供する", async () => {
+  const store = new MemoryStore();
+  store.playerInputReviewRows = [{
+    id: "input-1",
+    eventType: "search",
+    playerId: "player-1",
+    occurredAt: "2026-08-17T00:00:00.000Z",
+    appId: "search-agent",
+    talkId: null,
+    fromId: null,
+    userInput: "=HYPERLINK(\"bad\")",
+    status: "completed",
+    matched: false,
+    ruleId: null,
+    nextFromId: null,
+    responseSnapshot: { resultCount: 0 }
+  }];
+  const app = createApp({
+    store,
+    config: { appEnv: "production", adminReviewSecret: "review-secret", playerInputLogging: true, llm: {} }
+  });
+  const unauthorized = await app.request("https://example.test/api/admin/player-input-review/events");
+  assert.equal(unauthorized.status, 401);
+  const headers = { "x-admin-review-secret": "review-secret" };
+  const response = await app.request("https://example.test/api/admin/player-input-review/events?eventType=search&playerId=player-1&talkId=guide&q=灯り&limit=200", { headers });
+  assert.equal(response.status, 200);
+  assert.deepEqual(store.playerInputReviewFilters, {
+    eventType: "search",
+    playerId: "player-1",
+    talkId: "guide",
+    query: "灯り",
+    limit: 200
+  });
+  assert.equal((await response.json()).items[0].userInput, '=HYPERLINK("bad")');
+
+  const csv = await app.request("https://example.test/api/admin/player-input-review.csv?eventType=search", { headers });
+  assert.equal(csv.status, 200);
+  assert.match(csv.headers.get("content-type") ?? "", /text\/csv/u);
+  assert.match(await csv.text(), /'=HYPERLINK/u);
+});
+
+test("入力ログ確認画面の組み込みスクリプトは構文エラーなく読み込める", async () => {
+  const store = new MemoryStore();
+  const app = createApp({
+    store,
+    config: { appEnv: "development", playerInputLogging: false, llm: {} }
+  });
+  const response = await app.request("http://localhost/api/admin/player-input-review");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  const script = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1];
+  assert.ok(script);
+  assert.doesNotThrow(() => new Function(script));
+  assert.match(html, /行を選択すると詳細を表示します。/u);
 });
 
 test("監修集計APIは認証・revision・入力所属を検証してStoreへ保存する", async () => {
@@ -742,8 +1312,42 @@ test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ
     body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "黄色です" })
   });
   assert.equal(simulated.status, 200);
+  const simulatedBody = await simulated.json();
+  assert.equal(simulatedBody.result.targetCondSatisfied, true);
   assert.equal(store.savedReviewTrial.responseSnapshot.selectionSource, "regex");
   assert.deepEqual(store.savedReviewTrial.responseSnapshot.match, {});
+
+  const originalCond = rule.cond;
+  workerScenario.stateVariables.test_review_flag = true;
+  workerScenario.stateVariables.test_review_count = 0;
+  workerScenario.stateVariables.test_review_phase = "start";
+  workerScenario.stateVariableDefinitions.test_review_flag = { type: "boolean" };
+  workerScenario.stateVariableDefinitions.test_review_count = { type: "integer" };
+  workerScenario.stateVariableDefinitions.test_review_phase = { type: "enum", values: ["start", "ready"] };
+  rule.cond = '!test_review_flag && test_review_count >= 3 && test_review_phase == "ready"';
+  try {
+    const presetResponse = await app.request("http://localhost/api/admin/talk-branch-review/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "黄色です" })
+    });
+    assert.equal(presetResponse.status, 200);
+    const preset = (await presetResponse.json()).result;
+    assert.equal(preset.targetCondSatisfied, true);
+    assert.deepEqual(preset.condPreset, [
+      "test_review_flag = false",
+      "test_review_count = 3",
+      'test_review_phase = "ready"'
+    ]);
+  } finally {
+    rule.cond = originalCond;
+    delete workerScenario.stateVariables.test_review_flag;
+    delete workerScenario.stateVariables.test_review_count;
+    delete workerScenario.stateVariables.test_review_phase;
+    delete workerScenario.stateVariableDefinitions.test_review_flag;
+    delete workerScenario.stateVariableDefinitions.test_review_count;
+    delete workerScenario.stateVariableDefinitions.test_review_phase;
+  }
 });
 
 test("保存済みクラスタがあっても後から届いた未集計入力を隠さない", async () => {

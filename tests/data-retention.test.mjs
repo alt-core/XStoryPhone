@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prunePlayerSessions, recordInputEvent } from "../src/worker/repository.ts";
+import { D1Store } from "../src/platform/cloudflare/d1Store.ts";
 
 function fakeD1() {
   const calls = [];
@@ -37,20 +37,20 @@ const sampleInputEvent = {
 
 test("入力ログが無効ならplayer_input_eventsへ書き込まない", async () => {
   const fake = fakeD1();
-  await recordInputEvent(fake.db, sampleInputEvent, false);
+  await new D1Store(fake.db).recordInputEvent(sampleInputEvent, false);
   assert.equal(fake.calls.length, 0);
 });
 
 test("入力ログが明示的に有効な場合だけplayer_input_eventsへ書き込む", async () => {
   const fake = fakeD1();
-  await recordInputEvent(fake.db, sampleInputEvent, true);
+  await new D1Store(fake.db).recordInputEvent(sampleInputEvent, true);
   assert.equal(fake.calls.length, 1);
   assert.match(fake.calls[0].sql, /INSERT OR IGNORE INTO player_input_events/u);
 });
 
 test("sessionは現在のtokenと直近4件だけを残す", async () => {
   const fake = fakeD1();
-  await prunePlayerSessions(fake.db, "player-1", "current-token-hash");
+  await new D1Store(fake.db).prunePlayerSessions("player-1", "current-token-hash");
 
   assert.match(fake.calls[0].sql, /DELETE FROM sessions/u);
   assert.match(fake.calls[0].sql, /ORDER BY last_seen_at DESC, created_at DESC/u);

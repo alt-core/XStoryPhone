@@ -108,6 +108,7 @@ test("AWSデプロイは入力ログ設定を環境変数から引き継ぐ", ()
 });
 
 test("AWSデプロイはクライアントだけの変更でも静的ファイル同期まで続行する", () => {
+  assert.match(deployAws, /"--no-confirm-changeset"/u);
   assert.match(deployAws, /"--no-fail-on-empty-changeset"/u);
 });
 
@@ -124,12 +125,27 @@ test("AWSデプロイは設定されたLLM項目だけをLambdaへ渡す", () =>
     ["LlmApiKey", "LLM_API_KEY"],
     ["LlmModel", "LLM_MODEL"],
     ["LlmBaseUrl", "LLM_BASE_URL"],
-    ["LlmTimeoutMs", "LLM_TIMEOUT_MS"]
+    ["LlmTimeoutMs", "LLM_TIMEOUT_MS"],
+    ["LlmReasoningEffort", "LLM_REASONING_EFFORT"]
   ]) {
     assert.match(template, new RegExp(`${environmentVariable}: !Ref ${parameter}`, "u"));
     assert.match(deployAws, new RegExp(`\\["${parameter}", "${environmentVariable}"\\]`, "u"));
   }
   assert.match(template, /LlmApiKey:\s+[\s\S]*?NoEcho: true/u);
+});
+
+test("AWSの人数限定アクセスコードは任意の非表示parameterとして渡す", () => {
+  assert.match(template, /AccessCodeSecret:\s+[\s\S]*?NoEcho: true/u);
+  assert.match(template, /ACCESS_CODE_SECRET: !Ref AccessCodeSecret/u);
+  assert.match(deployAws, /process\.env\.ACCESS_CODE_SECRET/u);
+  assert.match(deployAws, /`AccessCodeSecret=\$\{accessCodeSecret\}`/u);
+});
+
+test("AWSの実プレイ入力一覧は全件Scanせず疎なGSI2を使う", () => {
+  assert.match(template, /IndexName: GSI2/u);
+  assert.match(dynamoStore, /IndexName: "GSI2"/u);
+  assert.match(dynamoStore, /GSI2PK: "INPUT_REVIEW"/u);
+  assert.doesNotMatch(awsHandler, /ScanCommand/u);
 });
 
 test("AWSのbrowser署名鍵は非表示parameterからLambdaだけへ渡す", () => {

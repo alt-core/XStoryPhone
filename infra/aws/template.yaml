@@ -14,6 +14,10 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ""
+  AccessCodeSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
   PlayerInputLogging:
     Type: String
     AllowedValues: ["true", "false"]
@@ -29,6 +33,9 @@ Parameters:
     Type: String
     Default: ""
   LlmTimeoutMs:
+    Type: String
+    Default: ""
+  LlmReasoningEffort:
     Type: String
     Default: ""
   ReservedConcurrency:
@@ -58,6 +65,10 @@ Resources:
           AttributeType: S
         - AttributeName: GSI1SK
           AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -69,6 +80,14 @@ Resources:
             - AttributeName: GSI1PK
               KeyType: HASH
             - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -97,11 +116,13 @@ Resources:
           TABLE_NAME: !Ref AppTable
           ADMIN_REVIEW_SECRET: !Ref AdminReviewSecret
           BROWSER_STATE_SECRET: !Ref BrowserStateSecret
+          ACCESS_CODE_SECRET: !Ref AccessCodeSecret
           PLAYER_INPUT_LOGGING: !Ref PlayerInputLogging
           LLM_API_KEY: !Ref LlmApiKey
           LLM_MODEL: !Ref LlmModel
           LLM_BASE_URL: !Ref LlmBaseUrl
           LLM_TIMEOUT_MS: !Ref LlmTimeoutMs
+          LLM_REASONING_EFFORT: !Ref LlmReasoningEffort
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref AppTable

@@ -38,6 +38,7 @@ class LocalD1 {
     this.database.exec(readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0002_player_access_code.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0003_player_transcripts.sql", import.meta.url), "utf8"));
+    this.database.exec(readFileSync(new URL("../migrations/0004_access_code_attempts.sql", import.meta.url), "utf8"));
   }
 
   prepare(sql) {
@@ -84,6 +85,64 @@ reviewTest("D1版は進行状態と変更された会話ストリームを同じ
   };
   assert.equal(await store.savePlayer(player, player.state, [staleTranscript]), false);
   assert.deepEqual(await store.loadTranscript(player.id, "search", transcript.transcriptKey), transcript);
+});
+
+reviewTest("D1版のアクセスコード失敗記録は20回で15分ロックし、成功時に削除する", async () => {
+  const store = new D1Store(new LocalD1());
+  const at = "2026-08-17T00:00:00.000Z";
+  for (let index = 0; index < 20; index += 1) await store.recordAccessCodeAttempt("0042", false, at);
+  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), true);
+  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:16:00.000Z"), false);
+  await store.recordAccessCodeAttempt("0042", true, at);
+  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), false);
+});
+
+reviewTest("D1版の検索履歴は直近100往復だけを保持する", async () => {
+  const store = new D1Store(new LocalD1());
+  const session = await store.createPasscodeSession("12345678", createInitialPlayerState());
+  const player = await store.playerForSession(session.sessionToken);
+  assert.ok(player);
+  const messages = Array.from({ length: 202 }, (_, index) => ({
+    seq: index + 1,
+    id: `search-${index + 1}`,
+    requestId: `request-${Math.floor(index / 2)}`,
+    role: index % 2 ? "assistant" : "user",
+    body: "検索",
+    sentAt: "2026-08-17T00:00:00.000Z"
+  }));
+  await store.savePlayer(player, player.state, [{ streamId: "search", transcriptKey: player.state.searchTranscriptKey, messages }]);
+  const stored = await store.loadTranscript(player.id, "search", player.state.searchTranscriptKey);
+  assert.equal(stored.messages.length, 200);
+  assert.equal(stored.messages[0].seq, 3);
+});
+
+reviewTest("D1版の入力ログ確認は種別と本文で絞り込む", async () => {
+  const store = new D1Store(new LocalD1());
+  await store.recordInputEvent({
+    eventType: "search",
+    playerId: "player-1",
+    requestKey: "search-1",
+    appId: "search-agent",
+    userInput: "黄色い灯り",
+    status: "completed",
+    matched: true,
+    responseSnapshot: { resultCount: 1 }
+  }, true);
+  await store.recordInputEvent({
+    eventType: "talk_send",
+    playerId: "player-1",
+    requestKey: "talk-1",
+    appId: "messages",
+    talkId: "guide",
+    fromId: "start",
+    userInput: "別の入力",
+    status: "completed",
+    matched: false
+  }, true);
+  const rows = await store.playerInputEvents({ eventType: "search", playerId: "player-1", query: "灯り", limit: 100 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].userInput, "黄色い灯り");
+  assert.deepEqual(rows[0].responseSnapshot, { resultCount: 1 });
 });
 
 reviewTest("D1版も監修クラスタを同じグループ単位で置換する", async () => {

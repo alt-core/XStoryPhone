@@ -98,3 +98,16 @@ test("添付コマンドは正規表現へ内部ID、LLMへ説明文を渡せる
   assert.match(semanticInput, /画像を添付/u);
   assert.equal(result.ok && result.rule.id, "semantic");
 });
+
+test("condは現在のplayer_inputを参照して候補を絞れる", async () => {
+  const result = await resolveTalkRule({
+    rules: [
+      { ...baseRule, id: "secret", isDefault: false, criteria: "/秘密/u", cond: "player_input =~ /秘密/u" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+    ],
+    from: "start",
+    playerInput: "秘密を見つけた",
+    stateValues: {}
+  });
+  assert.equal(result.ok && result.rule.id, "secret");
+});

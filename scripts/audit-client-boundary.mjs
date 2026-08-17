@@ -51,8 +51,10 @@ const leakedInitialCollections = [
   "messages",
   "photos",
   "notes",
+  "mails",
   "calendarEvents",
   "callLogs",
+  "browserTabs",
   "radioItems",
   "chatThreads",
   "todos"
@@ -76,6 +78,10 @@ const publicInitialValues = new Set([
   ...stringLeaves(scenario.deviceState),
   ...stringLeaves(scenario.projectConstants)
 ]);
+const publicSystemValues = new Set([
+  "/system/call-caption-sample.wav",
+  "/system/incoming-call-bell.wav"
+]);
 const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed"]);
 const protectedValues = new Set([
   ...scenario.worker.contents.flatMap((content) => stringLeaves({
@@ -94,10 +100,14 @@ const protectedValues = new Set([
 ].map((value) => value.trim()).filter((value) =>
   (value.startsWith("/") || value.length >= 10)
   && !publicInitialValues.has(value)
+  && !publicSystemValues.has(value)
   && !structuralValues.has(value)
 ));
 for (const content of scenario.worker.contents) {
   if (typeof content.record.unlockCode === "string") protectedValues.add(content.record.unlockCode);
+}
+for (const description of Object.values(scenario.worker.photoDescriptions ?? {})) {
+  if (typeof description === "string" && description.trim()) protectedValues.add(description.trim());
 }
 
 const failures = [

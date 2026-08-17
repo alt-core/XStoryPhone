@@ -119,50 +119,208 @@ function transitionFor(rule: TalkRule) {
   return { kind: "next", nextFromId: nextFrom, label: shortBlockLabel(nextFrom) };
 }
 
-function statePresetForCondition(condition: string) {
-  const initialState = { ...workerScenario.stateVariables };
-  const identifiers = [...new Set(condition.match(/[A-Za-z_][A-Za-z0-9_.-]*/gu) ?? [])]
-    .filter((id) => id in initialState);
-  const stringLiterals = [...condition.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'/gu)]
-    .map((match) => match[0].startsWith('"')
-      ? JSON.parse(match[0]) as string
-      : (match[2] ?? "").replace(/\\'/gu, "'").replace(/\\\\/gu, "\\"));
-  const numberLiterals = (condition.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/gu) ?? []).map(Number);
-  const candidates = identifiers.map((id) => {
-    const current = initialState[id];
-    const values: Array<string | number | boolean> = typeof current === "boolean"
-      ? [current, true, false]
-      : typeof current === "number"
-        ? [current, ...numberLiterals, 0, 1]
-        : [current, ...stringLiterals, "", "x"];
-    return [...new Set(values)];
-  });
-  let stateValues = initialState;
-  let attempts = 0;
-  const search = (index: number, candidateState: typeof initialState): boolean => {
-    if (attempts >= 20_000) return false;
-    if (index === identifiers.length) {
-      attempts += 1;
-      if (!evaluateCondition(condition, candidateState)) return false;
-      stateValues = candidateState;
-      return true;
+function stateVarDefinitionsById() {
+  return new Map(Object.entries(workerScenario.stateVariableDefinitions));
+}
+
+function stripOuterConditionParens(input: string) {
+  let value = input.trim();
+  let changed = true;
+  while (changed && value.startsWith("(") && value.endsWith(")")) {
+    changed = false;
+    let depth = 0;
+    let quote = "";
+    let enclosesAll = true;
+    for (let index = 0; index < value.length; index += 1) {
+      const char = value[index] ?? "";
+      if (quote) {
+        if (char === "\\" && index + 1 < value.length) {
+          index += 1;
+          continue;
+        }
+        if (char === quote) quote = "";
+        continue;
+      }
+      if (char === "\"" || char === "'") {
+        quote = char;
+        continue;
+      }
+      if (char === "(") depth += 1;
+      else if (char === ")") {
+        depth -= 1;
+        if (depth === 0 && index < value.length - 1) {
+          enclosesAll = false;
+          break;
+        }
+      }
     }
-    const id = identifiers[index];
-    return candidates[index].some((value) => search(index + 1, { ...candidateState, [id]: value }));
-  };
-  let condSatisfied = true;
-  try {
-    condSatisfied = evaluateCondition(condition, initialState) || search(0, initialState);
-  } catch {
-    condSatisfied = false;
+    if (enclosesAll) {
+      value = value.slice(1, -1).trim();
+      changed = true;
+    }
   }
-  const changes = Object.fromEntries(Object.entries(stateValues)
-    .filter(([id, value]) => value !== initialState[id]));
-  return {
-    stateValues,
-    condSatisfied,
-    lines: Object.entries(changes).map(([id, value]) => `${id} = ${JSON.stringify(value)}`)
-  };
+  return value;
+}
+
+function splitTopLevelCondition(input: string, operator: "&&" | "||") {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let start = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? "";
+    if (quote) {
+      if (char === "\\" && index + 1 < input.length) {
+        index += 1;
+        continue;
+      }
+      if (char === quote) quote = "";
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (depth === 0 && input.slice(index, index + operator.length) === operator) {
+      parts.push(input.slice(start, index).trim());
+      index += operator.length - 1;
+      start = index + 1;
+    }
+  }
+  parts.push(input.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function conditionLiteralValue(input: string) {
+  const value = input.trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    return { kind: "literal" as const, value: value.slice(1, -1) };
+  }
+  if (value === "true" || value === "false") return { kind: "literal" as const, value: value === "true" };
+  if (/^-?\d+$/u.test(value)) return { kind: "literal" as const, value: Number.parseInt(value, 10) };
+  if (/^[a-zA-Z_][a-zA-Z0-9_:-]*$/u.test(value)) return { kind: "identifier" as const, id: value };
+  return null;
+}
+
+function valueForStateDefinition(stateId: string, value: unknown) {
+  const definition = stateVarDefinitionsById().get(stateId);
+  if (!definition) return undefined;
+  if (definition.type === "boolean") return typeof value === "boolean" ? value : undefined;
+  if (definition.type === "integer") return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+  if (definition.type === "enum") {
+    const stringValue = String(value);
+    return definition.values?.includes(stringValue) ? stringValue : undefined;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function alternativeConditionValue(stateId: string, forbidden: unknown) {
+  const definition = stateVarDefinitionsById().get(stateId);
+  if (!definition) return undefined;
+  if (definition.type === "boolean" && typeof forbidden === "boolean") return !forbidden;
+  if (definition.type === "integer" && typeof forbidden === "number") return forbidden === 0 ? 1 : 0;
+  if (definition.type === "enum") return definition.values?.find((value) => value !== String(forbidden));
+  if (definition.type === "string") return forbidden === "" ? "x" : "";
+  return undefined;
+}
+
+function setPresetStateValue(stateValues: Record<string, unknown>, changes: Record<string, unknown>, stateId: string, value: unknown) {
+  const normalized = valueForStateDefinition(stateId, value);
+  if (normalized === undefined) return;
+  stateValues[stateId] = normalized;
+  changes[stateId] = normalized;
+}
+
+function numericConditionValue(operator: string, literal: number, reversed: boolean) {
+  const effective = reversed
+    ? operator === ">" ? "<"
+      : operator === ">=" ? "<="
+        : operator === "<" ? ">"
+          : operator === "<=" ? ">="
+            : operator
+    : operator;
+  if (effective === ">") return literal + 1;
+  if (effective === ">=") return literal;
+  if (effective === "<") return literal - 1;
+  if (effective === "<=") return literal;
+  return undefined;
+}
+
+function applyConditionAtomPreset(atom: string, stateValues: Record<string, unknown>, changes: Record<string, unknown>) {
+  const value = stripOuterConditionParens(atom);
+  const notMatch = value.match(/^!\s*([a-zA-Z_][a-zA-Z0-9_:-]*)$/u);
+  if (notMatch) {
+    setPresetStateValue(stateValues, changes, notMatch[1] ?? "", false);
+    return;
+  }
+  const bareMatch = value.match(/^([a-zA-Z_][a-zA-Z0-9_:-]*)$/u);
+  if (bareMatch) {
+    setPresetStateValue(stateValues, changes, bareMatch[1] ?? "", true);
+    return;
+  }
+  const binaryMatch = value.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/u);
+  if (!binaryMatch) return;
+  const [, leftRaw = "", operator = "", rightRaw = ""] = binaryMatch;
+  const left = conditionLiteralValue(leftRaw);
+  const right = conditionLiteralValue(rightRaw);
+  if (!left || !right) return;
+  const leftId = left.kind === "identifier" ? left.id : "";
+  const rightId = right.kind === "identifier" ? right.id : "";
+  if (operator === "==" && leftId && right.kind === "literal") {
+    setPresetStateValue(stateValues, changes, leftId, right.value);
+    return;
+  }
+  if (operator === "==" && rightId && left.kind === "literal") {
+    setPresetStateValue(stateValues, changes, rightId, left.value);
+    return;
+  }
+  if (operator === "!=" && leftId && right.kind === "literal") {
+    setPresetStateValue(stateValues, changes, leftId, alternativeConditionValue(leftId, right.value));
+    return;
+  }
+  if (operator === "!=" && rightId && left.kind === "literal") {
+    setPresetStateValue(stateValues, changes, rightId, alternativeConditionValue(rightId, left.value));
+    return;
+  }
+  if (leftId && right.kind === "literal" && typeof right.value === "number") {
+    setPresetStateValue(stateValues, changes, leftId, numericConditionValue(operator, right.value, false));
+    return;
+  }
+  if (rightId && left.kind === "literal" && typeof left.value === "number") {
+    setPresetStateValue(stateValues, changes, rightId, numericConditionValue(operator, left.value, true));
+  }
+}
+
+function applyConditionPresetExpression(expression: string, stateValues: Record<string, unknown>, changes: Record<string, unknown>) {
+  const value = stripOuterConditionParens(expression);
+  const orParts = splitTopLevelCondition(value, "||");
+  if (orParts.length > 1) {
+    applyConditionPresetExpression(orParts[0] ?? "", stateValues, changes);
+    return;
+  }
+  const andParts = splitTopLevelCondition(value, "&&");
+  if (andParts.length > 1) {
+    for (const part of andParts) applyConditionPresetExpression(part, stateValues, changes);
+    return;
+  }
+  applyConditionAtomPreset(value, stateValues, changes);
+}
+
+function talkBranchReviewStatePresetForCond(cond: string) {
+  const stateValues: Record<string, unknown> = { ...workerScenario.stateVariables };
+  const changes: Record<string, unknown> = {};
+  const trimmed = cond.trim();
+  if (trimmed) applyConditionPresetExpression(trimmed, stateValues, changes);
+  const lines = Object.entries(changes).map(([key, value]) => `${key} = ${typeof value === "string" ? JSON.stringify(value) : String(value)}`);
+  return { stateValues, lines, condSatisfied: evaluateCondition(cond, stateValues) };
 }
 
 function internalizeReviewTalkCommand(value: string) {
@@ -380,7 +538,7 @@ export async function simulateTalkBranchReviewSelection(
   const talk = talkFor(input.talkId);
   const targetRule = talk ? rulesFor(talk, input.fromId).find((rule) => rule.id === input.targetRuleId) : null;
   if (!talk || !targetRule) return { ok: false as const, error: "not_found", status: 404 as const };
-  const preset = statePresetForCondition(targetRule.cond);
+  const preset = talkBranchReviewStatePresetForCond(targetRule.cond);
   const playerInput = internalizeReviewTalkCommand(input.message);
   const selected = await resolveScenarioTalkRule({
     env,

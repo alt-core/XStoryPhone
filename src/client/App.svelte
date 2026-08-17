@@ -3,8 +3,10 @@
   import ProjectStage from "../project/ProjectStage.svelte";
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
   import { formatStoryDateCompact } from "../shared/storyDate";
+  import BrowserApp from "./apps/BrowserApp.svelte";
   import CalendarApp from "./apps/CalendarApp.svelte";
   import ChatApp from "./apps/ChatApp.svelte";
+  import MailApp from "./apps/MailApp.svelte";
   import MessagesApp from "./apps/MessagesApp.svelte";
   import NotesApp from "./apps/NotesApp.svelte";
   import PhoneApp from "./apps/PhoneApp.svelte";
@@ -16,6 +18,7 @@
   import type {
     AppId,
     AssistantMessage,
+    BrowserTabItem,
     CalendarEvent,
     ChatAppMessage,
     ChatAppThread,
@@ -24,6 +27,7 @@
     DeviceState,
     IncomingCallItem,
     LockedAttachment,
+    MailItem,
     Message,
     MessageAttachment,
     MessageThread,
@@ -223,6 +227,7 @@
   let pendingAlbumMediaAddedAssistantKeys: string[] = [];
   let focusedContentId = qaMode ? qaFocusContentId : "";
   let focusedContentRequestId = 0;
+  let focusedTalkHistoryRepairId = "";
   let pendingNotificationOpen: { appId: AppId; contentId: string } | null = null;
   let inFlightContentOpenKeys: string[] = [];
   let inFlightMediaObservedKeys: string[] = [];
@@ -672,6 +677,7 @@
     const visibleBaseState = mergeVisibleDeviceState(baseState, state.visibleDeviceState ?? {});
     const availablePhotos = applyContentAvailability(visibleBaseState.photos, state, corruptPhoto);
     const availableRadioItems = applyContentAvailability(visibleBaseState.radioItems, state, corruptRadioItem);
+    const availableBrowserTabs = applyContentAvailability(visibleBaseState.browserTabs, state, corruptBrowserTab);
     const messageThreads = mergeSmsMessages(
       visibleBaseState.messages,
       state,
@@ -703,8 +709,10 @@
       messages: applyContentAvailability(messageThreads, state, corruptMessageThread),
       photos: availablePhotos,
       notes: applyContentAvailability(visibleBaseState.notes, state, corruptNote),
+      mails: applyContentAvailability(visibleBaseState.mails, state, corruptMail),
       calendarEvents: applyContentAvailability(visibleBaseState.calendarEvents, state, corruptCalendarEvent),
       radioItems: availableRadioItems,
+      browserTabs: availableBrowserTabs,
       chatThreads: availableChatThreads,
       chatAuthGate: visibleBaseState.chatAuthGate,
       apps: visibleBaseState.apps,
@@ -720,8 +728,10 @@
       messages: visibleState.messages ?? baseState.messages,
       photos: visibleState.photos ?? baseState.photos,
       notes: visibleState.notes ?? baseState.notes,
+      mails: visibleState.mails ?? baseState.mails,
       calendarEvents: visibleState.calendarEvents ?? baseState.calendarEvents,
       callLogs: visibleState.callLogs ?? baseState.callLogs,
+      browserTabs: visibleState.browserTabs ?? baseState.browserTabs,
       radioItems: visibleState.radioItems ?? baseState.radioItems,
       chatThreads: visibleState.chatThreads ?? baseState.chatThreads,
       chatAuthGate: visibleState.chatAuthGate,
@@ -865,7 +875,7 @@
       return null;
     }
 
-    return new Set(["phone", "messages", "notes", "photos", "calendar", "radio", "chat"])
+    return new Set(["phone", "messages", "notes", "mail", "photos", "calendar", "radio", "chat", "browser"])
       .has(value) ? (value as AppId) : null;
   }
 
@@ -914,6 +924,18 @@
     };
   }
 
+  function corruptMail(mail: MailItem): MailItem {
+    return {
+      ...mail,
+      from: "取得不能",
+      to: "取得不能",
+      cc: undefined,
+      subject: repairDisplayLabel(mail, "破損したメール"),
+      date: "----/--/-- --:--",
+      body: "<ERROR コンテンツへのリンクが破損しています>"
+    };
+  }
+
   function corruptCalendarEvent(event: CalendarEvent): CalendarEvent {
     return {
       ...event,
@@ -922,6 +944,15 @@
       time: "--:--",
       place: "取得不能",
       memo: "予定データが壊れています。"
+    };
+  }
+
+  function corruptBrowserTab(tab: BrowserTabItem): BrowserTabItem {
+    return {
+      ...tab,
+      title: repairDisplayLabel(tab, "破損したタブ"),
+      url: undefined,
+      allowedUrls: undefined
     };
   }
 
@@ -970,9 +1001,23 @@
       return undefined;
     }
 
-    const photo = photos.find((item) => (item.contentId ?? item.id) === photoId && (item.imageUrl || item.audioUrl) && !item.corrupted);
-    if (!photo?.imageUrl && !photo?.audioUrl) {
+    const photo = photos.find((item) => (
+      (item.contentId ?? item.id) === photoId
+      && (item.imageUrl || item.audioUrl || item.videoUrl)
+      && !item.corrupted
+    ));
+    if (!photo?.imageUrl && !photo?.audioUrl && !photo?.videoUrl) {
       return undefined;
+    }
+
+    if (photo.mediaKind === "video" && photo.videoUrl) {
+      return {
+        kind: "video",
+        ...(photo.attachmentId ? { attachmentId: photo.attachmentId } : {}),
+        contentId: photo.contentId ?? photo.id,
+        ...(photo.imageUrl ? { imageUrl: photo.imageUrl } : {}),
+        videoUrl: photo.videoUrl
+      };
     }
 
     if (photo.mediaKind === "still_video" && photo.audioUrl) {
@@ -1056,6 +1101,7 @@
       const generatedAttachment = photoAttachmentFromBody(smsMessage.body, photos) ?? shareAttachmentFromBody(smsMessage.body, radioItems);
       const attachment = generatedAttachment ?? smsMessage.attachment ?? undefined;
       const message: Message = {
+        seq: smsMessage.seq,
         id: smsMessage.id,
         sender: smsMessage.sender === "other" ? "other" : "owner",
         body: talkMessageBody(smsMessage.body, attachment),
@@ -1067,6 +1113,7 @@
         }),
         ...(typeof smsMessage.delayMs === "number" ? { delayMs: smsMessage.delayMs } : {}),
         ...(smsMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
+        ...(smsMessage.historyRepairId ? { historyRepairId: smsMessage.historyRepairId } : {}),
         attachment
       };
       thread.messages.push(applyAttachmentState(message, contentStates, unlockedAttachments));
@@ -1142,6 +1189,7 @@
       const generatedAttachment = photoAttachmentFromBody(chatMessage.body, photos) ?? shareAttachmentFromBody(chatMessage.body, radioItems);
       const attachment = generatedAttachment ?? chatMessage.attachment ?? undefined;
       const message: ChatAppMessage = {
+        seq: chatMessage.seq,
         id: chatMessage.id,
         sender: chatMessage.sender,
         senderName: chatMessage.senderName ?? (chatMessage.sender === "owner" ? "あなた" : "匿名"),
@@ -1154,6 +1202,7 @@
         }),
         ...(typeof chatMessage.delayMs === "number" ? { delayMs: chatMessage.delayMs } : {}),
         ...(chatMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
+        ...(chatMessage.historyRepairId ? { historyRepairId: chatMessage.historyRepairId } : {}),
         attachment
       };
       thread.messages.push(message);
@@ -1215,6 +1264,7 @@
   function clearPhoneRoute() {
     activeAppId = null;
     focusedContentId = "";
+    focusedTalkHistoryRepairId = "";
     shadeOpen = false;
     inFlightContentOpenKeys = [];
     inFlightMediaObservedKeys = [];
@@ -1379,6 +1429,7 @@
   function focusAppContent(appId: AppId, contentId: string, addHistory = true) {
     shadeOpen = false;
     focusedContentId = contentId;
+    focusedTalkHistoryRepairId = "";
     focusedContentRequestId += 1;
     transientAssistantMessage = undefined;
     suppressedContentOpenKeys = [];
@@ -1496,6 +1547,7 @@
     incomingCall = undefined;
     locallyCompletedIncomingCallIds = [];
     focusedContentId = "";
+    focusedTalkHistoryRepairId = "";
     inFlightContentOpenKeys = [];
     inFlightMediaObservedKeys = [];
     suppressedContentOpenKeys = [];
@@ -2166,6 +2218,7 @@
   function beginAppSession(app: AppCatalogItem, focusContentId = "") {
     shadeOpen = false;
     focusedContentId = focusContentId;
+    focusedTalkHistoryRepairId = "";
     focusedContentRequestId += 1;
     transientAssistantMessage = undefined;
     suppressedContentOpenKeys = [];
@@ -2327,6 +2380,8 @@
       clearDisplayedTalkAfterApply?: boolean;
       throwOnRetryableError?: boolean;
       historyRestore?: boolean;
+      skipHistorySync?: boolean;
+      mediaContentIds?: string[];
     } = {}
   ) {
     if (!contentId) {
@@ -2343,7 +2398,7 @@
       if (options.rememberAfterAccepted && !options.skipRemember) {
         rememberAppContent(appId, contentId);
       }
-      syncPhoneHistoryContent(appId, contentId);
+      if (!options.skipHistorySync) syncPhoneHistoryContent(appId, contentId);
       return true;
     }
 
@@ -2351,7 +2406,7 @@
       if (options.rememberAfterAccepted && !options.skipRemember) {
         rememberAppContent(appId, contentId);
       }
-      syncPhoneHistoryContent(appId, contentId);
+      if (!options.skipHistorySync) syncPhoneHistoryContent(appId, contentId);
       return true;
     }
 
@@ -2369,7 +2424,11 @@
     try {
       for (let attempt = 0; ; attempt += 1) {
         try {
-          const result = await recordContentOpened(sessionToken, { appId, contentId }, talkReadCursors);
+          const result = await recordContentOpened(sessionToken, {
+            appId,
+            contentId,
+            ...(options.mediaContentIds?.length ? { mediaContentIds: options.mediaContentIds } : {})
+          }, talkReadCursors);
           if (result.ok) {
             clearSyncedTalkReadCursors(talkReadCursors);
             const currentState = playerState;
@@ -2393,7 +2452,7 @@
             if (applied) {
               queueAlbumMediaAddedAssistant(appId, contentId, previousState, result.playerState);
             }
-            if (contentNavigationId === phoneHistoryNavigationId) {
+            if (!options.skipHistorySync && contentNavigationId === phoneHistoryNavigationId) {
               syncPhoneHistoryContent(appId, contentId);
             }
             return true;
@@ -2431,7 +2490,7 @@
     }
   }
 
-  async function handleContentMediaObserved(appId: AppId, contentId: string | undefined) {
+  async function handleContentMediaObserved(appId: AppId, contentId: string | undefined, mediaContentIds: string[]) {
     if (!contentId || qaMode || !uiState.sessionToken) {
       return;
     }
@@ -2444,7 +2503,7 @@
     inFlightMediaObservedKeys = [...inFlightMediaObservedKeys, mediaKey];
     const previousState = playerState;
     try {
-      const result = await recordContentMediaObserved(uiState.sessionToken, { appId, contentId });
+      const result = await recordContentMediaObserved(uiState.sessionToken, { appId, contentId, mediaContentIds });
       if (result.ok) {
         if (applyPlayerState(result.playerState)) {
           queueAlbumMediaAddedAssistant(appId, contentId, previousState, result.playerState);
@@ -2583,19 +2642,26 @@
     }
 
     const shouldShowRepairMessage = result.repairable === true && !isSearchAgentResultAlreadyRepaired(result);
+    const historyTalkId = result.targetKind === "talk_history" ? result.targetTalkId ?? "" : "";
     const opened = await handleContentOpen(result.appId, result.contentId, {
       ignoreSuppression: true,
-      rememberAfterAccepted: true,
+      rememberAfterAccepted: !historyTalkId,
+      skipRemember: Boolean(historyTalkId),
+      skipHistorySync: Boolean(historyTalkId),
       clearDisplayedTalkAfterApply: displayedTalkTarget !== null && displayedTalkTarget.appId !== result.appId
     });
 
     if (opened) {
-      focusOpenedContent(result.appId, result.contentId);
+      focusOpenedContent(result.appId, historyTalkId || result.contentId);
+      if (historyTalkId) {
+        focusedTalkHistoryRepairId = result.contentId;
+        rememberAppContent(result.appId, historyTalkId);
+      }
       if (shouldShowRepairMessage) {
         showTransientAssistantMessage({
           id: `repair-${result.contentId}`,
           surface: result.appId as AssistantMessage["surface"],
-          body: "アプリから開けるようにデータを修復しておいたよ。",
+          body: historyTalkId ? "壊れていた履歴を修復しておいたよ。" : "アプリから開けるようにデータを修復しておいたよ。",
           weight: 1,
           agentAction: "hi"
         });
@@ -2727,7 +2793,7 @@
 
   $: messagePostEnabledByThread = postEnabledMap(deviceState.messages.map((thread) => thread.id));
   $: chatPostEnabledByThread = postEnabledMap(deviceState.chatThreads.map((thread) => thread.id));
-  $: sendablePhotos = deviceState.photos.filter((photo) => (photo.imageUrl || photo.audioUrl) && !photo.corrupted);
+  $: sendablePhotos = deviceState.photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
   $: radioShareTargets = shareTargetsForTalks(deviceState.messages, deviceState.chatThreads, messagePostEnabledByThread, chatPostEnabledByThread, deviceState.chatAuthGate);
 
   function gameOverMessageDelayMs(message: { delayMs?: number }) {
@@ -2789,6 +2855,7 @@
     gameOverReturning = false;
     activeAppId = appId;
     focusedContentId = payload.talkId;
+    focusedTalkHistoryRepairId = "";
     focusedContentRequestId += 1;
     shadeOpen = false;
     appModalOpen = false;
@@ -2814,6 +2881,7 @@
     if (source) {
       activeAppId = source.kind === "chat" ? "chat" : "messages";
       focusedContentId = source.talkId;
+      focusedTalkHistoryRepairId = "";
       focusedContentRequestId += 1;
       appModalOpen = false;
       shadeOpen = false;
@@ -2916,6 +2984,18 @@
     return threads.find((thread) => thread.id === talkId)?.contentId ?? talkId;
   }
 
+  function recentMessagesForTalk(kind: TalkKind, talkId: string) {
+    const thread = kind === "sms"
+      ? deviceState.messages.find((item) => item.id === talkId)
+      : deviceState.chatThreads.find((item) => item.id === talkId);
+    return (thread?.messages ?? []).slice(-4).map((item) => {
+      const speaker = item.sender === "owner"
+        ? "player"
+        : ("senderName" in item ? item.senderName : thread && "contactName" in thread ? thread.contactName : "other");
+      return { speaker: typeof speaker === "string" ? speaker : "other", body: item.body };
+    });
+  }
+
   async function handleTalkSend(kind: TalkKind, talkId: string, message: string, cannotPostError: string) {
     if (!uiState.sessionToken) {
       return { ok: false, error: "送信できません。" };
@@ -2935,7 +3015,14 @@
     let result: Awaited<ReturnType<typeof sendTalkMessage>>;
     const talkReadCursors = pendingTalkReadCursorPayload();
     try {
-      result = await sendTalkMessage(uiState.sessionToken, talkId, turnKey, message, talkReadCursors);
+      result = await sendTalkMessage(
+        uiState.sessionToken,
+        talkId,
+        turnKey,
+        message,
+        talkReadCursors,
+        recentMessagesForTalk(kind, talkId)
+      );
     } catch {
       finishPendingTalkSend(kind, talkId);
       return { ok: false, error: "送信に失敗しました。" };
@@ -3065,6 +3152,7 @@
     };
     activeAppId = appId;
     focusedContentId = target.talkId;
+    focusedTalkHistoryRepairId = "";
     focusedContentRequestId += 1;
     shadeOpen = false;
     appModalOpen = false;
@@ -3105,7 +3193,7 @@
   }
 
   function albumMediaContentId(attachment: MessageAttachment | undefined) {
-    if (!attachment || (attachment.kind !== "image" && attachment.kind !== "audio")) {
+    if (!attachment || !isAlbumMediaAttachment(attachment)) {
       return "";
     }
     if (!apps.some((app) => app.id === "photos" && app.available)) {
@@ -3115,6 +3203,12 @@
     const photo = attachment.attachmentId ? sendablePhotos.find((item) => item.attachmentId === attachment.attachmentId) : undefined;
 
     return photo ? photo.contentId ?? photo.id : "";
+  }
+
+  function isAlbumMediaAttachment(
+    attachment: MessageAttachment
+  ): attachment is Extract<MessageAttachment, { kind: "image" | "audio" | "video" }> {
+    return attachment.kind === "image" || attachment.kind === "audio" || attachment.kind === "video";
   }
 
   function handleOpenAlbumMedia(attachment: MessageAttachment | undefined) {
@@ -3231,6 +3325,7 @@
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
               onContentOpen={(contentId) => void handleContentOpen("phone", contentId)}
+              onBlockedContentOpen={(contentId) => recordBlockedContentLink("phone", contentId)}
               onNoise={openBlockedCallHistory}
             />
           {:else if activeApp?.id === "messages"}
@@ -3239,6 +3334,7 @@
             photos={sendablePhotos}
             focusContentId={focusedContentId}
             focusContentRequestId={focusedContentRequestId}
+            focusHistoryRepairId={focusedTalkHistoryRepairId}
             delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialDateLabel={TALK_INITIAL_DATE_LABEL}
             initialShareDraft={pendingShareDraft?.kind === "sms" ? pendingShareDraft : null}
@@ -3251,8 +3347,8 @@
             onOpenAlbumMedia={handleOpenAlbumMedia}
             onUnlockAttachment={handleContentUnlock}
             onOpenMessageLink={handleMessageLinkOpen}
-            onContentOpen={(contentId) => void handleContentOpen("messages", contentId)}
-            onMediaObserved={(contentId) => void handleContentMediaObserved("messages", contentId)}
+            onContentOpen={(contentId, mediaContentIds) => void handleContentOpen("messages", contentId, { mediaContentIds })}
+            onMediaObserved={(contentId, mediaContentIds) => void handleContentMediaObserved("messages", contentId, mediaContentIds)}
             onVisibleMediaObserved={(contentId) => handleVisibleMediaObserved("messages", contentId)}
             onRead={(talkId, messageId) => void handleTalkRead(talkId, messageId)}
             onDisplayedThreadChange={(contentId) => handleDisplayedTalkChange("messages", contentId)}
@@ -3276,6 +3372,14 @@
               focusContentRequestId={focusedContentRequestId}
               onContentOpen={(contentId) => void handleContentOpen("notes", contentId)}
               onBlockedContentOpen={(contentId) => recordBlockedContentLink("notes", contentId)}
+            />
+          {:else if activeApp?.id === "mail"}
+            <MailApp
+              mails={deviceState.mails}
+              focusContentId={focusedContentId}
+              focusContentRequestId={focusedContentRequestId}
+              onContentOpen={(contentId) => void handleContentOpen("mail", contentId)}
+              onBlockedContentOpen={(contentId) => recordBlockedContentLink("mail", contentId)}
             />
           {:else if activeApp?.id === "calendar"}
             <CalendarApp
@@ -3311,13 +3415,14 @@
               onModalOpenChange={(open) => (appModalOpen = open)}
             />
           {:else if activeApp?.id === "chat"}
-          <ChatApp
+            <ChatApp
             threads={deviceState.chatThreads}
             authGate={deviceState.chatAuthGate}
             photos={sendablePhotos}
             initialDateLabel={TALK_INITIAL_DATE_LABEL}
             focusContentId={focusedContentId}
             focusContentRequestId={focusedContentRequestId}
+            focusHistoryRepairId={focusedTalkHistoryRepairId}
             delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialShareDraft={pendingShareDraft?.kind === "chat" ? pendingShareDraft : null}
             postEnabledByThread={chatPostEnabledByThread}
@@ -3329,8 +3434,8 @@
             onOpenAlbumMedia={handleOpenAlbumMedia}
             onAuthLinkRequest={handleChatAuthLinkRequest}
             onOpenMessageLink={handleMessageLinkOpen}
-            onContentOpen={(contentId) => void handleContentOpen("chat", contentId)}
-            onMediaObserved={(contentId) => void handleContentMediaObserved("chat", contentId)}
+            onContentOpen={(contentId, mediaContentIds) => void handleContentOpen("chat", contentId, { mediaContentIds })}
+            onMediaObserved={(contentId, mediaContentIds) => void handleContentMediaObserved("chat", contentId, mediaContentIds)}
             onVisibleMediaObserved={(contentId) => handleVisibleMediaObserved("chat", contentId)}
             onRead={(talkId, messageId) => void handleTalkRead(talkId, messageId)}
             onDisplayedThreadChange={(contentId) => handleDisplayedTalkChange("chat", contentId)}
@@ -3338,6 +3443,15 @@
             onNoise={triggerNoise}
             onPickerOpenChange={(open) => (appModalOpen = open)}
             onPhotoDraftChange={(active) => setComposerPhotoDraftActive("chat", active)}
+            />
+          {:else if activeApp?.id === "browser"}
+            <BrowserApp
+              tabs={deviceState.browserTabs}
+              focusContentId={focusedContentId}
+              focusContentRequestId={focusedContentRequestId}
+              onContentOpen={(contentId) => void handleContentOpen("browser", contentId)}
+              onBlockedContentOpen={(contentId) => recordBlockedContentLink("browser", contentId)}
+              onNoise={triggerNoise}
             />
           {:else}
             <HomeScreen {apps} {deviceState} {unreadAppIds} onOpenApp={openApp} onOpenNotification={openNotification} />

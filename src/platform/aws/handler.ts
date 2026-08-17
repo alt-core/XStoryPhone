@@ -1,5 +1,6 @@
 import {
   BatchWriteItemCommand,
+  DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -13,6 +14,7 @@ import { DynamoStore, type DynamoTransport } from "./dynamoStore";
 
 const commands = {
   BatchWriteItem: BatchWriteItemCommand,
+  DeleteItem: DeleteItemCommand,
   GetItem: GetItemCommand,
   PutItem: PutItemCommand,
   Query: QueryCommand,
@@ -38,12 +40,14 @@ const app = createApp({
     appEnv: process.env.APP_ENV,
     adminReviewSecret: process.env.ADMIN_REVIEW_SECRET,
     browserStateSecret: process.env.BROWSER_STATE_SECRET,
+    accessCodeSecret: process.env.ACCESS_CODE_SECRET,
     playerInputLogging: process.env.PLAYER_INPUT_LOGGING === "true",
     llm: {
       LLM_API_KEY: process.env.LLM_API_KEY,
       LLM_MODEL: process.env.LLM_MODEL,
       LLM_BASE_URL: process.env.LLM_BASE_URL,
-      LLM_TIMEOUT_MS: process.env.LLM_TIMEOUT_MS
+      LLM_TIMEOUT_MS: process.env.LLM_TIMEOUT_MS,
+      LLM_REASONING_EFFORT: process.env.LLM_REASONING_EFFORT
     }
   }
 });

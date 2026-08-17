@@ -4,8 +4,10 @@ export type AppId =
   | "photos"
   | "chat"
   | "notes"
+  | "mail"
   | "calendar"
-  | "radio";
+  | "radio"
+  | "browser";
 
 export type ContentInitialState = "normal" | "repairable" | "hidden";
 export type ContentStateValue = "repaired" | "unlocked";
@@ -16,8 +18,10 @@ export type AssistantMessageSurface =
   | "photos"
   | "chat"
   | "notes"
+  | "mail"
   | "calendar"
-  | "radio";
+  | "radio"
+  | "browser";
 export type SearchAgentAction = "idle" | "hi";
 
 export type AssistantMessage = {
@@ -77,11 +81,12 @@ export type LockedAttachment = {
 };
 
 export type MediaAttachment = {
-  kind: "image" | "audio";
+  kind: "image" | "audio" | "video";
   attachmentId?: string;
   contentId?: string;
   imageUrl?: string;
   audioUrl?: string;
+  videoUrl?: string;
 };
 
 export type SharedContentAttachment = {
@@ -110,6 +115,7 @@ export type PendingShareDraft = {
 export type MessageAttachment = LockedAttachment | MediaAttachment | SharedContentAttachment;
 
 export type Message = {
+  seq?: number;
   id: string;
   sender: MessageSender;
   body: string;
@@ -118,7 +124,12 @@ export type Message = {
   sentAt: string;
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
+  historyRepairId?: string;
   attachment?: MessageAttachment;
+};
+
+export type BrokenTalkHistoryRange = {
+  beforeSeq: number;
 };
 
 export type MessageThread = {
@@ -126,6 +137,7 @@ export type MessageThread = {
   contactName: string;
   avatarUrl?: string;
   messages: Message[];
+  brokenHistoryRanges?: BrokenTalkHistoryRange[];
   unread?: boolean;
 } & ScenarioContentMeta;
 
@@ -133,10 +145,11 @@ export type PhotoItem = {
   id: string;
   title?: string;
   tags?: string[];
-  mediaKind?: "still_video";
+  mediaKind?: "still_video" | "video";
   attachmentId?: string;
   imageUrl?: string;
   audioUrl?: string;
+  videoUrl?: string;
 } & ScenarioContentMeta;
 
 export type NoteItem = {
@@ -144,6 +157,16 @@ export type NoteItem = {
   title: string;
   body: string;
   tags?: string[];
+} & ScenarioContentMeta;
+
+export type MailItem = {
+  id: string;
+  from: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  date: string;
+  body: string;
 } & ScenarioContentMeta;
 
 export type CalendarEvent = {
@@ -185,13 +208,27 @@ export type CallLogItem = {
   audioUrl?: string;
   genAudioId?: string;
   generatedAudio?: GeneratedAudioState;
+  transcript?: CallTranscriptCue[];
 } & ScenarioContentMeta;
+
+export type CallTranscriptCue = {
+  atMs: number;
+  text: string;
+};
 
 export type IncomingCallItem = {
   id: string;
   name: string;
   audioUrl?: string;
+  transcript?: CallTranscriptCue[];
 };
+
+export type BrowserTabItem = {
+  id: string;
+  title: string;
+  url?: string;
+  allowedUrls?: string[];
+} & ScenarioContentMeta;
 
 export type RadioEpisodeItem = {
   id: string;
@@ -205,6 +242,7 @@ export type RadioEpisodeItem = {
     index: number;
     atMs: number;
   }[];
+  transcript?: CallTranscriptCue[];
   form?: {
     kind: "html";
     id: string;
@@ -215,6 +253,7 @@ export type RadioEpisodeItem = {
 } & ScenarioContentMeta;
 
 export type ChatAppMessage = {
+  seq?: number;
   id: string;
   sender: MessageSender;
   senderName: string;
@@ -224,6 +263,7 @@ export type ChatAppMessage = {
   sentAt: string;
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
+  historyRepairId?: string;
   attachment?: MessageAttachment;
 };
 
@@ -232,6 +272,7 @@ export type ChatAppThread = {
   roomName: string;
   avatarUrl?: string;
   messages: ChatAppMessage[];
+  brokenHistoryRanges?: BrokenTalkHistoryRange[];
   unread?: boolean;
 } & ScenarioContentMeta;
 
@@ -261,7 +302,8 @@ export type ScenarioTime = {
 export type SearchAgentSearchResult = {
   contentId: string;
   appId: AppId;
-  targetKind?: "app" | "content";
+  targetKind?: "app" | "content" | "talk_history";
+  targetTalkId?: string;
   title?: string;
   thumbnailUrl?: string;
   repairable?: boolean;
@@ -295,8 +337,10 @@ export type DeviceState = {
   messages: MessageThread[];
   photos: PhotoItem[];
   notes: NoteItem[];
+  mails: MailItem[];
   calendarEvents: CalendarEvent[];
   callLogs: CallLogItem[];
+  browserTabs: BrowserTabItem[];
   incomingCall?: IncomingCallItem;
   radioItems: RadioEpisodeItem[];
   chatThreads: ChatAppThread[];

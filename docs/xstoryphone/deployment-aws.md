@@ -71,13 +71,22 @@ export PLAYER_INPUT_LOGGING=true
 npm run deploy:aws:prod
 ```
 
-LLMを使うシナリオでは、Cloudflare版と同じ4項目を環境変数で渡します。`LLM_API_KEY` と `LLM_MODEL` は必須、base URLとtimeoutは任意です。デプロイスクリプトは値が設定された項目だけをSAMへ渡し、API keyはCloudFormation上で非表示にします。
+serverモードで発行済みの8桁アクセスコードだけを受理する場合は、コード生成とデプロイへ同じ秘密値を渡します。人数限定を行わない場合は不要です。
+
+```sh
+export ACCESS_CODE_SECRET='十分に長い秘密値'
+npm run access-code -- 0001
+npm run deploy:aws:prod
+```
+
+LLMを使うシナリオでは、Cloudflare版と同じ項目を環境変数で渡します。`LLM_API_KEY` と `LLM_MODEL` は必須、base URL、timeout、providerが対応する推論強度は任意です。デプロイスクリプトは値が設定された項目だけをSAMへ渡し、API keyはCloudFormation上で非表示にします。
 
 ```sh
 export LLM_API_KEY='providerのAPI key'
 export LLM_MODEL='利用するモデル名'
 export LLM_BASE_URL='https://api.openai.com/v1' # 任意
 export LLM_TIMEOUT_MS='15000'                  # 任意
+export LLM_REASONING_EFFORT='low'              # 任意
 npm run deploy:aws:prod
 ```
 

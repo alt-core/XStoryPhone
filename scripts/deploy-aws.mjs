@@ -22,6 +22,7 @@ if (!adminReviewSecret) {
 }
 const playerInputLogging = process.env.PLAYER_INPUT_LOGGING === "true" ? "true" : "false";
 const browserStateSecret = process.env.BROWSER_STATE_SECRET?.trim();
+const accessCodeSecret = process.env.ACCESS_CODE_SECRET?.trim();
 if (loadAndValidateScenario().worker.playerMode === "browser" && !browserStateSecret) {
   console.error("browserモードではBROWSER_STATE_SECRETを環境変数へ設定してください。");
   process.exit(1);
@@ -30,7 +31,8 @@ const llmParameterOverrides = [
   ["LlmApiKey", "LLM_API_KEY"],
   ["LlmModel", "LLM_MODEL"],
   ["LlmBaseUrl", "LLM_BASE_URL"],
-  ["LlmTimeoutMs", "LLM_TIMEOUT_MS"]
+  ["LlmTimeoutMs", "LLM_TIMEOUT_MS"],
+  ["LlmReasoningEffort", "LLM_REASONING_EFFORT"]
 ].flatMap(([parameter, environmentVariable]) => {
   const value = process.env[environmentVariable]?.trim();
   return value ? [`${parameter}=${value}`] : [];
@@ -58,6 +60,7 @@ run("npm", ["run", "audit:client:aws"]);
 run("sam", ["build", "--template-file", "infra/aws/template.yaml"]);
 run("sam", [
   "deploy",
+  "--no-confirm-changeset",
   "--no-fail-on-empty-changeset",
   "--stack-name", settings.stackName,
   "--template-file", ".aws-sam/build/template.yaml",
@@ -70,6 +73,7 @@ run("sam", [
   `PlayerInputLogging=${playerInputLogging}`,
   `AdminReviewSecret=${adminReviewSecret}`,
   ...(browserStateSecret ? [`BrowserStateSecret=${browserStateSecret}`] : []),
+  ...(accessCodeSecret ? [`AccessCodeSecret=${accessCodeSecret}`] : []),
   ...llmParameterOverrides
 ]);
 

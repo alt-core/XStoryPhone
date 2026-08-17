@@ -2,10 +2,9 @@
   export let title: string;
   export let subtitle = "";
   export let accent = "#5cc8a7";
-  export let immersive = false;
 </script>
 
-<section class="app-shell" class:immersive style={`--accent: ${accent}`} aria-label={subtitle ? `${title} ${subtitle}` : title}>
+<section class="app-shell" style={`--accent: ${accent}`} aria-label={subtitle ? `${title} ${subtitle}` : title}>
   <div class="app-body">
     <slot />
   </div>
@@ -26,15 +25,8 @@
   }
 
   .app-body {
-    min-height: 0;
-    overflow: auto;
-    padding: 14px 14px 118px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-  }
-
-  .app-shell.immersive .app-body {
     height: 100%;
+    min-height: 0;
     overflow: hidden;
     padding: 0;
   }

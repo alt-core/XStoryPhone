@@ -1,8 +1,7 @@
 import type { PlayerRecord, StoredPlayerState } from "./store.ts";
-import { normalizeStoredPlayerState } from "./store.ts";
+import { normalizeStoredState } from "./store.ts";
 
-const TOKEN_VERSION = 1;
-const MAX_TOKEN_LENGTH = 8 * 1024;
+const MAX_TOKEN_LENGTH = 64 * 1024;
 
 export class BrowserProgressTooLargeError extends Error {
   constructor(length: number) {
@@ -12,7 +11,6 @@ export class BrowserProgressTooLargeError extends Error {
 }
 
 type BrowserProgressPayload = {
-  version: typeof TOKEN_VERSION;
   projectId: string;
   scenarioRevision: string;
   playerId: string;
@@ -47,6 +45,22 @@ async function signature(secret: string, body: string) {
   return new Uint8Array(signed);
 }
 
+function arrayBuffer(bytes: Uint8Array) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+async function gzip(bytes: Uint8Array) {
+  const stream = new Blob([arrayBuffer(bytes)]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzip(bytes: Uint8Array) {
+  const stream = new Blob([arrayBuffer(bytes)]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 function bytesEqual(left: Uint8Array, right: Uint8Array) {
   if (left.length !== right.length) return false;
   let difference = 0;
@@ -57,10 +71,10 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
 function validPayload(value: unknown): value is BrowserProgressPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const payload = value as Partial<BrowserProgressPayload>;
-  return payload.version === TOKEN_VERSION
-    && typeof payload.scenarioRevision === "string"
-    && typeof payload.projectId === "string"
+  return typeof payload.projectId === "string"
     && payload.projectId.length > 0
+    && typeof payload.scenarioRevision === "string"
+    && payload.scenarioRevision.length > 0
     && typeof payload.playerId === "string"
     && payload.playerId.length > 0
     && typeof payload.stateVersion === "number"
@@ -72,14 +86,13 @@ function validPayload(value: unknown): value is BrowserProgressPayload {
 export async function encodeBrowserProgress(secret: string, projectId: string, scenarioRevision: string, player: PlayerRecord) {
   if (!secret) throw new Error("BROWSER_STATE_SECRETが設定されていません。");
   const payload: BrowserProgressPayload = {
-    version: TOKEN_VERSION,
     projectId,
     scenarioRevision,
     playerId: player.id,
     stateVersion: player.stateVersion,
     state: player.state
   };
-  const body = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const body = base64UrlEncode(await gzip(new TextEncoder().encode(JSON.stringify(payload))));
   const token = `${body}.${base64UrlEncode(await signature(secret, body))}`;
   if (token.length > MAX_TOKEN_LENGTH) throw new BrowserProgressTooLargeError(token.length);
   return token;
@@ -87,20 +100,21 @@ export async function encodeBrowserProgress(secret: string, projectId: string, s
 
 export async function decodeBrowserProgress(secret: string, projectId: string, token: string): Promise<PlayerRecord | null> {
   if (!secret || !token || token.length > MAX_TOKEN_LENGTH) return null;
-  const [body, encodedSignature, ...rest] = token.split(".");
-  if (!body || !encodedSignature || rest.length) return null;
+  const parts = token.split(".");
+  const [body, encodedSignature] = parts;
+  if (!body || !encodedSignature || parts.length !== 2) return null;
   try {
     const actual = base64UrlDecode(encodedSignature);
     const expected = await signature(secret, body);
     if (!bytesEqual(actual, expected)) return null;
-    const parsed = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as unknown;
+    const encodedPayload = base64UrlDecode(body);
+    const payload = await gunzip(encodedPayload);
+    const parsed = JSON.parse(new TextDecoder().decode(payload)) as unknown;
     if (!validPayload(parsed) || parsed.projectId !== projectId) return null;
-    const normalized = normalizeStoredPlayerState(parsed.state);
     return {
       id: parsed.playerId,
       stateVersion: parsed.stateVersion,
-      state: normalized.state,
-      ...(normalized.legacyTranscripts.length ? { legacyTranscripts: normalized.legacyTranscripts } : {})
+      state: normalizeStoredState(parsed.state)
     };
   } catch {
     return null;

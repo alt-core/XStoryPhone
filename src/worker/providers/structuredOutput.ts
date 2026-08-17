@@ -4,6 +4,8 @@ export type StructuredOutputRequest = {
   input: Record<string, unknown>;
   schema: Record<string, unknown>;
   maxTokens?: number;
+  temperature?: number;
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
 };
 
 export type StructuredOutputResult =
@@ -20,6 +22,7 @@ export type LlmProviderEnv = {
   LLM_MODEL?: string;
   LLM_BASE_URL?: string;
   LLM_TIMEOUT_MS?: string;
+  LLM_REASONING_EFFORT?: string;
 };
 
 function cleanText(value: unknown) {
@@ -37,6 +40,16 @@ function completionUrl(baseUrl: string) {
 
 function retryableStatus(status: number) {
   return status === 408 || status === 429 || status >= 500;
+}
+
+function completionTokenBudget(request: StructuredOutputRequest, reasoningEffort: StructuredOutputRequest["reasoningEffort"]) {
+  const base = request.maxTokens ?? 512;
+  if (!reasoningEffort || reasoningEffort === "none") return base;
+  const extraction = request.taskId === "talk_match_extraction";
+  const minimum = reasoningEffort === "high" ? (extraction ? 8_192 : 4_096)
+    : reasoningEffort === "medium" ? (extraction ? 4_096 : 2_048)
+      : extraction ? 2_048 : 1_024;
+  return Math.max(base, minimum);
 }
 
 function messageContent(payload: unknown) {
@@ -78,10 +91,14 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
   }
   const baseUrl = cleanText(env.LLM_BASE_URL) || "https://api.openai.com/v1";
   const requestTimeoutMs = timeoutMs(env.LLM_TIMEOUT_MS);
+  const configuredReasoningEffort = new Set(["none", "minimal", "low", "medium", "high"]).has(cleanText(env.LLM_REASONING_EFFORT))
+    ? cleanText(env.LLM_REASONING_EFFORT) as StructuredOutputRequest["reasoningEffort"]
+    : undefined;
 
   return {
     id: "openai-compatible",
     async completeJson(request) {
+      const reasoningEffort = request.reasoningEffort ?? configuredReasoningEffort;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -107,7 +124,9 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
                   schema: request.schema
                 }
               },
-              max_completion_tokens: request.maxTokens ?? 512
+              ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
+              ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              max_completion_tokens: completionTokenBudget(request, reasoningEffort)
             }),
             signal: controller.signal
           });

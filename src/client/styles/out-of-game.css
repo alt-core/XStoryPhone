@@ -15,7 +15,7 @@
 
 .out-game-dialog {
   width: min(384px, calc(100vw - 24px));
-  height: min(780px, calc(100dvh - 24px));
+  height: min(672px, calc(100dvh - 24px));
   overflow: hidden;
   border: 1px solid rgba(38, 122, 108, 0.14);
   border-radius: 28px;

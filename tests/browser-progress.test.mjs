@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeBrowserProgress, encodeBrowserProgress } from "../src/server/browserProgress.ts";
-import { normalizeStoredPlayerState } from "../src/server/store.ts";
-import { createInitialPlayerState } from "../src/worker/scenario.ts";
+import { createInitialPlayerState, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
+import { runScenarioHooks } from "../src/worker/services/scenarioHooks.ts";
 import {
   applyCompactStateAssignments,
   effectiveStateValues,
@@ -14,6 +14,7 @@ test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ�
   state.stateValues = { image_color_reported: true };
   const player = { id: "browser-player", state, stateVersion: 3 };
   const token = await encodeBrowserProgress("test-secret", "project-a", "revision-a", player);
+  assert.equal(token.split(".").length, 2);
 
   const decoded = await decodeBrowserProgress("test-secret", "project-a", token);
   assert.equal(decoded?.id, player.id);
@@ -26,15 +27,51 @@ test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ�
   assert.equal(await decodeBrowserProgress("test-secret", "project-a", tampered), null);
   assert.equal((await decodeBrowserProgress("test-secret", "project-a", token))?.stateVersion, 3);
   assert.equal(await decodeBrowserProgress("test-secret", "project-b", token), null);
+
+  const nextRevisionToken = await encodeBrowserProgress("test-secret", "project-a", "revision-b", player);
+  assert.notEqual(nextRevisionToken, token);
+  assert.equal((await decodeBrowserProgress("test-secret", "project-a", nextRevisionToken))?.stateVersion, 3);
 });
 
-test("ブラウザー進行トークンはrequest headerへ収まる上限を超えたら発行しない", async () => {
+test("ブラウザー進行トークンはアプリの安全上限を超えたら発行しない", async () => {
   const state = createInitialPlayerState();
-  state.discoveredTargetKeys = Array.from({ length: 800 }, (_, index) => `notes:content-${index.toString().padStart(4, "0")}`);
+  state.discoveredTargetKeys = Array.from({ length: 3_000 }, () => `notes:${crypto.randomUUID()}`);
   await assert.rejects(
     () => encodeBrowserProgress("test-secret", "project-a", "revision-a", { id: "browser-player", state, stateVersion: 1 }),
     /browser_progress_too_large/u
   );
+});
+
+test("デモを終盤まで進めてもbrowser進行トークンへ十分な余白を残す", async () => {
+  let state = createInitialPlayerState();
+  for (const [id, initial] of Object.entries(workerScenario.stateVariables)) {
+    if (typeof initial === "boolean" && !id.endsWith("_received")) state.stateValues[id] = true;
+  }
+  state.repairedAppIds.push("chat");
+  state.repairedContentIds = workerScenario.contents.filter((item) => item.initialState !== "normal").map((item) => item.id);
+  state.unlockedContentIds = ["sealed_note"];
+  state.discoveredTargetKeys = [
+    ...workerScenario.apps.map((item) => `${item.id}:${item.id}`),
+    ...workerScenario.contents.map((item) => `${item.appId}:${item.publicId}`)
+  ];
+  state.clearedNotificationIds = workerScenario.notifications.map((item) => item.id);
+  state.revealedAttachmentContentIds = ["rainy_window", "sealed_note", "demo_received_image"];
+  state = (await reconcileScenarioState(state, "browser-player")).state;
+  for (const [target, playerInput] of [
+    ["guide", "メッセージ連携"],
+    ["guide", "画像受信テスト"],
+    ["guide", "チャットへ送る"],
+    ["lobby", "チャット連携"],
+    ["lobby", "メッセージへ送る"]
+  ]) {
+    state = (await runScenarioHooks(state, { event: "talk_sent", target, playerInput })).state;
+  }
+  const token = await encodeBrowserProgress("test-secret", "demo", "revision", {
+    id: "browser-player",
+    state,
+    stateVersion: 10
+  });
+  assert.ok(token.length < 5 * 1024, `デモ進行tokenが大きすぎます: ${token.length}`);
 });
 
 test("stateVariablesは既定値との差分だけを保存する", () => {
@@ -50,45 +87,10 @@ test("stateVariablesは既定値との差分だけを保存する", () => {
   assert.deepEqual(applyCompactStateAssignments(defaults, overrides, ["phase=0", "name=\"ナビ\""]), { name: "ナビ" });
 });
 
-test("旧PlayerState内の会話・検索履歴をstreamへ欠落なく移す", () => {
-  const legacy = createInitialPlayerState();
-  legacy.talks.guide = {
-    from: "guide:intro",
-    turnKey: "legacy-turn",
-    blockDisplayCounts: {},
-    messages: [{
-      id: "legacy-talk-1",
-      talkId: "guide-public",
-      sender: "other",
-      body: "旧会話",
-      attachment: null,
-      sentAt: "2026-08-14T00:00:00.000Z"
-    }],
-    lastReadMessageId: "legacy-talk-1"
-  };
-  legacy.searchAgentMessages = [{
-    id: "legacy-search-1",
-    requestId: "legacy-request",
-    role: "user",
-    body: "旧検索",
-    sentAt: "2026-08-14T00:00:00.000Z"
-  }, {
-    id: "legacy-search-2",
-    requestId: "legacy-request",
-    role: "assistant",
-    body: "見つかりました",
-    results: [{ contentId: "content-public", appId: "notes", targetKind: "content", repairable: true }],
-    sentAt: "2026-08-14T00:00:01.000Z"
-  }];
-
-  const normalized = normalizeStoredPlayerState(legacy);
-  assert.equal(normalized.state.talks.guide.lastMessageSeq, 1);
-  assert.equal(normalized.state.talks.guide.lastReadMessageSeq, 1);
-  assert.equal("messages" in normalized.state.talks.guide, false);
-  assert.equal("searchAgentMessages" in normalized.state, false);
-  assert.deepEqual(normalized.state.discoveredTargetKeys, ["notes:content-public"]);
-  assert.deepEqual(normalized.legacyTranscripts.map((item) => [item.streamId, item.messages[0].seq]), [
-    ["talk:guide", 1],
-    ["search", 1]
-  ]);
+test("作中日時の予約状態変数は通常の状態更新と同じ経路を使う", () => {
+  const defaults = { os_date: "2026-08-12", os_time_label: "20:14" };
+  let overrides = setStateValue(defaults, {}, "os_time_label", "21:30");
+  overrides = applyCompactStateAssignments(defaults, overrides, ['os_date="2026-08-13"']);
+  assert.deepEqual(overrides, { os_date: "2026-08-13", os_time_label: "21:30" });
+  assert.throws(() => setStateValue(defaults, overrides, "os_date", "2026-02-29"), /os_date/u);
 });

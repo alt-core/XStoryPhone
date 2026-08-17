@@ -6,6 +6,7 @@
   import ContentTags from "../system/ContentTags.svelte";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
   import ScrollHint from "../system/ScrollHint.svelte";
+  import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import AppShell from "./AppShell.svelte";
 
@@ -34,8 +35,16 @@
   let lightboxDragStartX = 0;
   let lightboxDragStartOffsetX = 0;
 
-  function isVideoContent(photo: PhotoItem | undefined) {
+  function isStillVideoContent(photo: PhotoItem | undefined) {
     return photo?.mediaKind === "still_video" && Boolean(photo.audioUrl);
+  }
+
+  function isNativeVideoContent(photo: PhotoItem | undefined) {
+    return photo?.mediaKind === "video" && Boolean(photo.videoUrl);
+  }
+
+  function isVideoContent(photo: PhotoItem | undefined) {
+    return isStillVideoContent(photo) || isNativeVideoContent(photo);
   }
 
   function canEnlargePhoto(photo: PhotoItem | undefined): photo is PhotoItem & { imageUrl: string } {
@@ -143,8 +152,8 @@
     }
   }
 
-  function notifyAudioPlaybackComplete(photo: PhotoItem) {
-    if (!photo.audioUrl && !photo.attachmentId) {
+  function notifyMediaPlaybackComplete(photo: PhotoItem) {
+    if (!photo.audioUrl && !photo.videoUrl && !photo.attachmentId) {
       return;
     }
 
@@ -268,14 +277,23 @@
 
 <svelte:window on:keydown={handleWindowKeydown} on:resize={handleWindowResize} />
 
-<AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d" immersive>
+<AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d">
   <div class="photo-layout">
     {#if selectedPhoto}
       <section class="photo-view" aria-label={photoLabel(selectedPhoto)} title={photoLabel(selectedPhoto)}>
-        <div class="photo-display">
+        <div class="photo-display" class:native-video={isNativeVideoContent(selectedPhoto)}>
           {#if selectedPhoto.corrupted}
             <div class="photo-error-panel" style={photoCorruptionNoiseStyle(selectedPhoto)}>
               <span class="repair-label">&lt;ERROR コンテンツへのリンクが破損しています&gt;</span>
+            </div>
+          {:else if isNativeVideoContent(selectedPhoto)}
+            <div class="native-video-frame">
+              <VideoPlayback
+                src={selectedPhoto.videoUrl ?? ""}
+                poster={selectedPhoto.imageUrl ?? ""}
+                label={photoLabel(selectedPhoto)}
+                onComplete={() => notifyMediaPlaybackComplete(selectedPhoto)}
+              />
             </div>
           {:else if canEnlargePhoto(selectedPhoto)}
             <button
@@ -308,13 +326,13 @@
               {#if selectedPhoto.tags?.length}
                 <ContentTags tags={selectedPhoto.tags} overlay />
               {/if}
-              {#if isVideoContent(selectedPhoto)}
+              {#if isStillVideoContent(selectedPhoto)}
                 <div class="video-playback-overlay">
                   <AudioPlaybackButton
                     playbackId={`album-video:${selectedPhoto.id}`}
                     src={selectedPhoto.audioUrl ?? ""}
                     label="再生"
-                    onComplete={() => notifyAudioPlaybackComplete(selectedPhoto)}
+                    onComplete={() => notifyMediaPlaybackComplete(selectedPhoto)}
                   />
                 </div>
               {/if}
@@ -600,6 +618,23 @@
     border: 0;
     border-radius: var(--ap-radius-panel);
     box-shadow: none;
+  }
+
+  .native-video-frame {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: var(--ap-radius-panel);
+    background: #03070b;
+  }
+
+  .native-video-frame :global(.video-playback) {
+    height: 100%;
+    aspect-ratio: auto;
+  }
+
+  .photo-display.native-video .photo-lower-overlay {
+    bottom: 50px;
   }
 
   .video-playback-overlay {

@@ -40,7 +40,8 @@
     "db:migrate:remote:dev": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone-dev --remote --env dev",
     "db:migrate:remote:stg": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone-stg --remote --env stg",
     "db:migrate:remote:prod": "WRANGLER_LOG_PATH=.wrangler/logs wrangler d1 migrations apply xstoryphone --remote --env prod",
-    "review:analyze": "node scripts/analyze-talk-branch-review-clusters.mjs"
+    "review:analyze": "node scripts/analyze-talk-branch-review-clusters.mjs",
+    "access-code": "node scripts/generate-access-code.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.8.0",

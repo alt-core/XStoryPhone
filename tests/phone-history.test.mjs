@@ -80,6 +80,19 @@ test("トップ階層の移動だけをpushし、同一画面は増やさない"
   });
 });
 
+test("メールの一覧と個別メールを端末履歴として復元できる", () => {
+  const history = new FakeHistory();
+  replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+  pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "mail" });
+  replacePhoneHistoryRoute(history, "scope", { kind: "app", appId: "mail", contentId: "mail-1" });
+
+  assert.deepEqual(phoneHistoryStateFrom(history.state, "scope")?.route, {
+    kind: "app",
+    appId: "mail",
+    contentId: "mail-1"
+  });
+});
+
 test("同一アプリ内の選択は現在位置を保ったまま置換できる", () => {
   const history = new FakeHistory();
   replacePhoneHistoryRoute(history, "scope", { kind: "home" });

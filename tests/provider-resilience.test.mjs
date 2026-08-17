@@ -145,3 +145,32 @@ test("LLM providerは壊れた成功応答を再試行しない", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LLM providerは会話エンジンのtemperatureと任意の推論強度を送る", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init.body));
+    return Response.json({ choices: [{ message: { content: '{"selected":"ok"}' } }] });
+  };
+  try {
+    const provider = createStructuredOutputProvider({
+      LLM_API_KEY: "test-key",
+      LLM_MODEL: "test-model",
+      LLM_REASONING_EFFORT: "low"
+    });
+    const result = await provider.completeJson({
+      taskId: "request_options_test",
+      instructions: "JSONで返してください。",
+      input: {},
+      temperature: 0,
+      schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(requestBody.temperature, 0);
+    assert.equal(requestBody.reasoning_effort, "low");
+    assert.equal(requestBody.max_completion_tokens, 1_024);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

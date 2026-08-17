@@ -11,6 +11,8 @@ import type {
 } from "../scenario-runtime/types";
 import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated";
 import { safeLocalStorage } from "./browserStorage";
+import { browserPlayerRequestInit } from "./playerTransport";
+import { limitedSearchMessages } from "./transcriptLimit.ts";
 
 type StoredTalkMessageBase = {
   seq?: number;
@@ -22,6 +24,7 @@ type StoredTalkMessageBase = {
   segments?: MessageSegment[];
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
+  historyRepairId?: string;
   attachment: MessageAttachment | null;
   sentAt: string;
 };
@@ -90,6 +93,7 @@ export type PublicPlayerState = {
     turnKey: string;
     transcriptKey: string;
     lastMessageSeq: number;
+    historyRevision: number;
   }>;
   searchTranscript: {
     transcriptKey: string;
@@ -123,7 +127,12 @@ type ApiResult<T extends { ok: true }> = T | ApiFailure;
 export type TalkReadCursorPayload = { talkId: string; messageId: string; messageSeq: number };
 
 type TranscriptCache = {
-  talk: Record<string, { kind: "sms" | "chat"; transcriptKey: string; messages: Array<StoredSmsMessage | StoredChatMessage> }>;
+  talk: Record<string, {
+    kind: "sms" | "chat";
+    transcriptKey: string;
+    historyRevision?: number;
+    messages: Array<StoredSmsMessage | StoredChatMessage>;
+  }>;
   search: { transcriptKey: string; messages: SearchAgentMessage[] };
 };
 
@@ -189,9 +198,10 @@ function mergeMessages<T extends { seq?: number }>(current: T[], incoming: T[]) 
 
 function applyTranscriptDelta(cache: TranscriptCache, delta: TranscriptDelta) {
   if (delta.kind === "search") {
-    cache.search = delta.transcriptKey === cache.search.transcriptKey
+    const next = delta.transcriptKey === cache.search.transcriptKey
       ? { ...cache.search, messages: mergeMessages(cache.search.messages, delta.messages) }
       : { transcriptKey: delta.transcriptKey, messages: mergeMessages([], delta.messages) };
+    cache.search = { ...next, messages: limitedSearchMessages(next.messages) };
     return;
   }
   const current = cache.talk[delta.talkId];
@@ -200,10 +210,8 @@ function applyTranscriptDelta(cache: TranscriptCache, delta: TranscriptDelta) {
     : { kind: delta.kind, transcriptKey: delta.transcriptKey, messages: mergeMessages([], delta.messages) };
 }
 
-function authHeaders(sessionToken: string): Record<string, string> {
-  return playerMode === "browser"
-    ? { "x-xstoryphone-progress": sessionToken }
-    : { authorization: `Bearer ${sessionToken}` };
+function serverAuthHeaders(sessionToken: string): Record<string, string> {
+  return { authorization: `Bearer ${sessionToken}` };
 }
 
 async function fetchTranscriptDelta(credential: string, stream: string, after: number) {
@@ -211,7 +219,7 @@ async function fetchTranscriptDelta(credential: string, stream: string, after: n
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await fetch(`/api/transcript/${encodeURIComponent(stream)}?after=${after}`, {
-        headers: authHeaders(credential)
+        headers: serverAuthHeaders(credential)
       });
       const payload = await response.json().catch(() => null) as { ok?: boolean; delta?: TranscriptDelta } | null;
       if (response.ok && payload?.ok && payload.delta) return payload.delta;
@@ -226,18 +234,23 @@ async function fetchTranscriptDelta(credential: string, stream: string, after: n
 
 async function hydratePlayerState(publicState: PublicPlayerState, credential: string): Promise<PlayerState> {
   const cache = loadTranscriptCache(credential);
+  cache.search.messages = limitedSearchMessages(cache.search.messages);
   for (const delta of publicState.transcriptDeltas ?? []) applyTranscriptDelta(cache, delta);
 
   if (playerMode === "server") {
     const missing = publicState.talks.filter((talk) => {
       const cached = cache.talk[talk.talkId];
       const lastSeq = cached?.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0) ?? 0;
-      return cached?.transcriptKey !== talk.transcriptKey || lastSeq < talk.lastMessageSeq;
+      const historyChanged = cached?.transcriptKey === talk.transcriptKey
+        && (cached.historyRevision ?? 0) !== talk.historyRevision;
+      return cached?.transcriptKey !== talk.transcriptKey || historyChanged || lastSeq < talk.lastMessageSeq;
     });
     const searchLastSeq = cache.search.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0);
     const requests: Array<Promise<TranscriptDelta | null>> = missing.map((talk) => {
       const cached = cache.talk[talk.talkId];
-      const after = cached?.transcriptKey === talk.transcriptKey
+      const historyChanged = cached?.transcriptKey === talk.transcriptKey
+        && (cached.historyRevision ?? 0) !== talk.historyRevision;
+      const after = cached?.transcriptKey === talk.transcriptKey && !historyChanged
         ? cached.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0)
         : 0;
       return fetchTranscriptDelta(credential, talk.talkId, after);
@@ -254,6 +267,13 @@ async function hydratePlayerState(publicState: PublicPlayerState, credential: st
     }
     for (const delta of await Promise.all(requests)) {
       if (delta) applyTranscriptDelta(cache, delta);
+    }
+  }
+
+  for (const talk of publicState.talks) {
+    const cached = cache.talk[talk.talkId];
+    if (cached?.transcriptKey === talk.transcriptKey) {
+      cached.historyRevision = talk.historyRevision;
     }
   }
 
@@ -322,10 +342,10 @@ async function playerRequest<T extends { ok: true }>(
 ): Promise<ApiResult<T>> {
   const execute = async () => {
     const credential = playerMode === "browser" ? loadBrowserProgressToken() ?? sessionToken : sessionToken;
-    const response = await fetch(url, {
-      ...init,
-      headers: { ...init.headers, ...authHeaders(credential) }
-    });
+    const requestInit = playerMode === "browser"
+      ? browserPlayerRequestInit(init, credential)
+      : { ...init, headers: { ...init.headers, ...serverAuthHeaders(credential) } };
+    const response = await fetch(url, requestInit);
     return readJson<T>(response, credential);
   };
   if (playerMode !== "browser") return execute();
@@ -359,7 +379,7 @@ export async function verifyDevicePin(pin: string) {
 }
 
 export async function loadPlayerState(sessionToken: string) {
-  return playerRequest<{ ok: true; playerState: PlayerState }>("/api/player-state", sessionToken);
+  return playerRequest<{ ok: true; playerState: PlayerState }>("/api/player-state", sessionToken, { method: "POST" });
 }
 
 export async function resetPlayerState(sessionToken: string) {
@@ -373,6 +393,7 @@ export async function recordContentOpened(
   content: {
     contentId: string;
     appId: AppId;
+    mediaContentIds?: string[];
   },
   talkReadCursors: TalkReadCursorPayload[] = []
 ) {
@@ -393,6 +414,7 @@ export async function recordContentMediaObserved(
   content: {
     contentId: string;
     appId: AppId;
+    mediaContentIds: string[];
   }
 ) {
   return playerRequest<{ ok: true; playerState: PlayerState }>("/api/content/media-observed", sessionToken, {
@@ -469,7 +491,8 @@ export async function sendTalkMessage(
   talkId: string,
   turnKey: string,
   message: string,
-  talkReadCursors: TalkReadCursorPayload[] = []
+  talkReadCursors: TalkReadCursorPayload[] = [],
+  recentMessages: readonly { speaker: string; body: string }[] = []
 ) {
   return playerRequest<{ ok: true; playerState: PlayerState; stale?: boolean; gameOver?: GameOverTalkPayload; allClear?: AllClearPayload }>("/api/talk/send", sessionToken, {
     method: "POST",
@@ -480,6 +503,7 @@ export async function sendTalkMessage(
       talkId,
       turnKey,
       message,
+      ...(recentMessages.length ? { recentMessages } : {}),
       ...(talkReadCursors.length ? { talkReadCursors } : {})
     })
   });
