@@ -310,6 +310,7 @@ export type SearchAgentMessage =
   | SearchAgentItemBase & {
       kind: "message";
       body: string;
+      segments?: MessageSegment[];
       quickReplies?: string[];
     }
   | SearchAgentItemBase & {

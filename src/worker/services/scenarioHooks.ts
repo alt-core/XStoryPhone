@@ -11,7 +11,7 @@ import {
   SEARCH_AGENT_STREAM_ID,
   SEARCH_AGENT_TALK_ID
 } from "../../shared/searchAgent.ts";
-import { scenarioHookHandlers } from "../../project/hooks.ts";
+import { scenarioHookHandlers } from "../../generated/scenarioHooks.generated.ts";
 import { SCENARIO_HOOK_TALK_BLOCKS } from "../../generated/hookContext.generated.ts";
 import {
   copyStoredPlayerState,
@@ -552,6 +552,12 @@ export async function runScenarioHooks(
       if (isSearchAgentTalk(definition)) {
         const initial = await initializeSearchAgentTalkState(definition, services.playerId ?? "hook-preview", nextState);
         nextState.talks[talkId] = initial.state;
+        const revealed = revealTalkMessages(
+          nextState,
+          talkId,
+          initial.messages.filter((message) => message.type === "message")
+        );
+        nextState.revealedMessageLinks = revealed.revealedMessageLinks;
         appendTranscript(talkId, initial.events);
         return { definition, state: nextState.talks[talkId] };
       }
@@ -671,6 +677,12 @@ export async function runScenarioHooks(
           current.state.from = effect.blockId;
           current.state.turnKey = await initialTalkTurnKey(services.playerId ?? "hook-preview", effect.talkId, current.state.from);
         }
+        const revealed = revealTalkMessages(
+          nextState,
+          effect.talkId,
+          rendered.messages.filter((message) => message.type === "message")
+        );
+        nextState.revealedMessageLinks = revealed.revealedMessageLinks;
         appendTranscript(effect.talkId, rendered.events);
         continue;
       }

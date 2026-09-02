@@ -36,7 +36,7 @@ import {
   workerScenario
 } from "../src/worker/scenario.ts";
 import { runScenarioHooks } from "../src/worker/services/scenarioHooks.ts";
-import { scenarioHookHandlers } from "../src/project/hooks.ts";
+import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 
 test("デモシナリオは検索アプリを作らず、修復対象を保持する", () => {
   const scenario = loadAndValidateScenario();
@@ -347,7 +347,7 @@ test("デモの各案内は実際の進行状態で次の操作と復帰メニ�
 });
 
 test("デモhookが追加する全blockは存在し、advance後だけ返信可能な位置を要求する", () => {
-  const hookSource = fs.readFileSync("src/project/hooks.ts", "utf8");
+  const hookSource = fs.readFileSync("scenario/demo/hooks.ts", "utf8");
   const targets = [...hookSource.matchAll(/context\.talk\.addBlock\("([^"]+)", "([^"]+)"(?:, \{ mode: "(stay|advance)" \})?\)/gu)]
     .map((match) => ({ talkId: match[1], blockKey: match[2], mode: match[3] ?? "advance" }));
   assert.ok(targets.length > 0);
@@ -1643,6 +1643,22 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
     assert.equal(searchTalkNotification.status, 1);
     assert.match(searchTalkNotification.stderr, /targetTalkId が未定義またはアプリに属さないtalk/u);
 
+    const crossAppTalkNotification = run({ scenario(scenario) {
+      scenario.notifications[0].appId = "messages";
+      scenario.notifications[0].targetTalkId = "lobby";
+      delete scenario.notifications[0].targetContentId;
+    } });
+    assert.equal(crossAppTalkNotification.status, 1);
+    assert.match(crossAppTalkNotification.stderr, /notification\.appIdと同じアプリのtalk/u);
+
+    const crossAppContentNotification = run({ scenario(scenario) {
+      scenario.notifications[0].appId = "messages";
+      scenario.notifications[0].targetContentId = "welcome_note";
+      delete scenario.notifications[0].targetTalkId;
+    } });
+    assert.equal(crossAppContentNotification.status, 1);
+    assert.match(crossAppContentNotification.stderr, /notification\.appIdと同じアプリの対象/u);
+
     const searchTalkContentHook = run({ scenario(scenario) {
       scenario.hooks.push({ event: "content_opened", target: "search_agent", handler: "mark_session_started" });
     } });
@@ -1655,15 +1671,41 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
     assert.equal(searchTalkMessageLink.status, 1);
     assert.match(searchTalkMessageLink.stderr, /メッセージリンクの対象が未定義です/u);
 
+    const crossAppMessageLink = run({ blocks(blocks) {
+      return blocks.replace("open:notes:welcome_note", "open:chat:welcome_note");
+    } });
+    assert.equal(crossAppMessageLink.status, 1);
+    assert.match(crossAppMessageLink.stderr, /メッセージリンクは対象と同じアプリ/u);
+
+    const supportedSearchMessageLink = run({ blocks(blocks) {
+      return blocks.replace(
+        "検索とデモ全体の案内を担当するよ。まずは「古いメモ」を探してみよう。",
+        "[操作ガイド](open:notes:welcome_note)"
+      );
+    } });
+    assert.equal(supportedSearchMessageLink.status, 0, supportedSearchMessageLink.stderr);
+    const normalizedSearchMessageLink = spawnSync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import(${JSON.stringify(new URL("../scripts/scenario-lib.mjs", import.meta.url).href)}).then(({ loadAndValidateScenario }) => {
+        const block = loadAndValidateScenario().worker.talkBlocks.find((item) => item.id === "search_agent::intro");
+        console.log(JSON.stringify(block.messages[0].segments));
+      })`
+    ], { cwd: temporaryRoot, encoding: "utf8" });
+    assert.equal(normalizedSearchMessageLink.status, 0, normalizedSearchMessageLink.stderr);
+    const searchSegments = JSON.parse(normalizedSearchMessageLink.stdout);
+    assert.equal(searchSegments[0].contentId, "welcome_note");
+    assert.match(searchSegments[0].linkId, /^search-link_[a-f0-9]{12}$/u);
+
     const unsupportedSearchMessageFields = run({ blocks(blocks) {
       return blocks.replace(
         "\tsearch_agent\t検索とデモ全体の案内を担当するよ。まずは「古いメモ」を探してみよう。\t\t\t350",
-        "\towner\t[メモ](open:notes:welcome_note)\t\t20:14\t350"
+        "\towner\t[外部](https://example.com)\t\t20:14\t350"
       );
     } });
     assert.equal(unsupportedSearchMessageFields.status, 1);
     assert.match(unsupportedSearchMessageFields.stderr, /senderはsearch_agent/u);
-    assert.match(unsupportedSearchMessageFields.stderr, /第一版では本文とQuick Replyだけ/u);
+    assert.match(unsupportedSearchMessageFields.stderr, /本文、内部リンク、Quick Replyだけ/u);
     assert.match(unsupportedSearchMessageFields.stderr, /発話時刻は実行時に決まる/u);
 
     const invalidSearchInputOrder = run({ scenario(scenario) {
@@ -2476,6 +2518,228 @@ test("search agentはreconcile時に初期stepをcompact eventへ一度だけ生
   const metadata = projected.talks.find((item) => item.kind === "search_agent");
   assert.equal(metadata?.inputVisible, true);
   assert.equal(projected.transcriptDeltas.find((item) => item.kind === "search_agent")?.messages.length, 1);
+});
+
+test("search agentの初期内部リンクは公開IDへ変換し、照合済み能力として記録する", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  message.body = "操作ガイド";
+  message.segments = [{
+    kind: "link",
+    text: "操作ガイド",
+    appId: "notes",
+    contentId: "welcome_note",
+    actionId: "private_action",
+    linkId: "search-link_initial"
+  }];
+  try {
+    const reconciled = await reconcileScenarioState(createInitialPlayerState(), "search-link-player");
+    assert.deepEqual(reconciled.state.revealedMessageLinks, [{
+      id: "search-link_initial",
+      talkId: SEARCH_AGENT_TALK_ID,
+      appId: "notes",
+      contentId: "welcome_note",
+      actionId: "private_action"
+    }]);
+    const projected = await publicPlayerState(reconciled.state, 1, [], null, reconciled.transcriptAppends);
+    const publicMessage = projected.transcriptDeltas.find((item) => item.kind === "search_agent")?.messages[0];
+    const publicLink = publicMessage?.kind === "message" ? publicMessage.segments?.[0] : undefined;
+    assert.ok(publicLink && publicLink.kind === "link" && "contentId" in publicLink);
+    assert.equal(publicLink.contentId, workerScenario.publicIds.content.welcome_note);
+    assert.equal(publicLink.linkId, "search-link_initial");
+    assert.equal("actionId" in publicLink, false);
+  } finally {
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
+});
+
+test("内部リンク先のdevice talk IDも公開IDへ変換する", () => {
+  const message = publicTalkMessage({
+    seq: 1,
+    id: "public-talk-link-test",
+    talkId: "guide",
+    sender: "other",
+    body: "サンプルルーム",
+    segments: [{ kind: "link", text: "サンプルルーム", appId: "chat", contentId: "lobby", linkId: "talk-link" }],
+    attachment: null,
+    sentAt: "2026-08-12T00:00:00.000Z"
+  });
+  const link = message.segments?.[0];
+  assert.ok(link && link.kind === "link" && "contentId" in link);
+  assert.equal(link.contentId, workerScenario.publicIds.talk.lobby);
+});
+
+test("表示済みsearch blockへ追加・変更した内部リンク能力をreconcileする", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  const previousMode = workerScenario.playerMode;
+  workerScenario.playerMode = "server";
+  try {
+    const initialized = await reconcileScenarioState(createInitialPlayerState(), "search-link-migration");
+    assert.equal(initialized.state.revealedMessageLinks.length, 0);
+
+    message.body = "操作ガイド";
+    message.segments = [{
+      kind: "link",
+      text: "操作ガイド",
+      appId: "notes",
+      contentId: "welcome_note",
+      linkId: "search-link_migrated_v1"
+    }];
+    const added = await reconcileScenarioState(initialized.state, "search-link-migration");
+    assert.equal(added.state.revealedMessageLinks.some((item) => item.id === "search-link_migrated_v1"), true);
+
+    message.segments = [{
+      kind: "link",
+      text: "機能テスト一覧",
+      appId: "notes",
+      contentId: "feature_test_guide",
+      linkId: "search-link_migrated_v2"
+    }];
+    const changed = await reconcileScenarioState(added.state, "search-link-migration");
+    assert.equal(changed.state.revealedMessageLinks.some((item) => item.id === "search-link_migrated_v1"), false);
+    assert.equal(changed.state.revealedMessageLinks.some((item) => (
+      item.id === "search-link_migrated_v2" && item.contentId === "feature_test_guide"
+    )), true);
+  } finally {
+    workerScenario.playerMode = previousMode;
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
+});
+
+test("browser modeはIndexedDBにない表示済みbase blockの新リンク能力を推測しない", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  const previousMode = workerScenario.playerMode;
+  workerScenario.playerMode = "browser";
+  try {
+    const initialized = await reconcileScenarioState(createInitialPlayerState(), "search-link-browser-migration");
+    message.body = "操作ガイド";
+    message.segments = [{
+      kind: "link",
+      text: "操作ガイド",
+      appId: "notes",
+      contentId: "welcome_note",
+      linkId: "search-link_browser_unseen"
+    }];
+    const reconciled = await reconcileScenarioState(initialized.state, "search-link-browser-migration");
+    assert.equal(reconciled.state.revealedMessageLinks.some((item) => item.id === "search-link_browser_unseen"), false);
+  } finally {
+    workerScenario.playerMode = previousMode;
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
+});
+
+test("後から追加されたsearch repeat variantの未表示リンク能力は推測しない", async () => {
+  const base = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  assert.ok(base);
+  const repeatId = "search_agent::intro@2";
+  const repeat = {
+    ...structuredClone(base),
+    id: repeatId,
+    blockKey: "intro@2",
+    repeatOf: base.id,
+    repeatIndex: 2,
+    messages: [{
+      ...structuredClone(base.messages[0]),
+      id: `${repeatId}_1`,
+      body: "未表示リンク",
+      segments: [{
+        kind: "link",
+        text: "未表示リンク",
+        appId: "notes",
+        contentId: "welcome_note",
+        actionId: "hidden_action",
+        linkId: "search-link_never_displayed"
+      }]
+    }]
+  };
+  const previousVariants = workerScenario.repeatTalkBlocks[base.id];
+  const previousMode = workerScenario.playerMode;
+  workerScenario.playerMode = "server";
+  workerScenario.talkBlocks.push(repeat);
+  workerScenario.repeatTalkBlocks[base.id] = [repeatId];
+  try {
+    const initialized = await reconcileScenarioState(createInitialPlayerState(), "search-repeat-migration");
+    initialized.state.talks[SEARCH_AGENT_TALK_ID].blockDisplayCounts[base.id] = 2;
+    const reconciled = await reconcileScenarioState(initialized.state, "search-repeat-migration");
+    assert.equal(reconciled.state.revealedMessageLinks.some((item) => item.id === "search-link_never_displayed"), false);
+  } finally {
+    workerScenario.playerMode = previousMode;
+    workerScenario.talkBlocks.splice(workerScenario.talkBlocks.indexOf(repeat), 1);
+    if (previousVariants) workerScenario.repeatTalkBlocks[base.id] = previousVariants;
+    else delete workerScenario.repeatTalkBlocks[base.id];
+  }
+});
+
+test("hookがsearch agentを初期化する場合も初期リンク能力を記録する", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  message.body = "操作ガイド";
+  message.segments = [{
+    kind: "link",
+    text: "操作ガイド",
+    appId: "notes",
+    contentId: "welcome_note",
+    linkId: "search-link_hook_initial"
+  }];
+  const hook = { event: "test_search_agent_initialize", target: "", handler: "test_search_agent_initialize", cond: "", llm: false };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_search_agent_initialize = (context) => {
+    context.talk.addBlock(SEARCH_AGENT_TALK_ID, "stage_photo", { mode: "stay" });
+  };
+  try {
+    const result = await runScenarioHooks(createInitialPlayerState(), { eventId: hook.event }, { playerId: "search-link-init-hook" });
+    assert.equal(result.state.revealedMessageLinks.some((item) => item.id === "search-link_hook_initial"), true);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_search_agent_initialize;
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
+});
+
+test("hookで繰り返し追加したsearch agent内部リンクは能力を増殖させない", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::stage_photo");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  message.body = "操作ガイド";
+  message.segments = [{
+    kind: "link",
+    text: "操作ガイド",
+    appId: "notes",
+    contentId: "welcome_note",
+    linkId: "search-link_hook"
+  }];
+  const hook = { event: "test_search_agent_link_hook", target: "", handler: "test_search_agent_link_hook", cond: "", llm: false };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_search_agent_link_hook = (context) => {
+    context.talk.addBlock(SEARCH_AGENT_TALK_ID, "stage_photo", { mode: "stay" });
+  };
+  try {
+    const initialized = await reconcileScenarioState(createInitialPlayerState(), "search-link-hook-player");
+    const first = await runScenarioHooks(initialized.state, { eventId: hook.event }, { playerId: "search-link-hook-player" });
+    const second = await runScenarioHooks(first.state, { eventId: hook.event }, { playerId: "search-link-hook-player" });
+    assert.equal(first.state.revealedMessageLinks.some((item) => item.id === "search-link_hook"), true);
+    assert.equal(second.state.revealedMessageLinks.filter((item) => item.id === "search-link_hook").length, 1);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_search_agent_link_hook;
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
 });
 
 test("hookのtalk.searchはsearch agentのfromを動かさず結果eventと発見能力を同じstateへ記録する", async () => {

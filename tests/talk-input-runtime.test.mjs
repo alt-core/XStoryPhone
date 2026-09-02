@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SEARCH_AGENT_STREAM_ID, SEARCH_AGENT_TALK_ID } from "../src/shared/searchAgent.ts";
-import { scenarioHookHandlers } from "../src/project/hooks.ts";
+import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import {
   createInitialPlayerState,
   materializedTalkMessagesForEvents,

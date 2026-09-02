@@ -5,7 +5,7 @@ import { evaluateCondition, validateConditionExpression, validateStateAssignment
 import { parseTalkMatchSpec } from "../src/shared/talkMatch.ts";
 import { parseStoryDate } from "../src/shared/storyDate.ts";
 import { APP_REGISTRY } from "../src/shared/appRegistry.ts";
-import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../src/shared/searchAgent.ts";
+import { MAX_SEARCH_AGENT_QUERY_LENGTH, SEARCH_AGENT_TALK_ID } from "../src/shared/searchAgent.ts";
 import {
   CORE_SCENARIO_HOOK_EVENTS,
   coreScenarioHookEventMetadata
@@ -622,6 +622,7 @@ export function loadAndValidateScenario() {
   const talks = sourceTalks.filter((talk) => talk?.kind !== "search_agent" && talk?.id !== "search_agent");
   const searchAgentTalks = sourceTalks.filter((talk) => talk?.kind === "search_agent" || talk?.id === "search_agent");
   const searchAgentSource = searchAgentTalks.find((talk) => talk?.id === "search_agent" && talk?.kind === "search_agent") ?? null;
+  const deviceTalkById = new Map(talks.map((talk) => [talk?.id, talk]));
   const deviceTalkIds = new Set(talks.map((talk) => talk?.id).filter(Boolean));
   const talkIds = new Set();
   for (const talk of sourceTalks) {
@@ -818,17 +819,34 @@ export function loadAndValidateScenario() {
         for (const segment of content.segments ?? []) {
           if (segment.kind !== "link" || !("contentId" in segment)) continue;
           const validApp = appIds.has(segment.appId);
-          const validTarget = contentIds.has(segment.contentId) || deviceTalkIds.has(segment.contentId);
+          const targetContent = contents.find((item) => item.id === segment.contentId);
+          const targetTalk = talks.find((item) => item.id === segment.contentId);
+          const validTarget = Boolean(targetContent || targetTalk);
           if (!validApp || !validTarget) errors.push(`talk_blocks.tsv:${row.__rowNumber}: メッセージリンクの対象が未定義です。`);
+          else if ((targetContent?.appId ?? targetTalk?.appId) !== segment.appId) {
+            errors.push(`talk_blocks.tsv:${row.__rowNumber}: メッセージリンクは対象と同じアプリを指定してください。`);
+          }
           if (segment.actionId) messageLinkActionIds.add(segment.actionId);
           if (repairableTalkContentIds.has(segment.contentId)) {
             errors.push(`talk_blocks.tsv:${row.__rowNumber}: talk初期履歴の修復contentは検索結果から開いてください。`);
           }
         }
+        const segments = content.segments?.map((segment, segmentIndex) => (
+          info?.talkId === SEARCH_AGENT_TALK_ID && segment.kind === "link" && "contentId" in segment
+            ? {
+                ...segment,
+                linkId: stableId(
+                  "search-link",
+                  `${id}:${index + 1}:${segmentIndex + 1}:${segment.appId}:${segment.contentId}:${segment.actionId ?? ""}`
+                )
+              }
+            : segment
+        ));
         return {
           id: `${id}_${index + 1}`,
           sender,
           ...content,
+          ...(segments ? { segments } : {}),
           attachmentId,
           sentAt: String(row.time ?? "").trim(),
           ...(delayMs === undefined ? {} : { delayMs }),
@@ -840,13 +858,13 @@ export function loadAndValidateScenario() {
       })
     };
   });
-  for (const block of talkBlocks.filter((item) => item.talkId === "search_agent")) {
+  for (const block of talkBlocks.filter((item) => item.talkId === SEARCH_AGENT_TALK_ID)) {
     for (const message of block.messages) {
       if (message.sender !== "search_agent") {
         errors.push(`${block.talkId}/${block.blockKey}: senderはsearch_agentにしてください。`);
       }
-      if (message.attachmentId || message.segments?.some((segment) => segment.kind === "link")) {
-        errors.push(`${block.talkId}/${block.blockKey}: search_agentの発話は第一版では本文とQuick Replyだけを使用してください。`);
+      if (message.attachmentId || message.segments?.some((segment) => segment.kind === "link" && "externalUrl" in segment)) {
+        errors.push(`${block.talkId}/${block.blockKey}: search_agentの発話は本文、内部リンク、Quick Replyだけを使用してください。`);
       }
       if (message.sentAt) {
         errors.push(`${block.talkId}/${block.blockKey}: search_agentの発話時刻は実行時に決まるためtimeを指定できません。`);
@@ -1039,8 +1057,20 @@ export function loadAndValidateScenario() {
   for (const notification of notificationItems) {
     validateObjectKeys(`notification ${notification?.id ?? ""}`, notification, ["id", "appId", "targetTalkId", "targetContentId", "title", "body", "cond"], errors);
     if (!appIds.has(notification?.appId)) errors.push(`${notification?.id ?? "notification"}: appId が未定義です。`);
-    if (notification?.targetTalkId && !deviceTalkIds.has(notification.targetTalkId)) errors.push(`${notification.id}: targetTalkId が未定義またはアプリに属さないtalkです。`);
-    if (notification?.targetContentId && !contentIds.has(notification.targetContentId) && !appIds.has(notification.targetContentId)) errors.push(`${notification.id}: targetContentId が未定義です。`);
+    if (notification?.targetTalkId && !deviceTalkIds.has(notification.targetTalkId)) {
+      errors.push(`${notification.id}: targetTalkId が未定義またはアプリに属さないtalkです。`);
+    } else if (notification?.targetTalkId && deviceTalkById.get(notification.targetTalkId)?.appId !== notification.appId) {
+      errors.push(`${notification.id}: targetTalkId はnotification.appIdと同じアプリのtalkを指定してください。`);
+    }
+    if (notification?.targetContentId && !contentIds.has(notification.targetContentId) && !appIds.has(notification.targetContentId)) {
+      errors.push(`${notification.id}: targetContentId が未定義です。`);
+    } else if (notification?.targetContentId) {
+      const targetContent = contents.find((content) => content.id === notification.targetContentId);
+      const targetAppId = targetContent?.appId ?? notification.targetContentId;
+      if (targetAppId !== notification.appId) {
+        errors.push(`${notification.id}: targetContentId はnotification.appIdと同じアプリの対象を指定してください。`);
+      }
+    }
     if (!notification?.targetTalkId && !notification?.targetContentId) errors.push(`${notification?.id ?? "notification"}: targetTalkId または targetContentId が必要です。`);
     if (typeof notification?.title !== "string" || !notification.title.trim() || typeof notification?.body !== "string" || !notification.body.trim()) {
       errors.push(`${notification?.id ?? "notification"}: title と body が必要です。`);

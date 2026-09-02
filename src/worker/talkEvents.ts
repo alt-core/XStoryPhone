@@ -180,6 +180,7 @@ export type ResolvedSearchAgentTimelineItem =
       id: string;
       role: "user" | "assistant";
       body: string;
+      segments?: readonly ScenarioMessageSegment[];
       delayMs?: number;
       delayOnFirstDisplay?: boolean;
       quickReplies?: readonly string[];
@@ -248,12 +249,16 @@ export function resolveSearchAgentEvent(event: StoredSearchAgentEvent): Resolved
   if (!template) return null;
   const env = parseStringRecord(event.format_env_json);
   const quickReplies = renderedQuickReplies(template.quickReplies, env);
+  const segments = template.segments?.map((segment) => segment.kind === "text"
+    ? { ...segment, text: renderTemplate(segment.text, env) }
+    : segment);
   return {
     type: "message",
     seq: event.seq,
     id: event.id,
     role: template.senderRole === "owner" ? "user" : "assistant",
     body: renderTemplate(template.body, env),
+    ...(segments ? { segments } : {}),
     ...(quickReplies.length ? { quickReplies } : {}),
     ...(typeof template.delayMs === "number" ? { delayMs: template.delayMs } : {}),
     ...(template.senderRole !== "owner" && typeof template.delayMs === "number" && template.delayMs > 0

@@ -1340,6 +1340,12 @@ app.post("/api/talk/send", async (c) => {
       baseSentAt: new Date(Date.parse(now) + 1_000).toISOString(),
       idPrefix: `search_agent_output_${turnHash}`
     });
+    const revealed = revealTalkMessages(
+      nextState,
+      talk.id,
+      rendered.messages.filter((item) => item.type === "message")
+    );
+    nextState.revealedMessageLinks = revealed.revealedMessageLinks;
     nextTalk.blockDisplayCounts = rendered.blockDisplayCounts;
     nextTalk.lastMessageSeq = rendered.lastSeq;
     nextTalk.inputVisible = rendered.inputVisible;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scenarioHookHandlers } from "../src/project/hooks.ts";
+import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import { createInitialPlayerState, workerScenario } from "../src/worker/scenario.ts";
 import { createFakeStructuredOutputProvider } from "../src/worker/providers/structuredOutput.ts";
 import { resolveHookLlmProfile } from "../src/worker/product/llmProfiles.ts";

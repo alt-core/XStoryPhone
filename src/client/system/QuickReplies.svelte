@@ -126,4 +126,12 @@
     transform: translateY(1px);
   }
 
+  button:first-child {
+    margin-inline-start: auto;
+  }
+
+  button:last-child {
+    margin-inline-end: auto;
+  }
+
 </style>

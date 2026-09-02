@@ -13,6 +13,7 @@
     queuedTalkMessageDelayMs,
     shouldQueueTalkMessage
   } from "./talkMessageDelay";
+  import MessageBody from "./MessageBody.svelte";
   import TypingIndicator from "./TypingIndicator.svelte";
   import QuickReplies from "./QuickReplies.svelte";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "./talkInputState.ts";
@@ -46,6 +47,12 @@
     error: "送信できません。"
   });
   export let onOpenSearchAgentResult: (result: SearchAgentSearchResult) => boolean | Promise<boolean> = () => false;
+  export let onOpenMessageLink: (
+    talkId: string,
+    messageRef: string,
+    segmentIndex: number,
+    linkId?: string
+  ) => void | Promise<void> = () => {};
   export let delayMemoryKey = "";
   export let peeking = false;
   export let surfaceKey = "home";
@@ -411,6 +418,16 @@
     await sendBody(reply, false);
   }
 
+  function openMessageLink(message: Extract<SearchAgentMessage, { kind: "message" }>, segmentIndex: number) {
+    const segment = message.segments?.[segmentIndex];
+    return onOpenMessageLink(
+      message.talkId,
+      message.id,
+      segmentIndex,
+      segment?.kind === "link" && "linkId" in segment ? segment.linkId : undefined
+    );
+  }
+
   async function openResult(result: SearchAgentSearchResult) {
     if (openingResult) {
       return;
@@ -520,7 +537,11 @@
           {#if message.kind === "message" || message.results.length}
             <article class:user={message.sender === "owner"} class:has-results={message.kind === "search_results"}>
               {#if message.kind === "message"}
-                <p>{message.body}</p>
+                <MessageBody
+                  body={message.body}
+                  segments={message.segments}
+                  onOpenLink={(segmentIndex) => openMessageLink(message, segmentIndex)}
+                />
               {:else}
                 <div class="result-list" aria-label="検索結果">
                   {#each message.results as result}
@@ -851,7 +872,7 @@
     background: rgba(255, 255, 255, 0.11);
   }
 
-  .message-list article p {
+  .message-list article :global(.message-body) {
     margin: 0;
     color: rgba(255, 255, 255, 0.86);
     font-size: 0.76rem;

@@ -4,7 +4,7 @@ import { createApp } from "../src/server/app.ts";
 import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
 import { encodeBrowserProgress } from "../src/server/browserProgress.ts";
 import { mergeTranscriptAppend } from "../src/server/store.ts";
-import { scenarioHookHandlers } from "../src/project/hooks.ts";
+import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
 const configuredPlayerMode = workerScenario.playerMode;
@@ -229,6 +229,75 @@ test("共通HonoアプリはStoreを注入してセッション開始と状態�
   assert.deepEqual(transcriptBody.delta.messages.map((item) => item.seq), [1, 2, 3, 4]);
   assert.deepEqual(transcriptBody.delta.messages.slice(-3).map((item) => item.kind), ["message", "search_results", "message"]);
   assert.deepEqual(transcriptBody.delta.messages.at(-1).quickReplies, ["ヒント", "機能テスト", "ヘルプ"]);
+});
+
+test("search agentの内部リンクは表示済み能力を照合して既存APIで開く", async () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::common_help");
+  const message = block?.messages[0];
+  assert.ok(message);
+  const previous = { body: message.body, segments: message.segments };
+  message.body = "操作ガイド";
+  message.segments = [{
+    kind: "link",
+    text: "操作ガイド",
+    appId: "notes",
+    contentId: "welcome_note",
+    linkId: "search-link_reply"
+  }];
+  try {
+    const store = new MemoryStore();
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const started = await app.request("http://localhost/api/session/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serialCode: "1234" })
+    });
+    assert.equal(started.status, 200);
+    const startBody = await started.json();
+    const searchTalk = startBody.playerState.talks.find((item) => item.kind === "search_agent");
+    assert.ok(searchTalk);
+
+    const sent = await app.request("http://localhost/api/talk/send", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ talkId: searchTalk.talkId, turnKey: searchTalk.turnKey, message: "ヘルプ" })
+    });
+    assert.equal(sent.status, 200);
+    const sentBody = await sent.json();
+    const linkMessage = sentBody.playerState.transcriptDeltas
+      .find((item) => item.kind === "search_agent")?.messages
+      .find((item) => item.kind === "message" && item.segments?.some((segment) => segment.linkId === "search-link_reply"));
+    assert.ok(linkMessage);
+    const publicLink = linkMessage.segments[0];
+    assert.equal(publicLink.contentId, workerScenario.publicIds.content.welcome_note);
+    assert.equal(store.player.state.revealedMessageLinks.some((item) => item.id === "search-link_reply"), true);
+
+    const opened = await app.request("http://localhost/api/message-link/open", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        talkId: searchTalk.talkId,
+        messageRef: linkMessage.id,
+        segmentIndex: 0,
+        linkId: publicLink.linkId
+      })
+    });
+    assert.equal(opened.status, 200);
+    assert.deepEqual((await opened.json()).target, {
+      appId: "notes",
+      contentId: workerScenario.publicIds.content.welcome_note
+    });
+
+    const tampered = await app.request("http://localhost/api/message-link/open", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ talkId: searchTalk.talkId, messageRef: linkMessage.id, segmentIndex: 0, linkId: "search-link_tampered" })
+    });
+    assert.equal(tampered.status, 409);
+  } finally {
+    message.body = previous.body;
+    message.segments = previous.segments;
+  }
 });
 
 test("serverの初期scheduleは新規player作成と同じStore操作へ渡す", async () => {

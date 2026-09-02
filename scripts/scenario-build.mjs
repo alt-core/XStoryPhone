@@ -2,10 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
+import { generatedHookImportPath, scenarioHookModulePath } from "./lib/scenario-hooks.mjs";
 
 const rootDir = process.cwd();
 const sharedGeneratedDir = path.join(rootDir, "src/generated");
 const clientGeneratedDir = path.join(rootDir, "src/client/generated");
+const configuredScenarioDir = String(process.env.XSTORYPHONE_SCENARIO_DIR ?? "scenario/demo").trim() || "scenario/demo";
+const selectedScenarioDir = path.resolve(rootDir, configuredScenarioDir);
 
 function writeIfChanged(filePath, content) {
   const current = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
@@ -52,7 +55,8 @@ try {
     path.join(clientGeneratedDir, "projectAppIcons.generated.ts"),
     `// scenario:build により生成されます。直接編集しないでください。\n${iconImports.length ? `import { ${iconImports.join(", ")} } from "@lucide/svelte";\n` : ""}export const projectAppIcons = { ${scenario.projectApps.map((app) => `${JSON.stringify(app.id)}: ${app.icon}`).join(", ")} } as const;\n`
   );
-  const hookModule = await import(`${pathToFileURL(path.join(rootDir, "src/project/hooks.ts")).href}?revision=${scenario.revision}`);
+  const hookPath = scenarioHookModulePath(rootDir, selectedScenarioDir);
+  const hookModule = await import(`${pathToFileURL(hookPath).href}?revision=${scenario.revision}`);
   const registeredHookIds = Object.keys(hookModule.scenarioHookHandlers ?? {}).sort();
   const expectedHookIds = [...scenario.hookIds].sort();
   const missingHookIds = expectedHookIds.filter((id) => !registeredHookIds.includes(id));
@@ -60,6 +64,10 @@ try {
   if (missingHookIds.length || extraHookIds.length) {
     throw new Error(`project hook registryがscenarioと一致しません。不足=${missingHookIds.join(",") || "なし"} 余分=${extraHookIds.join(",") || "なし"}`);
   }
+  writeIfChanged(
+    path.join(sharedGeneratedDir, "scenarioHooks.generated.ts"),
+    `// scenario:build により生成されます。直接編集しないでください。\nexport { scenarioHookHandlers } from ${JSON.stringify(generatedHookImportPath(sharedGeneratedDir, hookPath))};\n`
+  );
   writeIfChanged(
     path.join(clientGeneratedDir, "demoDeviceState.generated.ts"),
     `// scenario:build により生成されます。直接編集しないでください。\nimport type { DeviceState } from "../scenario-runtime/types";\n\nexport const demoDeviceStateGenerated: DeviceState = ${JSON.stringify(scenario.deviceState, null, 2)};\n`

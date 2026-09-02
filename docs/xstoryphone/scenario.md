@@ -258,7 +258,7 @@ player_input =~ /^(はい|了解)/u
 
 ## hook
 
-`scenario.json` で発火条件を宣言し、`src/project/hooks.ts` に同名の処理を書きます。
+`scenario.json` で発火条件を宣言し、選択するシナリオディレクトリの`hooks.ts`に同名の処理を書きます。例えば`XSTORYPHONE_SCENARIO_DIR=scenario/my-story`なら`scenario/my-story/hooks.ts`を使います。このファイルがない場合だけ、単一シナリオ向けの互換経路として`src/project/hooks.ts`を使います。ビルド時に選択したhook moduleだけをWorkerへ静的に組み込み、未選択シナリオのhookは配布物へ含めません。
 
 利用できるイベントは次の通りです。
 

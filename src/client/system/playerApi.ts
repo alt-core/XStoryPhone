@@ -590,6 +590,7 @@ export async function openMessageLink(
     talkId: string;
     messageRef: string;
     segmentIndex: number;
+    linkId?: string;
   }
 ) {
   return playerRequest<{

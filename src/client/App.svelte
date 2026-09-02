@@ -3359,15 +3359,24 @@
     return { ok: true };
   }
 
-  async function handleMessageLinkOpen(talkId: string, messageRef: string, segmentIndex: number) {
+  async function openTalkMessageLink(
+    talkId: string,
+    messageRef: string,
+    segmentIndex: number,
+    options: { backLinkSource: TalkBackLinkAppId | null; linkId?: string }
+  ) {
     if (!uiState.sessionToken) {
       return;
     }
 
-    const backLinkSource = activeAppId === "messages" || activeAppId === "chat" ? activeAppId : null;
     let result: Awaited<ReturnType<typeof openMessageLink>>;
     try {
-      result = await openMessageLink(uiState.sessionToken, { talkId, messageRef, segmentIndex });
+      result = await openMessageLink(uiState.sessionToken, {
+        talkId,
+        messageRef,
+        segmentIndex,
+        ...(options.linkId ? { linkId: options.linkId } : {})
+      });
     } catch {
       return;
     }
@@ -3383,9 +3392,18 @@
     if (result.presentation?.sequence) return;
     const targetAppId = result.target.appId;
     focusOpenedContent(targetAppId, result.target.contentId);
-    showTalkBackLink(backLinkSource, targetAppId);
+    showTalkBackLink(options.backLinkSource, targetAppId);
     notificationToast = null;
     void openContentFromExplicitNavigation(targetAppId, result.target.contentId);
+  }
+
+  function handleMessageLinkOpen(talkId: string, messageRef: string, segmentIndex: number) {
+    const backLinkSource = activeAppId === "messages" || activeAppId === "chat" ? activeAppId : null;
+    return openTalkMessageLink(talkId, messageRef, segmentIndex, { backLinkSource });
+  }
+
+  function handleSearchAgentMessageLink(talkId: string, messageRef: string, segmentIndex: number, linkId?: string) {
+    return openTalkMessageLink(talkId, messageRef, segmentIndex, { backLinkSource: null, linkId });
   }
 
   async function handleChatSend(talkId: string, message: string) {
@@ -3560,6 +3578,7 @@
           onToggleShade={() => (shadeOpen = !shadeOpen)}
           onCompleteCall={completeIncomingCall}
           onSearchAgentSend={handleSearchAgentSend}
+          onOpenSearchAgentMessageLink={handleSearchAgentMessageLink}
           onOpenSearchAgentResult={handleOpenSearchAgentResult}
         >
       {#key routeKey}

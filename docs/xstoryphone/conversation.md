@@ -166,7 +166,7 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 }
 ```
 
-本文は`talk_blocks.tsv`の`*search_agent`以下へ、分岐は通常どおり`talk_flow.tsv`へ書きます。第一版の検索AI発話は`sender=search_agent`の本文とQuick Replyだけを扱い、添付、本文リンク、固定の`time`は指定できません。`startSteps`ではblockと`/input`だけを使えます。
+本文は`talk_blocks.tsv`の`*search_agent`以下へ、分岐は通常どおり`talk_flow.tsv`へ書きます。検索AI発話は`sender=search_agent`の本文、`[表示名](open:app_id:content_id)`形式の内部リンク、Quick Replyを扱います。添付、HTTPSの外部リンク、固定の`time`は指定できません。内部リンクは実際に発話が表示された時だけ利用可能になり、同じblockを繰り返しても進行token内の権限は増殖しません。serverモードで公開後に表示済みのbase blockへリンクを追加した場合は、現在台本から本文を復元する既存契約に合わせて権限も補完します。後から追加・変更したrepeat variantと、到達済み本文をIndexedDBへ保持するbrowserモードのリンクは、未表示情報を与えないため再表示後に有効になります。`startSteps`ではblockと`/input`だけを使えます。
 
 検索AIの`next`は、セル内で改行した次のstepを上から順に実行します。
 

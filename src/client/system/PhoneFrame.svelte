@@ -40,6 +40,12 @@
     error: "送信できません。"
   });
   export let onOpenSearchAgentResult: (result: SearchAgentSearchResult) => boolean | Promise<boolean> = () => false;
+  export let onOpenSearchAgentMessageLink: (
+    talkId: string,
+    messageRef: string,
+    segmentIndex: number,
+    linkId?: string
+  ) => void | Promise<void> = () => {};
 
   $: wallpaperStyle = wallpaperUrl ? `--phone-wallpaper-image: url("${wallpaperUrl}");` : "";
 </script>
@@ -102,6 +108,7 @@
           surfaceMessage={assistantSurfaceMessage}
           surfaceMessageMode={assistantSurfaceMessageMode}
           onSend={onSearchAgentSend}
+          onOpenMessageLink={onOpenSearchAgentMessageLink}
           {onOpenSearchAgentResult}
         />
       {/if}

@@ -659,7 +659,14 @@ export function createInitialPlayerState(): StoredPlayerState {
   };
 }
 
-export function revealTalkMessages(state: StoredPlayerState, talkId: string, messages: readonly StoredTalkMessage[]) {
+export function revealTalkMessages(
+  state: StoredPlayerState,
+  talkId: string,
+  messages: readonly {
+    attachment?: StoredTalkMessage["attachment"];
+    segments?: StoredTalkMessage["segments"];
+  }[]
+) {
   const revealedAttachmentContentIds = new Set(state.revealedAttachmentContentIds);
   const links = new Map(state.revealedMessageLinks.map((link) => [link.id, link]));
   for (const message of messages) {
@@ -682,6 +689,29 @@ export function revealTalkMessages(state: StoredPlayerState, talkId: string, mes
     revealedAttachmentContentIds: [...revealedAttachmentContentIds],
     revealedMessageLinks: [...links.values()]
   };
+}
+
+function reconcileSearchAgentMessageLinks(state: StoredPlayerState, talkId: string) {
+  const counts = state.talks[talkId]?.blockDisplayCounts ?? {};
+  const currentLinkIds = new Set(workerScenario.talkBlocks
+    .filter((block) => block.talkId === talkId)
+    .flatMap((block) => block.messages)
+    .flatMap((message) => message.segments ?? [])
+    .flatMap((segment) => segment.kind === "link" && "contentId" in segment && segment.linkId ? [segment.linkId] : []));
+  const baseMessages = workerScenario.playerMode === "server"
+    ? Object.entries(counts).flatMap(([baseBlockId, displayCount]) => (
+        Number.isInteger(displayCount) && displayCount > 0
+          ? messageTemplatesForBlock(baseBlockId).map((message) => ({ segments: message.segments }))
+          : []
+      ))
+    : [];
+  const reconciledState = {
+    ...state,
+    revealedMessageLinks: state.revealedMessageLinks.filter((link) => (
+      link.talkId !== talkId || !link.id.startsWith("search-link_") || currentLinkIds.has(link.id)
+    ))
+  };
+  return revealTalkMessages(reconciledState, talkId, baseMessages);
 }
 
 export async function reconcileScenarioState(state: StoredPlayerState, playerId: string) {
@@ -708,6 +738,11 @@ export async function reconcileScenarioState(state: StoredPlayerState, playerId:
           messages: initial.events
         });
       }
+      nextState = revealTalkMessages(
+        nextState,
+        talk.id,
+        initial.messages.filter((message) => message.type === "message")
+      );
       continue;
     }
     const initial = initializeTalkState(
@@ -718,6 +753,10 @@ export async function reconcileScenarioState(state: StoredPlayerState, playerId:
     );
     talks[talk.id] = initial.state;
     nextState = revealTalkMessages(nextState, talk.id, initial.messages);
+  }
+  const searchTalk = workerScenario.talks.find((talk) => isSearchAgentTalk(talk));
+  if (searchTalk && nextState.talks[searchTalk.id]) {
+    nextState = reconcileSearchAgentMessageLinks(nextState, searchTalk.id);
   }
   return { state: nextState, transcriptAppends };
 }
@@ -1070,6 +1109,10 @@ function publicContentId(internalId: string) {
   return workerScenario.publicIds.content[internalId] ?? internalId;
 }
 
+function publicOpenTargetId(internalId: string) {
+  return workerScenario.publicIds.content[internalId] ?? workerScenario.publicIds.talk[internalId] ?? internalId;
+}
+
 async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -1087,6 +1130,17 @@ function publicCommandBody(body: string) {
   return match ? `${match[1]}:${publicContentId(match[2])}` : body;
 }
 
+function publicMessageSegments(segments: readonly ScenarioMessageSegment[] | undefined) {
+  return segments?.map((segment) =>
+    segment.kind === "link" && "contentId" in segment
+      ? (() => {
+          const { actionId: _actionId, ...publicSegment } = segment;
+          return { ...publicSegment, contentId: publicOpenTargetId(segment.contentId) };
+        })()
+      : segment
+  );
+}
+
 export function publicTalkMessage(message: StoredTalkMessage): StoredTalkMessage {
   const { scenarioBlockId, historyRepairId: _historyRepairId, ...publicMessage } = message;
   const historyRepair = scenarioBlockId ? talkHistoryRepairByBlockId.get(scenarioBlockId) : undefined;
@@ -1101,14 +1155,7 @@ export function publicTalkMessage(message: StoredTalkMessage): StoredTalkMessage
           : {})
       }
     : message.attachment;
-  const segments = message.segments?.map((segment) =>
-    segment.kind === "link" && "contentId" in segment
-      ? (() => {
-          const { actionId: _actionId, ...publicSegment } = segment;
-          return { ...publicSegment, contentId: publicContentId(segment.contentId) };
-        })()
-      : segment
-  );
+  const segments = publicMessageSegments(message.segments);
   return {
     ...publicMessage,
     body: publicCommandBody(message.body),
@@ -1127,6 +1174,7 @@ export function publicSearchAgentTimelineItems(events: readonly StoredSearchAgen
         talkId,
         sender: item.role === "user" ? "owner" as const : "other" as const,
         body: item.body,
+        ...(item.segments ? { segments: publicMessageSegments(item.segments) } : {}),
         sentAt: item.sentAt,
         ...(item.quickReplies?.length ? { quickReplies: item.quickReplies } : {}),
         ...(typeof item.delayMs === "number" ? { delayMs: item.delayMs } : {}),
