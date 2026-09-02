@@ -1,4 +1,4 @@
-comment	sender	body	attachment	time	delay_ms	notes	updated_at	source
+comment	sender	body	attachment	time	delay_ms	notes	updated_at	source	quick_replies
 *guide
 history_archive_a
 	guide	これは修復対象になる過去のメッセージ履歴です。		2026-08-11T19:10:00+09:00			2026-08-12	human
@@ -6,51 +6,46 @@ history_archive_a
 history_archive_b
 	guide	連続する破損blockは、修復前には一つの破損表示へまとまります。		2026-08-11T19:12:00+09:00			2026-08-12	human
 intro
-	guide	XStoryPhoneの基本操作を順に試します。まず右下のナビで「古いメモ」と検索してください。		20:14			2026-08-12	human
-intro_prompt
-	guide	今することはホームのToDoに表示しているよ。分からなければ、ナビで「ヒント」と検索してみて。			650		2026-08-12	human
+	owner	メッセージアプリ固有の送受信、添付、リンク、未読を確認するための連絡先です。何か送信すると、連携先を選ぶQuick Replyが表示されます。		20:14			2026-08-12	human
+message_reply
+	guide	メッセージの送受信を確認できました。			350		2026-08-12	human	"別ルームへ送る
+チャットへ送る"
 ---
-	guide	検索、修復、会話、添付解錠、チャット再認証を順番に確認できます。			650		2026-08-12	human
-common_help
-	guide	ホームのToDoを確認してみて。分からなければ、ナビで「ヒント」と検索すると次の手順を確認できるよ。			500		2026-08-12	human
-found_lead
-	guide	「黄色」ですね。画像の修復と、正規表現による入力判定を確認できました。			450		2026-08-12	human
-found_done
-	guide	修復した画像を、メッセージの添付として表示する例です。	rainy_window_image		700		2026-08-12	human
-	guide	次は鍵付き添付です。パスワード「0420」で開いてください。最初の[操作ガイド](open:notes:welcome_note)もここから読み返せます。	sealed_note_file		700		2026-08-12	human
-done_repeat
-	guide	鍵付きメモを開いたら、次はナビで「チャット」と検索してください。			700		2026-08-12	human
----
-	guide	次の手順はホームのToDoでも確認できるよ。			550		2026-08-12	human
-game_over_reply
-	guide	この入力はゲームオーバー演出のデモです。			500		2026-08-12	human
+	guide	追加のメッセージも受け取りました。			350		2026-08-12	human	"別ルームへ送る
+チャットへ送る"
+message_test_ack
+	guide	送信を受け付けました。別ルームまたはチャットの通知を確認してください。			350		2026-08-12	human	"別ルームへ送る
+チャットへ送る"
+clue_attachments
+	guide	灯りが写った画像を、メッセージ添付として届けます。	rainy_window_image		700		2026-08-12	human
+	guide	続いて鍵付き添付です。パスワード「0420」で開いてください。最初の[操作ガイド](open:notes:welcome_note)もここから読み返せます。	sealed_note_file		700		2026-08-12	human	別ルームへ送る
 chat_auth_link
 	guide	チャットの再認証リンクを発行しました。[チャットを開く](open:chat:lobby;action:chat_auth_link_opened)			500		2026-08-12	human
-sealed_note_opened
-	guide	鍵付き添付を開封できました。ホームに壊れたチャットが現れたので、ナビで「チャット」と検索して開いてください。			500		2026-08-12	human
 call_history_guide
-	guide	聞き逃した着信音声は、[着信履歴](open:phone:demo_call_history)から再生できます。音声書き起こしも同じ画面で最後まで読めます。			500		2026-08-12	human
-demo_test_ack
-	guide	機能テストを受け付けました。別ルームへの受信や、数秒後に起きる変化を確認してください。			350		2026-08-12	human
+	guide	着信履歴へのメッセージ内リンクです。[着信履歴](open:phone:demo_call_history)から音声の再生と書き起こしを確認できます。			500		2026-08-12	human
+chat_auth_required
+	guide	この送信テストは、チャットの再認証を完了してから実行してください。					2026-08-12	human	別ルームへ送る
 *lobby
 history_archive
 	visitor	これは修復対象になる過去のチャット履歴です。		2026-08-11T20:00:00+09:00			2026-08-12	human
 start
-	visitor	チャットUIとdefault分岐の確認です。何かメッセージを送ってください。		20:14			2026-08-12	human
+	visitor	チャットUIとdefault分岐の確認です。何かメッセージを送ってください。		20:14			2026-08-12	human	こんにちは
 chat_test_ack
-	visitor	連携テストを受け付けました。別のルームまたはメッセージアプリを確認してください。			350		2026-08-12	human
+	visitor	連携テストを受け付けました。別のルームまたはメッセージアプリを確認してください。			350		2026-08-12	human	"チャット連携
+メッセージへ送る"
 lobby_reply
-	visitor	メッセージを受け取りました。			400		2026-08-12	human
-	guide	検索・修復・会話・添付解錠・チャット再認証のデモは完了です。			650		2026-08-12	human
+	visitor	メッセージを受け取りました。			400		2026-08-12	human	"チャット連携
+メッセージへ送る"
 lobby_done
-	visitor	追加のメッセージも受け取りました。			400		2026-08-12	human
+	visitor	追加のメッセージも受け取りました。			400		2026-08-12	human	"チャット連携
+メッセージへ送る"
 *sms_receiver
 start
 	owner	機能テスト用の受信箱です。		20:14			2026-08-12	human
 receiver_reply
 	guide	このルームは受信結果の確認用です。			350		2026-08-12	human
 received_from_sms
-	guide	「デモ進行係」から、別のメッセージルームへ届きました。			500		2026-08-12	human
+	guide	「デモ連絡先」から、別のメッセージルームへ届きました。			500		2026-08-12	human
 received_from_chat
 	guide	チャットの「サンプルルーム」から、メッセージアプリへ届きました。			500		2026-08-12	human
 received_delayed
@@ -68,7 +63,7 @@ start
 receiver_reply
 	visitor	このルームは連携結果の確認用です。			350		2026-08-12	human
 received_from_sms
-	visitor	メッセージアプリの「デモ進行係」からチャットへ届きました。			500		2026-08-12	human
+	visitor	メッセージアプリの「デモ連絡先」からチャットへ届きました。			500		2026-08-12	human
 received_from_chat
 	visitor	「サンプルルーム」から別のチャットルームへ届きました。			500		2026-08-12	human
 *dummy_sms_1
@@ -131,3 +126,107 @@ start
 	owner	ダミーデータ		20:14			2026-08-12	human
 dummy_reply
 	visitor	ダミーデータ			250		2026-08-12	human
+*search_agent
+intro
+	search_agent	検索とデモ全体の案内を担当するよ。まずは「古いメモ」を探してみよう。			350		2026-08-12	human	"古いメモ
+ヒント
+機能テスト
+ヘルプ"
+common_help
+	search_agent	このナビでは、端末内検索、次の手順のヒント、デモ機能の起動をまとめて行えます。			250		2026-08-12	human	"ヒント
+機能テスト"
+stage_photo
+	search_agent	古いメモを開けたね。次は「雨」と検索して、表示された写真で一番大きな灯りの色を確かめて。			300		2026-08-12	human	"雨
+ヒント
+機能テスト
+ヘルプ"
+stage_report
+	search_agent	写真を開けたね。一番大きく見える灯りの色を、このナビに入力して教えて。			300		2026-08-12	human	"ヒント
+機能テスト
+ヘルプ"
+color_reported
+	search_agent	色を受け付けたよ。メッセージの「デモ連絡先」に、灯りが写った画像と鍵付き添付を届けました。			300		2026-08-12	human	"デモ連絡先
+ヒント
+機能テスト
+ヘルプ"
+stage_chat
+	search_agent	鍵付き添付を開けたね。次は「チャット」と検索して、壊れたアプリを修復して開いてみて。			300		2026-08-12	human	"チャット
+ヒント
+機能テスト
+ヘルプ"
+stage_auth
+	search_agent	チャットの再認証リンクを「デモ連絡先」へ届けました。メッセージからリンクを開いてね。			300		2026-08-12	human	"デモ連絡先
+ヒント
+機能テスト
+ヘルプ"
+stage_contact
+	search_agent	再認証できました。チャットの「サンプルルーム」でメッセージを送ってみて。			300		2026-08-12	human	"サンプルルーム
+ヒント
+機能テスト
+ヘルプ"
+stage_done
+	search_agent	検索、修復、添付解錠、チャット再認証、チャット投稿までの基本デモは完了です。「機能テスト」でほかの機能も試せます。			300		2026-08-12	human	"機能テスト
+ヘルプ"
+call_completed
+	search_agent	通話を終了しました。音声と書き起こしは着信履歴で確認でき、メッセージ内リンクも届いています。			300		2026-08-12	human	"書き起こし
+ヒント
+機能テスト
+ヘルプ"
+hint_first
+	search_agent	まずは「古いメモ」と検索して、コンテンツ修復を試してみて。			250		2026-08-12	human	"古いメモ
+機能テスト
+ヘルプ"
+hint_photo
+	search_agent	「雨」と検索して、表示された写真で一番大きく見える灯りの色を確かめて。			250		2026-08-12	human	"雨
+機能テスト
+ヘルプ"
+hint_report
+	search_agent	写真で一番大きく見えた灯りの色を、このナビに入力して教えて。			250		2026-08-12	human	"機能テスト
+ヘルプ"
+hint_unlock
+	search_agent	メッセージの「デモ連絡先」に届いた鍵付き添付を、パスワード「0420」で開いて。			250		2026-08-12	human	"デモ連絡先
+機能テスト
+ヘルプ"
+hint_chat
+	search_agent	「チャット」を検索して開き、再認証リンクを発行して。			250		2026-08-12	human	"チャット
+機能テスト
+ヘルプ"
+hint_auth
+	search_agent	「デモ連絡先」に届いた再認証リンクから、チャットを開いて。			250		2026-08-12	human	"デモ連絡先
+機能テスト
+ヘルプ"
+hint_contact
+	search_agent	再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。			250		2026-08-12	human	"サンプルルーム
+機能テスト
+ヘルプ"
+hint_done
+	search_agent	検索・修復・会話・添付解錠・再認証のデモは完了しています。			250		2026-08-12	human	"機能テスト
+ヘルプ"
+test_menu
+	search_agent	試したい機能を選んでね。メッセージ固有の送信確認は「デモ連絡先」から試せます。			250		2026-08-12	human	"デモ連絡先
+着信テスト
+遅延メッセージ
+画像受信テスト
+ノイズ演出
+フラッシュ演出
+暗転演出
+ゲームオーバー演出
+オールクリア演出
+ヒント
+ヘルプ"
+demo_test_ack
+	search_agent	「{{player_input}}」を実行しました。着信や通知を選んだ場合は、少し待ってから確認してください。			250		2026-08-12	human	"機能テスト
+ヒント
+ヘルプ"
+demo_test_already_done
+	search_agent	このテストはすでに完了しています。もう一度試す場合は、通知シェードの「最初から」を使ってください。			250		2026-08-12	human	"機能テスト
+ヒント
+ヘルプ"
+found
+	search_agent	見つかったよ。結果を開くと、次の案内へ進みます。			250		2026-08-12	human	"ヒント
+機能テスト
+ヘルプ"
+not_found
+	search_agent	該当するデータは見つかりませんでした。入力を確認するか、ヒントを使ってください。			250		2026-08-12	human	"ヒント
+機能テスト
+ヘルプ"

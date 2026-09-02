@@ -1,46 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
+import { collectClientImportGraph } from "./lib/client-import-graph.mjs";
 
 const root = process.cwd();
-const entry = path.join(root, "src/client/main.ts");
-const extensions = ["", ".ts", ".js", ".svelte", ".css"];
-const importPatterns = [
-  /(?:from\s+|import\s*\()\s*["']([^"']+)["']/gu,
-  /import\s+["']([^"']+)["']/gu
-];
-
-function resolveImport(fromFile, specifier) {
-  if (!specifier.startsWith(".")) return null;
-  const base = path.resolve(path.dirname(fromFile), specifier);
-  for (const suffix of extensions) {
-    const candidate = `${base}${suffix}`;
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-  }
-  for (const suffix of extensions.slice(1)) {
-    const candidate = path.join(base, `index${suffix}`);
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-  }
-  return null;
-}
-
-const reachable = new Set();
-const pending = [entry];
-const unresolved = [];
-while (pending.length) {
-  const file = pending.pop();
-  if (!file || reachable.has(file)) continue;
-  reachable.add(file);
-  const source = fs.readFileSync(file, "utf8");
-  for (const pattern of importPatterns) {
-    for (const match of source.matchAll(pattern)) {
-      if (!match[1].startsWith(".")) continue;
-      const resolved = resolveImport(file, match[1]);
-      if (resolved) pending.push(resolved);
-      else unresolved.push(`${path.relative(root, file)} -> ${match[1]}`);
-    }
-  }
-}
+const graph = collectClientImportGraph(root);
+const reachable = new Set(graph.files);
+const unresolved = graph.unresolved;
 
 const forbiddenImports = [...reachable]
   .map((file) => path.relative(root, file))
@@ -82,21 +48,43 @@ const publicSystemValues = new Set([
   "/system/call-caption-sample.wav",
   "/system/incoming-call-bell.wav"
 ]);
-const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed"]);
+const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed", "search_agent"]);
 const protectedValues = new Set([
+  ...scenario.worker.apps.flatMap((app) => stringLeaves({
+    label: app.label,
+    repairLabel: app.repairLabel,
+    search: app.search
+  })),
   ...scenario.worker.contents.flatMap((content) => stringLeaves({
     repairLabel: content.repairLabel,
     search: content.search,
     record: content.record
   })),
-  ...scenario.worker.talks.flatMap((talk) => stringLeaves({ label: talk.label })),
+  ...scenario.worker.talks.flatMap((talk) => stringLeaves({
+    label: talk.label,
+    repairLabel: talk.repairLabel,
+    search: talk.search,
+    avatarUrl: talk.avatarUrl,
+    rules: talk.rules.map((rule) => ({
+      intent: rule.intent,
+      criteria: rule.criteria,
+      match: rule.match,
+      example: rule.example,
+      notes: rule.notes,
+      searchQueries: rule.outputSteps
+        .filter((step) => step.kind === "search")
+        .map((step) => step.queryTemplate)
+    }))
+  })),
+  ...scenario.worker.talkPeople.flatMap((person) => stringLeaves({ name: person.name, avatar: person.avatar })),
   ...scenario.worker.talkBlocks.flatMap((block) => block.messages.flatMap((message) => stringLeaves(message))),
   ...scenario.worker.attachments.flatMap((attachment) => stringLeaves(attachment)),
   ...scenario.worker.incomingCalls.flatMap(stringLeaves),
+  ...scenario.worker.initialSchedules.flatMap((schedule) => stringLeaves(schedule.fields)),
+  ...scenario.worker.generatedAudio.flatMap(stringLeaves),
   ...scenario.worker.todos.flatMap(stringLeaves),
   ...scenario.worker.notifications.flatMap(stringLeaves),
-  ...scenario.worker.assistantMessages.flatMap(stringLeaves),
-  ...scenario.worker.searchResponses.flatMap(stringLeaves)
+  ...scenario.worker.assistantMessages.flatMap(stringLeaves)
 ].map((value) => value.trim()).filter((value) =>
   (value.startsWith("/") || value.length >= 10)
   && !publicInitialValues.has(value)

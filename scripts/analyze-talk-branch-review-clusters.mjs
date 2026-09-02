@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
+import { currentRuleIdForReviewEvent } from "./lib/review-cluster-rules.mjs";
 
 const values = new Map();
 const flags = new Set();
@@ -86,12 +87,17 @@ function ruleFor(group) {
 }
 
 function responsePreview(rule) {
-  return rule.nextBlocks.flatMap((blockId) => {
+  return rule.outputSteps.flatMap((step) => {
+    if (step.kind === "search") return [`SYSTEM: /search ${step.queryTemplate}`];
+    if (step.kind === "input") return [`SYSTEM: /input ${step.action}`];
+    const prefix = step.kind === "if" ? [`SYSTEM: [条件: ${step.cond}]`] : [];
+    const blockId = step.blockId;
     const block = scenario.worker.talkBlocks.find((item) => item.id === blockId);
-    return (block?.messages ?? []).map((message) => {
+    return [...prefix, ...(block?.messages ?? []).map((message) => {
       const person = scenario.worker.talkPeople.find((item) => item.id === message.sender);
-      return `${person?.name ?? message.sender}: ${message.body || "[attachment]"}`;
-    });
+      const quickReply = message.quickReplies?.length ? ` [Quick Reply: ${message.quickReplies.join(" / ")}]` : "";
+      return `${person?.name ?? message.sender}: ${message.body || "[attachment]"}${quickReply}`;
+    })];
   }).slice(0, 12);
 }
 
@@ -129,7 +135,7 @@ async function analyzeGroup(group, events, resolved) {
   const model = process.env.LLM_MODEL?.trim() ?? "";
   const llmBaseUrl = (process.env.LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/u, "");
   if (!apiKey || !model) throw new Error("LLM_API_KEY と LLM_MODEL を設定してください。");
-  const response = await fetch(`${llmBaseUrl}/chat/completions`, {
+  const requestInit = {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
@@ -191,13 +197,40 @@ async function analyzeGroup(group, events, resolved) {
       },
       max_completion_tokens: 4_096
     }),
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-  if (!response.ok) throw new Error(`LLM集計に失敗しました: HTTP ${response.status}`);
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("LLM応答にJSON本文がありません。");
-  return normalizeClusters(JSON.parse(content.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "")), events);
+  };
+  let lastError = "invalid_response";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`${llmBaseUrl}/chat/completions`, { ...requestInit, signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        if (attempt === 0 && (response.status === 408 || response.status === 429 || response.status >= 500)) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+        break;
+      }
+      const payload = await response.json();
+      const content = payload?.choices?.[0]?.message?.content;
+      if (typeof content !== "string") throw new Error("invalid_provider_response");
+      const parsed = JSON.parse(content.replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, ""));
+      return {
+        clusters: normalizeClusters(parsed, events),
+        usage: {
+          promptTokens: Number(payload?.usage?.prompt_tokens ?? 0),
+          completionTokens: Number(payload?.usage?.completion_tokens ?? 0),
+          totalTokens: Number(payload?.usage?.total_tokens ?? 0)
+        }
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
+    }
+  }
+  throw new Error(`LLM集計に失敗しました: ${lastError}`);
 }
 
 async function loadGroups() {
@@ -213,10 +246,11 @@ async function loadGroups() {
       }
       const grouped = new Map();
       for (const event of payload.events ?? []) {
-        if (onlyRule && event.ruleId !== onlyRule) continue;
+        const ruleId = currentRuleIdForReviewEvent(talk, fromId, event);
+        if (onlyRule && ruleId !== onlyRule) continue;
         const input = cleanText(event.userInput);
-        if (!event.id || !event.ruleId || !input) continue;
-        grouped.set(event.ruleId, [...(grouped.get(event.ruleId) ?? []), { id: event.id, input }]);
+        if (!event.id || !ruleId || !input) continue;
+        grouped.set(ruleId, [...(grouped.get(ruleId) ?? []), { id: event.id, input }]);
       }
       for (const [ruleId, events] of grouped) {
         groups.push({ talkId: talk.id, fromId, ruleId, events: events.slice(0, limitEvents) });
@@ -265,6 +299,7 @@ if (applyFile) {
       scenarioRevision: scenario.worker.revision,
       analysisVersion,
       generatedAt: new Date().toISOString(),
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       groups: []
     };
     for (const [index, group] of groups.entries()) {
@@ -274,12 +309,15 @@ if (applyFile) {
         continue;
       }
       console.log(`[${index + 1}/${groups.length}] ${resolved.talk.label} / ${resolved.rule.intent || "default"} (${group.events.length})`);
-      const clusters = await analyzeGroup(group, group.events, resolved);
+      const analyzed = await analyzeGroup(group, group.events, resolved);
+      analysis.usage.promptTokens += analyzed.usage.promptTokens;
+      analysis.usage.completionTokens += analyzed.usage.completionTokens;
+      analysis.usage.totalTokens += analyzed.usage.totalTokens;
       analysis.groups.push({
         talkId: group.talkId,
         fromId: group.fromId,
         actualRuleId: group.ruleId,
-        clusters: clusters.map((cluster) => ({
+        clusters: analyzed.clusters.map((cluster) => ({
           id: stableClusterId([
             scenario.worker.revision,
             group.talkId,
@@ -295,6 +333,7 @@ if (applyFile) {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, `${JSON.stringify(analysis, null, 2)}\n`);
     console.log(`${analysis.groups.length}グループの集計JSONを保存しました: ${outputPath}`);
+    console.log(`LLM usage: prompt=${analysis.usage.promptTokens} completion=${analysis.usage.completionTokens} total=${analysis.usage.totalTokens}`);
     if (apply) {
       await applyAnalysis(analysis);
       console.log("集計結果を監修APIへ反映しました。");

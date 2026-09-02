@@ -8,7 +8,7 @@ type AnalyticsEvent =
   | { name: "logout"; source: "url_suffix" }
   | { name: "unlock_device" };
 
-type ClientErrorKind = "mount_error" | "unhandled_rejection" | "window_error";
+type ClientErrorKind = "mount_error" | "storage_error" | "unhandled_rejection" | "window_error";
 type ClientErrorInput = {
   kind: ClientErrorKind;
   reason: unknown;

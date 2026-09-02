@@ -90,6 +90,8 @@ export LLM_REASONING_EFFORT='low'              # 任意
 npm run deploy:aws:prod
 ```
 
+hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。
+
 GA4による任意の計測を使う場合だけ、デプロイ実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 
 ## 更新とロールバック

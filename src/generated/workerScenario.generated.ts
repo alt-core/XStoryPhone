@@ -2,7 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "0b05d677351862db",
+  "revision": "b422fcbbbfb2ffe1",
+  "clientRevision": "client_5e64ba7afece00b4",
+  "transcriptRevision": "transcript_50598f46b788a832",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -30,7 +32,8 @@ export const workerScenario: WorkerScenario = {
         "電話",
         "着信"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "messages",
@@ -39,10 +42,10 @@ export const workerScenario: WorkerScenario = {
       "accent": "#5cc8a7",
       "initialState": "normal",
       "search": [
-        "メッセージ",
-        "デモ進行係"
+        "メッセージ"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "mail",
@@ -54,7 +57,8 @@ export const workerScenario: WorkerScenario = {
         "メール",
         "電子メール"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "notes",
@@ -63,10 +67,11 @@ export const workerScenario: WorkerScenario = {
       "accent": "#8fd2ff",
       "initialState": "normal",
       "search": [
-        "メモ",
-        "ノート"
+        "メモアプリ",
+        "ノートアプリ"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "photos",
@@ -78,7 +83,8 @@ export const workerScenario: WorkerScenario = {
         "アルバム",
         "写真"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "calendar",
@@ -90,7 +96,8 @@ export const workerScenario: WorkerScenario = {
         "予定",
         "スケジュール"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "radio",
@@ -102,7 +109,8 @@ export const workerScenario: WorkerScenario = {
         "ラジオ",
         "放送"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "browser",
@@ -115,7 +123,8 @@ export const workerScenario: WorkerScenario = {
         "タブ",
         "Web"
       ],
-      "cond": ""
+      "cond": "",
+      "badgeCond": ""
     },
     {
       "id": "chat",
@@ -129,19 +138,25 @@ export const workerScenario: WorkerScenario = {
         "チャット",
         "ロビー",
         "掲示板"
-      ]
+      ],
+      "badgeCond": ""
     }
+  ],
+  "projectAppIds": [
+    "case_files"
   ],
   "features": {
     "llm": false
   },
   "stateVariables": {
     "image_color_reported": false,
+    "clue_attachments_pending": false,
     "old_note_opened": false,
     "rainy_window_opened": false,
     "chat_auth_link_sent": false,
     "chat_auth_verified": false,
     "demo_completed": false,
+    "demo_completion_announced": false,
     "demo_call_completed": false,
     "demo_chat_cross_received": false,
     "demo_chat_message_received": false,
@@ -159,6 +174,9 @@ export const workerScenario: WorkerScenario = {
     "image_color_reported": {
       "type": "boolean"
     },
+    "clue_attachments_pending": {
+      "type": "boolean"
+    },
     "old_note_opened": {
       "type": "boolean"
     },
@@ -172,6 +190,9 @@ export const workerScenario: WorkerScenario = {
       "type": "boolean"
     },
     "demo_completed": {
+      "type": "boolean"
+    },
+    "demo_completion_announced": {
       "type": "boolean"
     },
     "demo_call_completed": {
@@ -214,12 +235,45 @@ export const workerScenario: WorkerScenario = {
   "publicStateVariables": [],
   "photoDescriptions": {
     "evening_platform": "夕暮れの駅のホーム。黄色い点字ブロックと遠くの列車が写っている。",
-    "rainy_window": "雨粒の付いた窓越しに夜景が見え、中央付近の黄色い灯りが最も大きく写っている。",
+    "rainy_window": "雨粒の付いた窓越しに夜景が見え、右下寄りの青い灯りが最も大きく写っている。",
     "coffee_table": "コーヒーカップと開いたノートが木製の机に置かれている。",
     "demo_received_image": "メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。",
     "demo_video": "プログラムで生成したカラーバーが動くデモ動画。"
   },
   "contents": [
+    {
+      "id": "demo_call_history",
+      "appId": "phone",
+      "initialState": "normal",
+      "cond": "demo_call_completed",
+      "search": [
+        "電話",
+        "着信",
+        "書き起こし"
+      ],
+      "record": {
+        "name": "着信テスト",
+        "kind": "incoming",
+        "at": "20:16",
+        "durationLabel": "6秒",
+        "audioUrl": "/system/call-caption-sample.wav",
+        "transcript": [
+          {
+            "atMs": 0,
+            "text": "［低い確認音］"
+          },
+          {
+            "atMs": 2000,
+            "text": "［中くらいの確認音］"
+          },
+          {
+            "atMs": 4000,
+            "text": "［高い確認音］"
+          }
+        ]
+      },
+      "publicId": "c_8a5f7f91ea5b"
+    },
     {
       "id": "missed_call",
       "appId": "phone",
@@ -237,6 +291,39 @@ export const workerScenario: WorkerScenario = {
       },
       "cond": "",
       "publicId": "c_0376fabddf4f"
+    },
+    {
+      "id": "demo_voicemail",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": [
+        "留守番電話",
+        "留守電",
+        "ボイスメール"
+      ],
+      "record": {
+        "name": "案内係",
+        "kind": "voicemail",
+        "at": "19:48",
+        "durationLabel": "6秒",
+        "audioUrl": "/system/call-caption-sample.wav",
+        "transcript": [
+          {
+            "atMs": 0,
+            "text": "留守番電話の再生確認です。"
+          },
+          {
+            "atMs": 2000,
+            "text": "書き起こしは時刻を付けずに表示します。"
+          },
+          {
+            "atMs": 4000,
+            "text": "最後までスクロールして確認できます。"
+          }
+        ]
+      },
+      "cond": "",
+      "publicId": "c_1587119bb83d"
     },
     {
       "id": "dummy_call_1",
@@ -333,39 +420,6 @@ export const workerScenario: WorkerScenario = {
       },
       "cond": "",
       "publicId": "c_07c948744931"
-    },
-    {
-      "id": "demo_call_history",
-      "appId": "phone",
-      "initialState": "normal",
-      "cond": "demo_call_completed",
-      "search": [
-        "電話",
-        "着信",
-        "書き起こし"
-      ],
-      "record": {
-        "name": "着信テスト",
-        "kind": "incoming",
-        "at": "20:16",
-        "durationLabel": "6秒",
-        "audioUrl": "/system/call-caption-sample.wav",
-        "transcript": [
-          {
-            "atMs": 0,
-            "text": "［低い確認音］"
-          },
-          {
-            "atMs": 2000,
-            "text": "［中くらいの確認音］"
-          },
-          {
-            "atMs": 4000,
-            "text": "［高い確認音］"
-          }
-        ]
-      },
-      "publicId": "c_8a5f7f91ea5b"
     },
     {
       "id": "mail_guide",
@@ -555,7 +609,7 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "機能テスト一覧",
-        "body": "ナビで「消えた連絡記録」と検索すると、メッセージ内の破損した初期履歴を修復できます。\n\nメッセージの「デモ進行係」へ、次の語を1つずつ送信できます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・メッセージ連携：別のメッセージルームへ届きます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャット復旧後は、ナビで「消えた談話記録」と検索するとチャット内の破損履歴を修復できます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\n各受信では通知も表示されます。繰り返す場合は通知シェードのテスト用リセットを使ってください。",
+        "body": "ナビで「機能テスト」と入力するか、Quick Replyの「機能テスト」を選ぶと、次の操作を選べます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・ノイズ演出：端末全体にノイズを表示します。\n・フラッシュ演出：端末全体を白く光らせます。\n・暗転演出：端末全体を一時的に暗転します。\n・ゲームオーバー演出：ゲームオーバー画面を表示します。\n・オールクリア演出：オールクリア画面の後、ラジオへ移動します。\n\nメッセージの「デモ連絡先」では、何か送信すると連携先を選ぶQuick Replyが表示されます。\n・別ルームへ送る：別のメッセージルームへ届きます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\nナビで「消えた連絡記録」または「消えた談話記録」と検索すると、会話内の破損した初期履歴を修復できます。各受信では通知も表示されます。繰り返す場合は通知シェードの「最初から」を使ってください。",
         "tags": [
           "案内",
           "機能テスト"
@@ -571,12 +625,11 @@ export const workerScenario: WorkerScenario = {
       "repairLabel": "古▚▐▀▜メモ",
       "search": [
         "古いメモ",
-        "ふるいメモ",
-        "手がかり"
+        "ふるいメモ"
       ],
       "record": {
         "title": "古いメモ",
-        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでデモ進行係にその色を伝えてください。",
+        "body": "次は画像を探します。ナビで「雨」と検索し、表示された画像で一番大きく見える灯りの色を確認してください。色が分かったら、そのままナビに色を伝えてください。",
         "tags": [
           "操作",
           "画像"
@@ -740,8 +793,7 @@ export const workerScenario: WorkerScenario = {
         "imageUrl": "/demo/album/rainy-window.webp",
         "tags": [
           "雨",
-          "窓",
-          "黄色い灯り"
+          "窓"
         ]
       },
       "cond": "",
@@ -1287,116 +1339,90 @@ export const workerScenario: WorkerScenario = {
       "id": "guide",
       "kind": "sms",
       "appId": "messages",
-      "label": "デモ進行係",
+      "label": "デモ連絡先",
+      "search": [
+        "デモ連絡先",
+        "連絡先"
+      ],
       "startBlocks": [
         "guide::history_archive_a",
         "guide::history_archive_b",
         "guide::intro"
       ],
+      "initialState": "normal",
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_17f5f84e4690",
       "initialFrom": "guide::intro",
       "rules": [
         {
-          "id": "rule_f7d1b77b1649",
+          "id": "rule_f23f04fc5263",
           "order": 2,
           "from": "*",
           "isDefault": false,
-          "cond": "",
-          "intent": "ヘルプ",
-          "criteria": "/^(?:help|ヘルプ)$/i",
+          "cond": "!chat_auth_verified",
+          "intent": "チャット未認証",
+          "criteria": "/^チャットへ送る$/u",
           "match": "",
-          "nextBlocks": [
-            "guide::common_help"
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "guide::chat_auth_required"
+            }
           ],
+          "nextBlocks": [
+            "guide::chat_auth_required"
+          ],
+          "nextFromId": "guide::chat_auth_required",
           "set": [],
           "mode": "stay",
-          "notes": "どの状態からでも利用できる共通分岐",
-          "example": "ヘルプ"
+          "notes": "未認証時は案内だけを返し、hookで会話位置を変更しない",
+          "example": "チャットへ送る"
         },
         {
-          "id": "rule_a318c17a8872",
+          "id": "rule_169b8f2c5204",
           "order": 3,
           "from": "*",
           "isDefault": false,
           "cond": "",
-          "intent": "機能テスト",
-          "criteria": "/^(?:着信テスト|遅延メッセージ|メッセージ連携|画像受信テスト|チャットへ送る)$/u",
+          "intent": "メッセージ機能テスト",
+          "criteria": "/^(?:メッセージ連携|別ルームへ送る|チャットへ送る)$/u",
           "match": "",
-          "nextBlocks": [
-            "guide::demo_test_ack"
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "guide::message_test_ack"
+            }
           ],
+          "nextBlocks": [
+            "guide::message_test_ack"
+          ],
+          "nextFromId": "guide::message_test_ack",
           "set": [],
           "mode": "stay",
-          "notes": "機能テスト一覧メモに記載したデモコマンド",
-          "example": "着信テスト"
+          "notes": "メッセージアプリから別ルーム・別アプリへ送る確認",
+          "example": "別ルームへ送る"
         },
         {
-          "id": "rule_184660bf437e",
+          "id": "rule_938bcab612e1",
           "order": 4,
           "from": "guide::intro",
-          "isDefault": false,
-          "cond": "rainy_window_opened",
-          "intent": "灯りの色を報告",
-          "criteria": "/(?:黄色?|きいろ|オレンジ(?:色)?|橙色)/u",
-          "match": "",
-          "nextBlocks": [
-            "guide::found_lead",
-            "guide::found_done"
-          ],
-          "set": [
-            "image_color_reported=true"
-          ],
-          "mode": "",
-          "notes": "正規表現だけで選択するデモ",
-          "example": "黄色です"
-        },
-        {
-          "id": "rule_73d2fd5c4c48",
-          "order": 5,
-          "from": "guide::intro",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
-          "nextBlocks": [
-            "guide::intro_prompt"
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "guide::message_reply"
+            }
           ],
-          "set": [],
-          "mode": "stay",
-          "notes": "",
-          "example": ""
-        },
-        {
-          "id": "rule_f341ac3b908a",
-          "order": 6,
-          "from": "guide::found_done",
-          "isDefault": false,
-          "cond": "",
-          "intent": "ゲームオーバー確認",
-          "criteria": "/^終了$/u",
-          "match": "",
           "nextBlocks": [
-            "guide::game_over_reply"
+            "guide::message_reply"
           ],
-          "set": [],
-          "mode": "game_over",
-          "notes": "ゲームオーバーUIのデモ",
-          "example": "終了"
-        },
-        {
-          "id": "rule_02c16a67d489",
-          "order": 7,
-          "from": "guide::found_done",
-          "isDefault": true,
-          "cond": "",
-          "intent": "",
-          "criteria": "",
-          "match": "",
-          "nextBlocks": [
-            "guide::done_repeat"
-          ],
+          "nextFromId": "guide::message_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1412,25 +1438,108 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "sms_receiver::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_b18a7456e416",
       "initialFrom": "sms_receiver::start",
       "rules": [
         {
-          "id": "rule_237901ed34bc",
-          "order": 11,
+          "id": "rule_0d64a08edaa9",
+          "order": 8,
           "from": "sms_receiver::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_receiver::receiver_reply"
+            }
+          ],
           "nextBlocks": [
             "sms_receiver::receiver_reply"
           ],
+          "nextFromId": "sms_receiver::receiver_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
+          "example": ""
+        },
+        {
+          "id": "rule_09b306faf4a1",
+          "order": 9,
+          "from": "sms_receiver::received_from_sms",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "sms_receiver::receiver_reply"
+          ],
+          "nextFromId": "sms_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
+          "example": ""
+        },
+        {
+          "id": "rule_51c25d17ec16",
+          "order": 10,
+          "from": "sms_receiver::received_from_chat",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "sms_receiver::receiver_reply"
+          ],
+          "nextFromId": "sms_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
+          "example": ""
+        },
+        {
+          "id": "rule_91b66ef24ec2",
+          "order": 11,
+          "from": "sms_receiver::received_delayed",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "sms_receiver::receiver_reply"
+          ],
+          "nextFromId": "sms_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
       ]
@@ -1443,7 +1552,11 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "sms_media_receiver::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_ef9cabd43865",
       "initialFrom": "sms_media_receiver::start",
       "rules": [
@@ -1456,12 +1569,43 @@ export const workerScenario: WorkerScenario = {
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_media_receiver::receiver_reply"
+            }
+          ],
           "nextBlocks": [
             "sms_media_receiver::receiver_reply"
           ],
+          "nextFromId": "sms_media_receiver::receiver_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
+          "example": ""
+        },
+        {
+          "id": "rule_99ba415ef46d",
+          "order": 13,
+          "from": "sms_media_receiver::received_image",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "sms_media_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "sms_media_receiver::receiver_reply"
+          ],
+          "nextFromId": "sms_media_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
       ]
@@ -1474,22 +1618,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_1::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_bc14bdf75f7e",
       "initialFrom": "dummy_sms_1::start",
       "rules": [
         {
-          "id": "rule_a80663878781",
-          "order": 13,
+          "id": "rule_ec68c7f61eb1",
+          "order": 14,
           "from": "dummy_sms_1::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_1::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_1::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_1::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1505,22 +1660,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_2::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_17983c9a39f9",
       "initialFrom": "dummy_sms_2::start",
       "rules": [
         {
-          "id": "rule_b8cb9fb39202",
-          "order": 14,
+          "id": "rule_7f048bbd7de1",
+          "order": 15,
           "from": "dummy_sms_2::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_2::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_2::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_2::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1536,22 +1702,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_3::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_040dd4088ff1",
       "initialFrom": "dummy_sms_3::start",
       "rules": [
         {
-          "id": "rule_1ddece233155",
-          "order": 15,
+          "id": "rule_f7ac7e436cc1",
+          "order": 16,
           "from": "dummy_sms_3::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_3::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_3::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_3::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1567,22 +1744,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_4::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_6f99c15839d9",
       "initialFrom": "dummy_sms_4::start",
       "rules": [
         {
-          "id": "rule_a40c4f495233",
-          "order": 16,
+          "id": "rule_f1480437f693",
+          "order": 17,
           "from": "dummy_sms_4::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_4::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_4::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_4::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1598,22 +1786,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_5::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_f5c8125fca30",
       "initialFrom": "dummy_sms_5::start",
       "rules": [
         {
-          "id": "rule_2f626b91363b",
-          "order": 17,
+          "id": "rule_207f0a1b02a9",
+          "order": 18,
           "from": "dummy_sms_5::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_5::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_5::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_5::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1629,22 +1828,33 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_sms_6::start"
       ],
+      "initialState": "normal",
+      "search": [],
       "cond": "",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_59219841f338",
       "initialFrom": "dummy_sms_6::start",
       "rules": [
         {
-          "id": "rule_e5787377e1f5",
-          "order": 18,
+          "id": "rule_ebda605909ea",
+          "order": 19,
           "from": "dummy_sms_6::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_sms_6::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_sms_6::dummy_reply"
           ],
+          "nextFromId": "dummy_sms_6::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1658,25 +1868,38 @@ export const workerScenario: WorkerScenario = {
       "appId": "chat",
       "label": "サンプルルーム",
       "cond": "sealed_note_unlocked",
+      "search": [
+        "サンプルルーム"
+      ],
       "startBlocks": [
         "lobby::history_archive",
         "lobby::start"
       ],
+      "initialState": "normal",
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_384f82df1ef6",
       "initialFrom": "lobby::start",
       "rules": [
         {
-          "id": "rule_be1508bf5141",
-          "order": 8,
+          "id": "rule_37e46d672586",
+          "order": 5,
           "from": "lobby::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "lobby::lobby_reply"
+            }
+          ],
           "nextBlocks": [
             "lobby::lobby_reply"
           ],
+          "nextFromId": "lobby::lobby_reply",
           "set": [
             "demo_completed=true"
           ],
@@ -1685,34 +1908,48 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_b6d5fa01fb78",
-          "order": 9,
+          "id": "rule_49e008c1cc70",
+          "order": 6,
           "from": "*",
           "isDefault": false,
           "cond": "",
           "intent": "機能テスト",
           "criteria": "/^(?:チャット連携|メッセージへ送る)$/u",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "lobby::chat_test_ack"
+            }
+          ],
           "nextBlocks": [
             "lobby::chat_test_ack"
           ],
+          "nextFromId": "lobby::chat_test_ack",
           "set": [],
           "mode": "stay",
           "notes": "別ルーム・別アプリへの連携確認",
           "example": "チャット連携"
         },
         {
-          "id": "rule_21a4e7fdd0fa",
-          "order": 10,
+          "id": "rule_e8e6db4e7850",
+          "order": 7,
           "from": "lobby::lobby_reply",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "lobby::lobby_done"
+            }
+          ],
           "nextBlocks": [
             "lobby::lobby_done"
           ],
+          "nextFromId": "lobby::lobby_done",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1729,24 +1966,83 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "chat_receiver::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_b873fa6b67cf",
       "initialFrom": "chat_receiver::start",
       "rules": [
         {
-          "id": "rule_7ebccba32abf",
-          "order": 19,
+          "id": "rule_d000c37025e0",
+          "order": 20,
           "from": "chat_receiver::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "chat_receiver::receiver_reply"
+            }
+          ],
           "nextBlocks": [
             "chat_receiver::receiver_reply"
           ],
+          "nextFromId": "chat_receiver::receiver_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
+          "example": ""
+        },
+        {
+          "id": "rule_7b7a3313a9c2",
+          "order": 21,
+          "from": "chat_receiver::received_from_sms",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "chat_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "chat_receiver::receiver_reply"
+          ],
+          "nextFromId": "chat_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
+          "example": ""
+        },
+        {
+          "id": "rule_c1cd0a82cd30",
+          "order": 22,
+          "from": "chat_receiver::received_from_chat",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "chat_receiver::receiver_reply"
+            }
+          ],
+          "nextBlocks": [
+            "chat_receiver::receiver_reply"
+          ],
+          "nextFromId": "chat_receiver::receiver_reply",
+          "set": [],
+          "mode": "stay",
+          "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
       ]
@@ -1760,21 +2056,32 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_1::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_4aff5248b7f8",
       "initialFrom": "dummy_chat_1::start",
       "rules": [
         {
-          "id": "rule_f125a18fa8cc",
-          "order": 20,
+          "id": "rule_067622548207",
+          "order": 23,
           "from": "dummy_chat_1::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_1::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_1::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_1::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1791,21 +2098,32 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_2::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_31942c9c962d",
       "initialFrom": "dummy_chat_2::start",
       "rules": [
         {
-          "id": "rule_0f6379aa4d1d",
-          "order": 21,
+          "id": "rule_20a8ba05c3a2",
+          "order": 24,
           "from": "dummy_chat_2::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_2::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_2::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_2::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1822,21 +2140,32 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_3::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_73a75e3d8faa",
       "initialFrom": "dummy_chat_3::start",
       "rules": [
         {
-          "id": "rule_888b6d9d255d",
-          "order": 22,
+          "id": "rule_ff3912863306",
+          "order": 25,
           "from": "dummy_chat_3::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_3::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_3::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_3::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1853,21 +2182,32 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_4::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_0e6f206f66af",
       "initialFrom": "dummy_chat_4::start",
       "rules": [
         {
-          "id": "rule_c52912399473",
-          "order": 23,
+          "id": "rule_c077ebb93190",
+          "order": 26,
           "from": "dummy_chat_4::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_4::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_4::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_4::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1884,21 +2224,32 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_5::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_0a2e442c9bb6",
       "initialFrom": "dummy_chat_5::start",
       "rules": [
         {
-          "id": "rule_644607510e59",
-          "order": 24,
+          "id": "rule_4fdb03abf855",
+          "order": 27,
           "from": "dummy_chat_5::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_5::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_5::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_5::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
@@ -1915,25 +2266,459 @@ export const workerScenario: WorkerScenario = {
       "startBlocks": [
         "dummy_chat_6::start"
       ],
+      "initialState": "normal",
+      "search": [],
+      "inputVisible": true,
+      "inputEnabled": true,
       "publicId": "t_cb0b2cb99f03",
       "initialFrom": "dummy_chat_6::start",
       "rules": [
         {
-          "id": "rule_061aee9468ed",
-          "order": 25,
+          "id": "rule_addbb7946598",
+          "order": 28,
           "from": "dummy_chat_6::start",
           "isDefault": true,
           "cond": "",
           "intent": "",
           "criteria": "",
           "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "dummy_chat_6::dummy_reply"
+            }
+          ],
           "nextBlocks": [
             "dummy_chat_6::dummy_reply"
           ],
+          "nextFromId": "dummy_chat_6::dummy_reply",
           "set": [],
           "mode": "stay",
           "notes": "",
           "example": ""
+        }
+      ]
+    },
+    {
+      "id": "search_agent",
+      "publicId": "t_0ed8a2c8a5f6",
+      "kind": "search_agent",
+      "label": "ナビ",
+      "inputVisible": true,
+      "inputEnabled": true,
+      "startSteps": [
+        {
+          "kind": "input",
+          "action": "hide"
+        },
+        {
+          "kind": "block",
+          "blockId": "search_agent::intro"
+        },
+        {
+          "kind": "input",
+          "action": "show"
+        }
+      ],
+      "initialFrom": "search_agent::intro",
+      "rules": [
+        {
+          "id": "rule_c45749202a98",
+          "order": 29,
+          "from": "*",
+          "isDefault": false,
+          "cond": "",
+          "intent": "ヘルプ",
+          "criteria": "/^(?:help|ヘルプ)$/i",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::common_help"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::common_help"
+          ],
+          "nextFromId": "search_agent::common_help",
+          "set": [],
+          "mode": "stay",
+          "notes": "検索ナビの役割を案内する共通分岐",
+          "example": "ヘルプ"
+        },
+        {
+          "id": "rule_2e6919147486",
+          "order": 30,
+          "from": "*",
+          "isDefault": false,
+          "cond": "old_note_opened && !image_color_reported",
+          "intent": "灯りの色を報告",
+          "criteria": "/(?:青|あお|水色|みずいろ|ブルー|シアン|黄色?|きいろ|オレンジ(?:色)?|橙色)/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::color_reported"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::color_reported"
+          ],
+          "nextFromId": "search_agent::color_reported",
+          "set": [
+            "image_color_reported=true",
+            "clue_attachments_pending=true"
+          ],
+          "mode": "stay",
+          "notes": "検索結果の画像だけで色を判断した場合も受け付け、同じturnのhookでSMS添付を配送する",
+          "example": "黄色です"
+        },
+        {
+          "id": "rule_f8f598b6cb9b",
+          "order": 31,
+          "from": "*",
+          "isDefault": false,
+          "cond": "",
+          "intent": "機能テスト一覧",
+          "criteria": "/^(?:機能テスト|テストメニュー)$/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::test_menu"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::test_menu"
+          ],
+          "nextFromId": "search_agent::test_menu",
+          "set": [],
+          "mode": "stay",
+          "notes": "Quick Replyから汎用機能テストを選ぶ",
+          "example": "機能テスト"
+        },
+        {
+          "id": "rule_fcac3fe08630",
+          "order": 32,
+          "from": "*",
+          "isDefault": false,
+          "cond": "demo_call_completed",
+          "intent": "完了済み着信テスト",
+          "criteria": "/^着信テスト$/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::demo_test_already_done"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::demo_test_already_done"
+          ],
+          "nextFromId": "search_agent::demo_test_already_done",
+          "set": [],
+          "mode": "stay",
+          "notes": "一度限りの機能テストは成功文を出す前に判定する",
+          "example": "着信テスト"
+        },
+        {
+          "id": "rule_40d1466e50a0",
+          "order": 33,
+          "from": "*",
+          "isDefault": false,
+          "cond": "demo_delayed_message_received",
+          "intent": "完了済み遅延メッセージ",
+          "criteria": "/^遅延メッセージ$/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::demo_test_already_done"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::demo_test_already_done"
+          ],
+          "nextFromId": "search_agent::demo_test_already_done",
+          "set": [],
+          "mode": "stay",
+          "notes": "一度限りの機能テストは成功文を出す前に判定する",
+          "example": "遅延メッセージ"
+        },
+        {
+          "id": "rule_39f47d8b58b0",
+          "order": 34,
+          "from": "*",
+          "isDefault": false,
+          "cond": "demo_image_received",
+          "intent": "完了済み画像受信テスト",
+          "criteria": "/^画像受信テスト$/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::demo_test_already_done"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::demo_test_already_done"
+          ],
+          "nextFromId": "search_agent::demo_test_already_done",
+          "set": [],
+          "mode": "stay",
+          "notes": "一度限りの機能テストは成功文を出す前に判定する",
+          "example": "画像受信テスト"
+        },
+        {
+          "id": "rule_24b9af4214cc",
+          "order": 35,
+          "from": "*",
+          "isDefault": false,
+          "cond": "",
+          "intent": "機能テスト",
+          "criteria": "/^(?:着信テスト|遅延メッセージ|画像受信テスト|ノイズ演出|フラッシュ演出|暗転演出|ゲームオーバー演出|オールクリア演出)$/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::demo_test_ack"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::demo_test_ack"
+          ],
+          "nextFromId": "search_agent::demo_test_ack",
+          "set": [],
+          "mode": "stay",
+          "notes": "検索ナビへ集約した汎用機能テスト",
+          "example": "着信テスト"
+        },
+        {
+          "id": "rule_22ee29ed7b31",
+          "order": 36,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "!old_note_opened",
+          "intent": "最初のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_first"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_first"
+          ],
+          "nextFromId": "search_agent::hint_first",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_cd5bb4f698a9",
+          "order": 37,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "old_note_opened && !rainy_window_opened && !image_color_reported",
+          "intent": "写真のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_photo"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_photo"
+          ],
+          "nextFromId": "search_agent::hint_photo",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_10bbcede3d1c",
+          "order": 38,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "rainy_window_opened && !image_color_reported",
+          "intent": "報告のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_report"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_report"
+          ],
+          "nextFromId": "search_agent::hint_report",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_886128f5e9b5",
+          "order": 39,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "image_color_reported && !sealed_note_unlocked",
+          "intent": "添付解錠のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_unlock"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_unlock"
+          ],
+          "nextFromId": "search_agent::hint_unlock",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_a7daca26b7da",
+          "order": 40,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "sealed_note_unlocked && !chat_auth_link_sent",
+          "intent": "チャットのヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_chat"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_chat"
+          ],
+          "nextFromId": "search_agent::hint_chat",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_9ba1e05ce0fa",
+          "order": 41,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "chat_auth_link_sent && !chat_auth_verified",
+          "intent": "再認証のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_auth"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_auth"
+          ],
+          "nextFromId": "search_agent::hint_auth",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_6b6f6fce58b8",
+          "order": 42,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "chat_auth_verified && !demo_completed",
+          "intent": "チャット投稿のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_contact"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_contact"
+          ],
+          "nextFromId": "search_agent::hint_contact",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_5c8e16fa9f09",
+          "order": 43,
+          "from": "search_agent::intro",
+          "isDefault": false,
+          "cond": "demo_completed",
+          "intent": "完了後のヒント",
+          "criteria": "/ヒント/u",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "block",
+              "blockId": "search_agent::hint_done"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::hint_done"
+          ],
+          "nextFromId": "search_agent::hint_done",
+          "set": [],
+          "mode": "stay",
+          "notes": "結果を出さず案内だけを返す",
+          "example": "ヒント"
+        },
+        {
+          "id": "rule_1aaf19953a40",
+          "order": 44,
+          "from": "search_agent::intro",
+          "isDefault": true,
+          "cond": "",
+          "intent": "",
+          "criteria": "入力された言葉で端末内のデータを検索する。",
+          "match": "",
+          "outputSteps": [
+            {
+              "kind": "search",
+              "queryTemplate": "{{player_input}}"
+            },
+            {
+              "kind": "if",
+              "cond": "search_found",
+              "blockId": "search_agent::found"
+            },
+            {
+              "kind": "if",
+              "cond": "!search_found",
+              "blockId": "search_agent::not_found"
+            }
+          ],
+          "nextBlocks": [
+            "search_agent::found",
+            "search_agent::not_found"
+          ],
+          "nextFromId": "",
+          "set": [],
+          "mode": "stay",
+          "notes": "/searchは一度だけ事前評価し、結果の後に復帰メニューを表示する",
+          "example": "古いメモ"
         }
       ]
     }
@@ -1946,12 +2731,17 @@ export const workerScenario: WorkerScenario = {
     },
     {
       "id": "guide",
-      "name": "デモ進行係",
+      "name": "デモ連絡先",
       "role": "npc"
     },
     {
       "id": "visitor",
       "name": "デモ参加者",
+      "role": "npc"
+    },
+    {
+      "id": "search_agent",
+      "name": "ナビ",
       "role": "npc"
     }
   ],
@@ -2007,8 +2797,8 @@ export const workerScenario: WorkerScenario = {
       "messages": [
         {
           "id": "guide::intro_1",
-          "sender": "guide",
-          "body": "XStoryPhoneの基本操作を順に試します。まず右下のナビで「古いメモ」と検索してください。",
+          "sender": "owner",
+          "body": "メッセージアプリ固有の送受信、添付、リンク、未読を確認するための連絡先です。何か送信すると、連携先を選ぶQuick Replyが表示されます。",
           "attachmentId": "",
           "sentAt": "20:14",
           "notes": "",
@@ -2018,17 +2808,21 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::intro_prompt",
+      "id": "guide::message_reply",
       "talkId": "guide",
-      "blockKey": "intro_prompt",
+      "blockKey": "message_reply",
       "messages": [
         {
-          "id": "guide::intro_prompt_1",
+          "id": "guide::message_reply_1",
           "sender": "guide",
-          "body": "今することはホームのToDoに表示しているよ。分からなければ、ナビで「ヒント」と検索してみて。",
+          "body": "メッセージの送受信を確認できました。",
           "attachmentId": "",
           "sentAt": "",
-          "delayMs": 650,
+          "delayMs": 350,
+          "quickReplies": [
+            "別ルームへ送る",
+            "チャットへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2036,19 +2830,23 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::intro_prompt@2",
+      "id": "guide::message_reply@2",
       "talkId": "guide",
-      "blockKey": "intro_prompt@2",
-      "repeatOf": "guide::intro_prompt",
+      "blockKey": "message_reply@2",
+      "repeatOf": "guide::message_reply",
       "repeatIndex": 2,
       "messages": [
         {
-          "id": "guide::intro_prompt@2_1",
+          "id": "guide::message_reply@2_1",
           "sender": "guide",
-          "body": "検索、修復、会話、添付解錠、チャット再認証を順番に確認できます。",
+          "body": "追加のメッセージも受け取りました。",
           "attachmentId": "",
           "sentAt": "",
-          "delayMs": 650,
+          "delayMs": 350,
+          "quickReplies": [
+            "別ルームへ送る",
+            "チャットへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2056,17 +2854,21 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::common_help",
+      "id": "guide::message_test_ack",
       "talkId": "guide",
-      "blockKey": "common_help",
+      "blockKey": "message_test_ack",
       "messages": [
         {
-          "id": "guide::common_help_1",
+          "id": "guide::message_test_ack_1",
           "sender": "guide",
-          "body": "ホームのToDoを確認してみて。分からなければ、ナビで「ヒント」と検索すると次の手順を確認できるよ。",
+          "body": "送信を受け付けました。別ルームまたはチャットの通知を確認してください。",
           "attachmentId": "",
           "sentAt": "",
-          "delayMs": 500,
+          "delayMs": 350,
+          "quickReplies": [
+            "別ルームへ送る",
+            "チャットへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2074,32 +2876,14 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::found_lead",
+      "id": "guide::clue_attachments",
       "talkId": "guide",
-      "blockKey": "found_lead",
+      "blockKey": "clue_attachments",
       "messages": [
         {
-          "id": "guide::found_lead_1",
+          "id": "guide::clue_attachments_1",
           "sender": "guide",
-          "body": "「黄色」ですね。画像の修復と、正規表現による入力判定を確認できました。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 450,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        }
-      ]
-    },
-    {
-      "id": "guide::found_done",
-      "talkId": "guide",
-      "blockKey": "found_done",
-      "messages": [
-        {
-          "id": "guide::found_done_1",
-          "sender": "guide",
-          "body": "修復した画像を、メッセージの添付として表示する例です。",
+          "body": "灯りが写った画像を、メッセージ添付として届けます。",
           "attachmentId": "rainy_window_image",
           "sentAt": "",
           "delayMs": 700,
@@ -2108,13 +2892,13 @@ export const workerScenario: WorkerScenario = {
           "source": "human"
         },
         {
-          "id": "guide::found_done_2",
+          "id": "guide::clue_attachments_2",
           "sender": "guide",
-          "body": "次は鍵付き添付です。パスワード「0420」で開いてください。最初の操作ガイドもここから読み返せます。",
+          "body": "続いて鍵付き添付です。パスワード「0420」で開いてください。最初の操作ガイドもここから読み返せます。",
           "segments": [
             {
               "kind": "text",
-              "text": "次は鍵付き添付です。パスワード「0420」で開いてください。最初の"
+              "text": "続いて鍵付き添付です。パスワード「0420」で開いてください。最初の"
             },
             {
               "kind": "link",
@@ -2130,62 +2914,9 @@ export const workerScenario: WorkerScenario = {
           "attachmentId": "sealed_note_file",
           "sentAt": "",
           "delayMs": 700,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        }
-      ]
-    },
-    {
-      "id": "guide::done_repeat",
-      "talkId": "guide",
-      "blockKey": "done_repeat",
-      "messages": [
-        {
-          "id": "guide::done_repeat_1",
-          "sender": "guide",
-          "body": "鍵付きメモを開いたら、次はナビで「チャット」と検索してください。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 700,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        }
-      ]
-    },
-    {
-      "id": "guide::done_repeat@2",
-      "talkId": "guide",
-      "blockKey": "done_repeat@2",
-      "repeatOf": "guide::done_repeat",
-      "repeatIndex": 2,
-      "messages": [
-        {
-          "id": "guide::done_repeat@2_1",
-          "sender": "guide",
-          "body": "次の手順はホームのToDoでも確認できるよ。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 550,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        }
-      ]
-    },
-    {
-      "id": "guide::game_over_reply",
-      "talkId": "guide",
-      "blockKey": "game_over_reply",
-      "messages": [
-        {
-          "id": "guide::game_over_reply_1",
-          "sender": "guide",
-          "body": "この入力はゲームオーバー演出のデモです。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 500,
+          "quickReplies": [
+            "別ルームへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2224,24 +2955,6 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::sealed_note_opened",
-      "talkId": "guide",
-      "blockKey": "sealed_note_opened",
-      "messages": [
-        {
-          "id": "guide::sealed_note_opened_1",
-          "sender": "guide",
-          "body": "鍵付き添付を開封できました。ホームに壊れたチャットが現れたので、ナビで「チャット」と検索して開いてください。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 500,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        }
-      ]
-    },
-    {
       "id": "guide::call_history_guide",
       "talkId": "guide",
       "blockKey": "call_history_guide",
@@ -2249,11 +2962,11 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "guide::call_history_guide_1",
           "sender": "guide",
-          "body": "聞き逃した着信音声は、着信履歴から再生できます。音声書き起こしも同じ画面で最後まで読めます。",
+          "body": "着信履歴へのメッセージ内リンクです。着信履歴から音声の再生と書き起こしを確認できます。",
           "segments": [
             {
               "kind": "text",
-              "text": "聞き逃した着信音声は、"
+              "text": "着信履歴へのメッセージ内リンクです。"
             },
             {
               "kind": "link",
@@ -2263,7 +2976,7 @@ export const workerScenario: WorkerScenario = {
             },
             {
               "kind": "text",
-              "text": "から再生できます。音声書き起こしも同じ画面で最後まで読めます。"
+              "text": "から音声の再生と書き起こしを確認できます。"
             }
           ],
           "attachmentId": "",
@@ -2276,17 +2989,19 @@ export const workerScenario: WorkerScenario = {
       ]
     },
     {
-      "id": "guide::demo_test_ack",
+      "id": "guide::chat_auth_required",
       "talkId": "guide",
-      "blockKey": "demo_test_ack",
+      "blockKey": "chat_auth_required",
       "messages": [
         {
-          "id": "guide::demo_test_ack_1",
+          "id": "guide::chat_auth_required_1",
           "sender": "guide",
-          "body": "機能テストを受け付けました。別ルームへの受信や、数秒後に起きる変化を確認してください。",
+          "body": "この送信テストは、チャットの再認証を完了してから実行してください。",
           "attachmentId": "",
           "sentAt": "",
-          "delayMs": 350,
+          "quickReplies": [
+            "別ルームへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2321,6 +3036,9 @@ export const workerScenario: WorkerScenario = {
           "body": "チャットUIとdefault分岐の確認です。何かメッセージを送ってください。",
           "attachmentId": "",
           "sentAt": "20:14",
+          "quickReplies": [
+            "こんにちは"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2339,6 +3057,10 @@ export const workerScenario: WorkerScenario = {
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 350,
+          "quickReplies": [
+            "チャット連携",
+            "メッセージへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2357,17 +3079,10 @@ export const workerScenario: WorkerScenario = {
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 400,
-          "notes": "",
-          "updatedAt": "2026-08-12",
-          "source": "human"
-        },
-        {
-          "id": "lobby::lobby_reply_2",
-          "sender": "guide",
-          "body": "検索・修復・会話・添付解錠・チャット再認証のデモは完了です。",
-          "attachmentId": "",
-          "sentAt": "",
-          "delayMs": 650,
+          "quickReplies": [
+            "チャット連携",
+            "メッセージへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2386,6 +3101,10 @@ export const workerScenario: WorkerScenario = {
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 400,
+          "quickReplies": [
+            "チャット連携",
+            "メッセージへ送る"
+          ],
           "notes": "",
           "updatedAt": "2026-08-12",
           "source": "human"
@@ -2435,7 +3154,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "sms_receiver::received_from_sms_1",
           "sender": "guide",
-          "body": "「デモ進行係」から、別のメッセージルームへ届きました。",
+          "body": "「デモ連絡先」から、別のメッセージルームへ届きました。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 500,
@@ -2577,7 +3296,7 @@ export const workerScenario: WorkerScenario = {
         {
           "id": "chat_receiver::received_from_sms_1",
           "sender": "visitor",
-          "body": "メッセージアプリの「デモ進行係」からチャットへ届きました。",
+          "body": "メッセージアプリの「デモ連絡先」からチャットへ届きました。",
           "attachmentId": "",
           "sentAt": "",
           "delayMs": 500,
@@ -3024,6 +3743,546 @@ export const workerScenario: WorkerScenario = {
           "source": "human"
         }
       ]
+    },
+    {
+      "id": "search_agent::intro",
+      "talkId": "search_agent",
+      "blockKey": "intro",
+      "messages": [
+        {
+          "id": "search_agent::intro_1",
+          "sender": "search_agent",
+          "body": "検索とデモ全体の案内を担当するよ。まずは「古いメモ」を探してみよう。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 350,
+          "quickReplies": [
+            "古いメモ",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::common_help",
+      "talkId": "search_agent",
+      "blockKey": "common_help",
+      "messages": [
+        {
+          "id": "search_agent::common_help_1",
+          "sender": "search_agent",
+          "body": "このナビでは、端末内検索、次の手順のヒント、デモ機能の起動をまとめて行えます。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "ヒント",
+            "機能テスト"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_photo",
+      "talkId": "search_agent",
+      "blockKey": "stage_photo",
+      "messages": [
+        {
+          "id": "search_agent::stage_photo_1",
+          "sender": "search_agent",
+          "body": "古いメモを開けたね。次は「雨」と検索して、表示された写真で一番大きな灯りの色を確かめて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "雨",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_report",
+      "talkId": "search_agent",
+      "blockKey": "stage_report",
+      "messages": [
+        {
+          "id": "search_agent::stage_report_1",
+          "sender": "search_agent",
+          "body": "写真を開けたね。一番大きく見える灯りの色を、このナビに入力して教えて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::color_reported",
+      "talkId": "search_agent",
+      "blockKey": "color_reported",
+      "messages": [
+        {
+          "id": "search_agent::color_reported_1",
+          "sender": "search_agent",
+          "body": "色を受け付けたよ。メッセージの「デモ連絡先」に、灯りが写った画像と鍵付き添付を届けました。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "デモ連絡先",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_chat",
+      "talkId": "search_agent",
+      "blockKey": "stage_chat",
+      "messages": [
+        {
+          "id": "search_agent::stage_chat_1",
+          "sender": "search_agent",
+          "body": "鍵付き添付を開けたね。次は「チャット」と検索して、壊れたアプリを修復して開いてみて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "チャット",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_auth",
+      "talkId": "search_agent",
+      "blockKey": "stage_auth",
+      "messages": [
+        {
+          "id": "search_agent::stage_auth_1",
+          "sender": "search_agent",
+          "body": "チャットの再認証リンクを「デモ連絡先」へ届けました。メッセージからリンクを開いてね。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "デモ連絡先",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_contact",
+      "talkId": "search_agent",
+      "blockKey": "stage_contact",
+      "messages": [
+        {
+          "id": "search_agent::stage_contact_1",
+          "sender": "search_agent",
+          "body": "再認証できました。チャットの「サンプルルーム」でメッセージを送ってみて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "サンプルルーム",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::stage_done",
+      "talkId": "search_agent",
+      "blockKey": "stage_done",
+      "messages": [
+        {
+          "id": "search_agent::stage_done_1",
+          "sender": "search_agent",
+          "body": "検索、修復、添付解錠、チャット再認証、チャット投稿までの基本デモは完了です。「機能テスト」でほかの機能も試せます。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::call_completed",
+      "talkId": "search_agent",
+      "blockKey": "call_completed",
+      "messages": [
+        {
+          "id": "search_agent::call_completed_1",
+          "sender": "search_agent",
+          "body": "通話を終了しました。音声と書き起こしは着信履歴で確認でき、メッセージ内リンクも届いています。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 300,
+          "quickReplies": [
+            "書き起こし",
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_first",
+      "talkId": "search_agent",
+      "blockKey": "hint_first",
+      "messages": [
+        {
+          "id": "search_agent::hint_first_1",
+          "sender": "search_agent",
+          "body": "まずは「古いメモ」と検索して、コンテンツ修復を試してみて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "古いメモ",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_photo",
+      "talkId": "search_agent",
+      "blockKey": "hint_photo",
+      "messages": [
+        {
+          "id": "search_agent::hint_photo_1",
+          "sender": "search_agent",
+          "body": "「雨」と検索して、表示された写真で一番大きく見える灯りの色を確かめて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "雨",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_report",
+      "talkId": "search_agent",
+      "blockKey": "hint_report",
+      "messages": [
+        {
+          "id": "search_agent::hint_report_1",
+          "sender": "search_agent",
+          "body": "写真で一番大きく見えた灯りの色を、このナビに入力して教えて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_unlock",
+      "talkId": "search_agent",
+      "blockKey": "hint_unlock",
+      "messages": [
+        {
+          "id": "search_agent::hint_unlock_1",
+          "sender": "search_agent",
+          "body": "メッセージの「デモ連絡先」に届いた鍵付き添付を、パスワード「0420」で開いて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "デモ連絡先",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_chat",
+      "talkId": "search_agent",
+      "blockKey": "hint_chat",
+      "messages": [
+        {
+          "id": "search_agent::hint_chat_1",
+          "sender": "search_agent",
+          "body": "「チャット」を検索して開き、再認証リンクを発行して。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "チャット",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_auth",
+      "talkId": "search_agent",
+      "blockKey": "hint_auth",
+      "messages": [
+        {
+          "id": "search_agent::hint_auth_1",
+          "sender": "search_agent",
+          "body": "「デモ連絡先」に届いた再認証リンクから、チャットを開いて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "デモ連絡先",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_contact",
+      "talkId": "search_agent",
+      "blockKey": "hint_contact",
+      "messages": [
+        {
+          "id": "search_agent::hint_contact_1",
+          "sender": "search_agent",
+          "body": "再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "サンプルルーム",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::hint_done",
+      "talkId": "search_agent",
+      "blockKey": "hint_done",
+      "messages": [
+        {
+          "id": "search_agent::hint_done_1",
+          "sender": "search_agent",
+          "body": "検索・修復・会話・添付解錠・再認証のデモは完了しています。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::test_menu",
+      "talkId": "search_agent",
+      "blockKey": "test_menu",
+      "messages": [
+        {
+          "id": "search_agent::test_menu_1",
+          "sender": "search_agent",
+          "body": "試したい機能を選んでね。メッセージ固有の送信確認は「デモ連絡先」から試せます。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "デモ連絡先",
+            "着信テスト",
+            "遅延メッセージ",
+            "画像受信テスト",
+            "ノイズ演出",
+            "フラッシュ演出",
+            "暗転演出",
+            "ゲームオーバー演出",
+            "オールクリア演出",
+            "ヒント",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::demo_test_ack",
+      "talkId": "search_agent",
+      "blockKey": "demo_test_ack",
+      "messages": [
+        {
+          "id": "search_agent::demo_test_ack_1",
+          "sender": "search_agent",
+          "body": "「{{player_input}}」を実行しました。着信や通知を選んだ場合は、少し待ってから確認してください。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "機能テスト",
+            "ヒント",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::demo_test_already_done",
+      "talkId": "search_agent",
+      "blockKey": "demo_test_already_done",
+      "messages": [
+        {
+          "id": "search_agent::demo_test_already_done_1",
+          "sender": "search_agent",
+          "body": "このテストはすでに完了しています。もう一度試す場合は、通知シェードの「最初から」を使ってください。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "機能テスト",
+            "ヒント",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::found",
+      "talkId": "search_agent",
+      "blockKey": "found",
+      "messages": [
+        {
+          "id": "search_agent::found_1",
+          "sender": "search_agent",
+          "body": "見つかったよ。結果を開くと、次の案内へ進みます。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
+    },
+    {
+      "id": "search_agent::not_found",
+      "talkId": "search_agent",
+      "blockKey": "not_found",
+      "messages": [
+        {
+          "id": "search_agent::not_found_1",
+          "sender": "search_agent",
+          "body": "該当するデータは見つかりませんでした。入力を確認するか、ヒントを使ってください。",
+          "attachmentId": "",
+          "sentAt": "",
+          "delayMs": 250,
+          "quickReplies": [
+            "ヒント",
+            "機能テスト",
+            "ヘルプ"
+          ],
+          "notes": "",
+          "updatedAt": "2026-08-12",
+          "source": "human"
+        }
+      ]
     }
   ],
   "attachments": [
@@ -3062,11 +4321,8 @@ export const workerScenario: WorkerScenario = {
     }
   ],
   "repeatTalkBlocks": {
-    "guide::intro_prompt": [
-      "guide::intro_prompt@2"
-    ],
-    "guide::done_repeat": [
-      "guide::done_repeat@2"
+    "guide::message_reply": [
+      "guide::message_reply@2"
     ]
   },
   "incomingCalls": [
@@ -3088,6 +4344,7 @@ export const workerScenario: WorkerScenario = {
           "text": "［高い確認音］"
         }
       ],
+      "cond": "",
       "publicId": "call_101df897abb3"
     }
   ],
@@ -3101,11 +4358,11 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "find_rainy_window",
       "text": "ナビで「雨」と検索し、写真の灯りの色を確かめる",
-      "cond": "old_note_opened && !rainy_window_opened"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
     },
     {
       "id": "report_clue",
-      "text": "メッセージでデモ進行係に灯りの色を伝える",
+      "text": "ナビに写真の灯りの色を伝える",
       "cond": "rainy_window_opened && !image_color_reported"
     },
     {
@@ -3131,18 +4388,18 @@ export const workerScenario: WorkerScenario = {
   ],
   "notifications": [
     {
-      "id": "welcome",
+      "id": "clue_attachments",
       "appId": "messages",
       "targetTalkId": "guide",
-      "title": "デモ進行係",
-      "body": "ナビ検索とコンテンツ修復を試してみよう。",
-      "cond": "!old_note_opened"
+      "title": "デモ連絡先",
+      "body": "確認用の画像と鍵付き添付が届きました。",
+      "cond": "image_color_reported && !sealed_note_unlocked"
     },
     {
       "id": "chat_auth",
       "appId": "messages",
       "targetTalkId": "guide",
-      "title": "チャット認証",
+      "title": "デモ連絡先",
       "body": "再認証用のリンクを発行しました。",
       "cond": "chat_auth_link_sent && !chat_auth_verified"
     },
@@ -3199,7 +4456,7 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "home_hint",
       "surface": "home",
-      "body": "ナビで壊れたデータを検索し、修復してみよう。",
+      "body": "ナビで「古いメモ」を検索し、修復してみよう。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "!old_note_opened"
@@ -3210,20 +4467,20 @@ export const workerScenario: WorkerScenario = {
       "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "old_note_opened && !rainy_window_opened"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
     },
     {
       "id": "report_hint",
       "surface": "home",
-      "body": "写真で一番大きく見える灯りの色を、メッセージで教えて。",
+      "body": "写真で一番大きく見える灯りの色を、ナビで教えて。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "rainy_window_opened && !image_color_reported"
     },
     {
       "id": "sealed_note_opened",
-      "surface": "home",
-      "body": "「チャット」を検索して開き、再認証リンクを発行しよう。",
+      "surface": "messages",
+      "body": "次の案内がナビに届いています。右下のナビを開いてください。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent"
@@ -3237,109 +4494,19 @@ export const workerScenario: WorkerScenario = {
       "cond": "chat_auth_verified && !demo_completed"
     },
     {
+      "id": "demo_completed_nav",
+      "surface": "chat",
+      "body": "基本デモが完了しました。右下のナビから機能テストも試せます。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "demo_completed"
+    },
+    {
       "id": "radio_completed",
       "surface": "radio",
       "body": "音声の再生完了イベントを受け取りました。",
       "weight": 1,
       "cond": "radio_playback_completed"
-    }
-  ],
-  "searchResponses": [
-    {
-      "id": "hint",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "まずは「古いメモ」と検索して、コンテンツ修復を試してみて。",
-      "cond": "!old_note_opened",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_photo",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "「雨」と検索して写真を開き、一番大きく見える灯りの色を確かめて。",
-      "cond": "old_note_opened && !rainy_window_opened",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_report",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "メッセージでデモ進行係に、写真で一番大きく見えた灯りの色を送って。",
-      "cond": "rainy_window_opened && !image_color_reported",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_unlock",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "メッセージに届いた鍵付きメモを、パスワード「0420」で開いて。",
-      "cond": "image_color_reported && !sealed_note_unlocked",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_chat",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "「チャット」を検索して開き、再認証リンクを発行して。",
-      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_auth",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "メッセージに届いた再認証リンクから、チャットを開いて。",
-      "cond": "chat_auth_link_sent && !chat_auth_verified",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_contact",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。",
-      "cond": "chat_auth_verified && !demo_completed",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_done",
-      "when": "",
-      "search": [
-        "ヒント"
-      ],
-      "body": "検索・修復・会話・添付解錠・再認証のデモは完了しています。",
-      "cond": "demo_completed",
-      "suppressResults": true
-    },
-    {
-      "id": "found",
-      "when": "found",
-      "body": "見つかったよ。",
-      "search": [],
-      "cond": "",
-      "suppressResults": false
-    },
-    {
-      "id": "not_found",
-      "when": "not_found",
-      "body": "該当するデータは見つかりませんでした。",
-      "suppressResults": true,
-      "search": [],
-      "cond": ""
     }
   ],
   "chatAuthGate": {
@@ -3401,16 +4568,23 @@ export const workerScenario: WorkerScenario = {
       "llm": false
     },
     {
-      "event": "talk_sent",
-      "target": "guide",
-      "handler": "activate_unlock_todo",
-      "cond": "image_color_reported && !sealed_note_unlocked",
+      "event": "talk_turn_completed",
+      "target": "search_agent",
+      "handler": "deliver_clue_attachments",
+      "cond": "clue_attachments_pending",
       "llm": false
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
+      "target": "search_agent",
+      "handler": "handle_demo_nav_test_command",
+      "cond": "",
+      "llm": false
+    },
+    {
+      "event": "talk_turn_completed",
       "target": "guide",
-      "handler": "handle_demo_test_command",
+      "handler": "handle_demo_message_test_command",
       "cond": "",
       "llm": false
     },
@@ -3422,85 +4596,85 @@ export const workerScenario: WorkerScenario = {
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "schedule_demo_call",
+      "event": "schedule_demo_call",
       "handler": "schedule_demo_call",
+      "target": "",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
+      "event": "scheduled_event",
       "target": "show_demo_call",
       "handler": "show_demo_call",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
+      "event": "scheduled_event",
       "target": "deliver_demo_delayed_message",
       "handler": "deliver_demo_delayed_message",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "incoming_call_completed",
+      "event": "incoming_call_completed",
+      "target": "demo_call",
       "handler": "mark_demo_call_completed",
       "cond": "!demo_call_completed",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "demo_form",
+      "event": "demo_form",
       "handler": "demo_form_game_over",
+      "target": "",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "demo_all_clear",
+      "event": "demo_all_clear",
       "handler": "demo_all_clear",
+      "target": "",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "demo_form_reject",
+      "event": "demo_form_reject",
       "handler": "demo_form_reject",
+      "target": "",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "chat_auth_link_requested",
+      "event": "chat_auth_link_requested",
       "handler": "send_chat_auth_link",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
+      "target": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "message_link_opened",
+      "event": "message_link_opened",
+      "target": "chat_auth_link_opened",
       "handler": "verify_chat_auth",
       "cond": "chat_auth_link_sent && !chat_auth_verified",
       "llm": false
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
       "target": "lobby",
       "handler": "complete_demo_todo",
-      "cond": "demo_completed",
+      "cond": "demo_completed && !demo_completion_announced",
       "llm": false
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
       "target": "lobby",
       "handler": "handle_demo_chat_test_command",
       "cond": "",
       "llm": false
     },
     {
-      "event": "scenario_event",
-      "target": "audio_playback_completed",
+      "event": "audio_playback_completed",
+      "target": "sample_radio",
       "handler": "mark_radio_playback_completed",
       "cond": "!radio_playback_completed",
       "llm": false
@@ -3508,14 +4682,15 @@ export const workerScenario: WorkerScenario = {
   ],
   "publicIds": {
     "content": {
+      "demo_call_history": "c_8a5f7f91ea5b",
       "missed_call": "c_0376fabddf4f",
+      "demo_voicemail": "c_1587119bb83d",
       "dummy_call_1": "c_2026bc4fe74f",
       "dummy_call_2": "c_f70177071c48",
       "dummy_call_3": "c_e73677fd9822",
       "dummy_call_4": "c_8f794be1736f",
       "dummy_call_5": "c_7c4385c5b673",
       "dummy_call_6": "c_07c948744931",
-      "demo_call_history": "c_8a5f7f91ea5b",
       "mail_guide": "c_271fc8c96870",
       "guide_history_archive_a": "c_f452f3bfd9c3",
       "guide_history_archive_b": "c_d2fb1ed4cac6",
@@ -3587,7 +4762,8 @@ export const workerScenario: WorkerScenario = {
       "dummy_chat_3": "t_73a75e3d8faa",
       "dummy_chat_4": "t_0e6f206f66af",
       "dummy_chat_5": "t_0a2e442c9bb6",
-      "dummy_chat_6": "t_cb0b2cb99f03"
+      "dummy_chat_6": "t_cb0b2cb99f03",
+      "search_agent": "t_0ed8a2c8a5f6"
     },
     "attachment": {
       "rainy_window_image": "a_e98826327ab7",
@@ -3601,7 +4777,7 @@ export const workerScenario: WorkerScenario = {
     },
     "form": {},
     "notification": {
-      "welcome": "notification_5dd2fa869822",
+      "clue_attachments": "notification_84dc626998fe",
       "chat_auth": "notification_2459e912b85b",
       "demo_sms_message_received": "notification_a9ed392341e0",
       "demo_sms_cross_received": "notification_fe6ab0399725",
@@ -3615,15 +4791,12 @@ export const workerScenario: WorkerScenario = {
     },
     "scenarioEvent": {
       "schedule_demo_call": "e_94e1dde96cea",
-      "show_demo_call": "e_15f1b15ac2d7",
-      "deliver_demo_delayed_message": "e_e62843403b8c",
-      "incoming_call_completed": "e_4e6b6c69daf8",
       "demo_form": "e_e681caadd11a",
       "demo_all_clear": "e_a518caaa7a2d",
       "demo_form_reject": "e_26e72f12991e",
       "chat_auth_link_requested": "e_0d203bfe05d8",
-      "message_link_opened": "e_f1dc8312dd96",
-      "audio_playback_completed": "e_27d23d55cdc7"
+      "show_demo_call": "e_15f1b15ac2d7",
+      "deliver_demo_delayed_message": "e_e62843403b8c"
     }
   }
 };

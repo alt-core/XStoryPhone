@@ -1,8 +1,11 @@
 import type {
   AppStore,
   GeneratedAudioJob,
+  HookLlmCacheRecord,
+  InitialScheduledEvent,
   InputEventRecord,
   PlayerInputReviewEvent,
+  PlayerCommitEffects,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
@@ -14,13 +17,15 @@ import type {
   ScheduledEvent,
   StoredPlayerState,
   StoredTranscript,
-  TranscriptUpdate
+  TranscriptAppend
 } from "../../server/store.ts";
 import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
 import {
   DYNAMO_PLAYER_STATE_WARNING_BYTES,
   MAX_SESSIONS_PER_PLAYER,
+  isSearchAgentTranscriptConflictError,
   limitedTranscript,
+  mergeTranscriptAppend,
   normalizeStoredState,
   nowIso,
   scheduledEventLeaseCutoff,
@@ -206,7 +211,11 @@ export class DynamoStore implements AppStore {
     await this.batchWrite(keys.map((key) => ({ DeleteRequest: { Key: item(key) } })));
   }
 
-  async createPasscodeSession(accessCode: string, initialState: StoredPlayerState) {
+  async createPasscodeSession(
+    accessCode: string,
+    initialState: StoredPlayerState,
+    initialSchedules: readonly InitialScheduledEvent[] = []
+  ) {
     const accessCodeHash = await sha256(`xstoryphone:access-code:v1:${accessCode}`);
     const accessPk = `ACCESS#${accessCodeHash}`;
     let access = await this.get(accessPk, "META");
@@ -239,7 +248,25 @@ export class DynamoStore implements AppStore {
                 }),
                 ConditionExpression: "attribute_not_exists(PK)"
               }
-            }
+            },
+            ...initialSchedules.map((schedule) => ({
+              Put: {
+                TableName: this.tableName,
+                Item: item({
+                  PK: playerPk(playerId),
+                  SK: `SCHEDULE#${schedule.id}`,
+                  entityType: "SCHEDULE",
+                  scheduleId: schedule.id,
+                  eventId: schedule.eventId,
+                  fields: schedule.fields,
+                  dueAt: schedule.dueAt,
+                  status: "queued",
+                  createdAt: now,
+                  updatedAt: now
+                }),
+                ConditionExpression: "attribute_not_exists(PK)"
+              }
+            }))
           ]
         });
         access = { playerId };
@@ -326,12 +353,17 @@ export class DynamoStore implements AppStore {
     const row = await this.get(playerPk(playerId), "STATE");
     if (!row) return null;
     const now = nowIso();
-    await this.transport.execute("UpdateItem", {
-      TableName: this.tableName,
-      Key: item({ PK: `SESSION#${tokenHash}`, SK: "META" }),
-      UpdateExpression: "SET lastSeenAt = :now, GSI1SK = :gsi",
-      ExpressionAttributeValues: item({ ":now": now, ":gsi": `SESSION#${now}#${tokenHash}` })
-    });
+    try {
+      await this.transport.execute("UpdateItem", {
+        TableName: this.tableName,
+        Key: item({ PK: `SESSION#${tokenHash}`, SK: "META" }),
+        UpdateExpression: "SET lastSeenAt = :now, GSI1SK = :gsi",
+        ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeValues: item({ ":now": now, ":gsi": `SESSION#${now}#${tokenHash}` })
+      });
+    } catch (error) {
+      console.error("[sessions:last_seen]", error instanceof Error ? error.name : "unknown");
+    }
     return {
       id: playerId,
       state: normalizeStoredState(row.state as StoredPlayerState),
@@ -344,15 +376,21 @@ export class DynamoStore implements AppStore {
     if (!row || row.transcriptKey !== transcriptKey) {
       return { streamId, transcriptKey, messages: [] };
     }
+    const messages = Array.isArray(row.messages) ? row.messages as StoredTranscript["messages"] : [];
     return limitedTranscript({
       streamId,
       transcriptKey,
-      messages: Array.isArray(row.messages) ? row.messages as StoredTranscript["messages"] : []
+      messages: streamId.startsWith("talk:")
+        ? [...messages].sort((left, right) => (
+            "event_type" in left && "event_type" in right
+              ? left.delivered_at.localeCompare(right.delivered_at) || left.id.localeCompare(right.id)
+              : 0
+          ))
+        : messages
     });
   }
 
-  async savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts: TranscriptUpdate[] = []) {
-    transcripts = transcripts.map(limitedTranscript);
+  async savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts: TranscriptAppend[] = [], effects: PlayerCommitEffects = {}) {
     const bytes = storedPlayerStateBytes(nextState);
     if (bytes > PLAYER_STATE_HARD_LIMIT_BYTES) {
       throw new Error(`player_state_too_large:${bytes}`);
@@ -360,7 +398,29 @@ export class DynamoStore implements AppStore {
     if (bytes > DYNAMO_PLAYER_STATE_WARNING_BYTES) {
       console.warn("[player_state:size_warning]", { playerId: player.id, bytes });
     }
-    for (const transcript of transcripts) {
+    for (const append of transcripts) {
+      const appendBytes = storedTranscriptBytes(append);
+      if (appendBytes > PLAYER_STATE_HARD_LIMIT_BYTES) {
+        throw new Error(`player_transcript_too_large:${append.streamId}:${appendBytes}`);
+      }
+    }
+    let completedTranscripts: StoredTranscript[];
+    try {
+      completedTranscripts = await Promise.all(transcripts.map(async (append) => mergeTranscriptAppend(
+        await this.loadTranscript(player.id, append.streamId, append.transcriptKey),
+        append
+      )));
+    } catch (error) {
+      if (isSearchAgentTranscriptConflictError(error)) return false;
+      throw error;
+    }
+    const scheduleEffects = (await Promise.all((effects.schedules ?? []).map(async (effect) => {
+      const current = await this.get(playerPk(player.id), `SCHEDULE#${effect.id}`);
+      if (current?.status === "completed") return null;
+      if (effect.type === "cancel" && current?.status !== "queued" && current?.status !== "running") return null;
+      return effect;
+    }))).filter((effect): effect is NonNullable<typeof effect> => Boolean(effect));
+    for (const transcript of completedTranscripts) {
       const transcriptBytes = storedTranscriptBytes(transcript);
       if (transcriptBytes > PLAYER_STATE_HARD_LIMIT_BYTES) {
         throw new Error(`player_transcript_too_large:${transcript.streamId}:${transcriptBytes}`);
@@ -371,8 +431,9 @@ export class DynamoStore implements AppStore {
     }
     try {
       const now = nowIso();
-      if (transcripts.length) {
-        if (transcripts.length > 99) throw new Error("player_transcript_updates_too_many");
+      const additionalWrites = completedTranscripts.length + scheduleEffects.length + (effects.generatedAudioJobs?.length ?? 0);
+      if (additionalWrites) {
+        if (additionalWrites > 99) throw new Error("player_commit_updates_too_many");
         await this.transport.execute("TransactWriteItems", {
           TransactItems: [
             {
@@ -390,7 +451,7 @@ export class DynamoStore implements AppStore {
                 })
               }
             },
-            ...transcripts.map((transcript) => ({
+            ...completedTranscripts.map((transcript) => ({
               Put: {
                 TableName: this.tableName,
                 Item: item({
@@ -402,6 +463,32 @@ export class DynamoStore implements AppStore {
                   messages: transcript.messages,
                   updatedAt: now
                 })
+              }
+            })),
+            ...scheduleEffects.map((effect) => ({
+              Update: effect.type === "queue" ? {
+                TableName: this.tableName,
+                Key: item({ PK: playerPk(player.id), SK: `SCHEDULE#${effect.id}` }),
+                UpdateExpression: "SET entityType = :entity, scheduleId = :scheduleId, eventId = :eventId, #fields = :fields, dueAt = :dueAt, #status = :queued, updatedAt = :now, createdAt = if_not_exists(createdAt, :now)",
+                ConditionExpression: "attribute_not_exists(#status) OR #status <> :completed",
+                ExpressionAttributeNames: { "#fields": "fields", "#status": "status" },
+                ExpressionAttributeValues: item({
+                  ":entity": "SCHEDULE", ":scheduleId": effect.id, ":eventId": effect.eventId,
+                  ":fields": effect.fields, ":dueAt": effect.dueAt, ":queued": "queued", ":completed": "completed", ":now": now
+                })
+              } : {
+                TableName: this.tableName,
+                Key: item({ PK: playerPk(player.id), SK: `SCHEDULE#${effect.id}` }),
+                UpdateExpression: "SET #status = :canceled, updatedAt = :now",
+                ConditionExpression: "#status = :queued OR #status = :running",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: item({ ":canceled": "canceled", ":queued": "queued", ":running": "running", ":now": now })
+              }
+            })),
+            ...(effects.generatedAudioJobs ?? []).map((job) => ({
+              Put: {
+                TableName: this.tableName,
+                Item: item({ PK: playerPk(player.id), SK: `AUDIO#${job.audioId}`, entityType: "AUDIO", ...job, updatedAt: now })
               }
             }))
           ]
@@ -431,10 +518,63 @@ export class DynamoStore implements AppStore {
   async clearPlayerRuntimeJobs(playerId: string) {
     const rows = [
       ...await this.queryPk(playerPk(playerId), "SCHEDULE#"),
-      ...await this.queryPk(playerPk(playerId), "AUDIO#")
+      ...await this.queryPk(playerPk(playerId), "AUDIO#"),
+      ...await this.queryPk(playerPk(playerId), "TRANSCRIPT#"),
+      ...await this.queryPk(playerPk(playerId), "HOOK_LLM_RESULT#")
     ];
     await this.deleteKeys(rows
       .map((row) => ({ PK: stringValue(row.PK), SK: stringValue(row.SK) })));
+  }
+
+  async loadHookLlmResult(playerId: string, cacheKey: string, at: string) {
+    const row = await this.get(playerPk(playerId), `HOOK_LLM_RESULT#${cacheKey}`);
+    if (!row || stringValue(row.expiresAt) <= at || !row.output || typeof row.output !== "object" || Array.isArray(row.output)) return null;
+    return {
+      cacheKey,
+      taskId: stringValue(row.taskId),
+      kind: stringValue(row.kind),
+      modelVersion: stringValue(row.modelVersion),
+      inputHash: stringValue(row.inputHash),
+      promptHash: stringValue(row.promptHash),
+      schemaHash: stringValue(row.schemaHash),
+      status: (row.status === "fallback" ? "fallback" : "ready") as HookLlmCacheRecord["status"],
+      output: row.output as HookLlmCacheRecord["output"],
+      errorCode: nullableString(row.errorCode),
+      expiresAt: stringValue(row.expiresAt)
+    };
+  }
+
+  async saveHookLlmResultIfAbsent(playerId: string, record: HookLlmCacheRecord) {
+    const now = nowIso();
+    try {
+      await this.transport.execute("PutItem", {
+        TableName: this.tableName,
+        Item: item({
+          PK: playerPk(playerId),
+          SK: `HOOK_LLM_RESULT#${record.cacheKey}`,
+          entityType: "HOOK_LLM_RESULT",
+          ...record,
+          expiresAtEpoch: Math.floor(Date.parse(record.expiresAt) / 1_000),
+          createdAt: now,
+          updatedAt: now
+        }),
+        ConditionExpression: "attribute_not_exists(PK) OR attribute_not_exists(expiresAt) OR expiresAt <= :now",
+        ExpressionAttributeValues: item({ ":now": now })
+      });
+      return record;
+    } catch (error) {
+      if (!conditionalFailure(error)) throw error;
+      return await this.loadHookLlmResult(playerId, record.cacheKey, now) ?? record;
+    }
+  }
+
+  async clearHookLlmResults(playerId: string) {
+    const rows = await this.queryPk(playerPk(playerId), "HOOK_LLM_RESULT#");
+    await this.deleteKeys(rows.map((row) => ({ PK: stringValue(row.PK), SK: stringValue(row.SK) })));
+  }
+
+  async cleanupExpiredHookLlmResults() {
+    // DynamoDB TTLへ委ねる。期限判定はload時にも行う。
   }
 
   async queueScheduledEvent(playerId: string, scheduleId: string, eventId: string, fields: Record<string, string>, dueAt: string) {
@@ -550,14 +690,14 @@ export class DynamoStore implements AppStore {
         TableName: this.tableName,
         Item: item({
           PK: playerPk(event.playerId),
-          SK: `INPUT#${event.eventType}#${event.requestKey}`,
+          SK: `INPUT#talk_send#${event.requestKey}`,
           entityType: "INPUT",
           id: crypto.randomUUID(),
           ...event,
           normalizedInput: event.userInput.normalize("NFC").trim().toLocaleLowerCase("ja"),
           occurredAt,
           GSI2PK: "INPUT_REVIEW",
-          GSI2SK: `INPUT#${event.eventType}#${occurredAt}#${event.requestKey}`,
+          GSI2SK: `INPUT#talk_send#${occurredAt}#${event.requestKey}`,
           ...(event.talkId && event.fromId ? {
             GSI1PK: "REVIEW_SOURCE",
             GSI1SK: `INPUT#${event.talkId}#${event.fromId}#${occurredAt}#${event.requestKey}`
@@ -571,7 +711,6 @@ export class DynamoStore implements AppStore {
   }
 
   async playerInputEvents(filters: {
-    eventType?: "search" | "talk_send";
     playerId?: string;
     talkId?: string;
     query?: string;
@@ -580,7 +719,7 @@ export class DynamoStore implements AppStore {
     const rows: Record<string, unknown>[] = [];
     const normalizedQuery = filters.query?.normalize("NFC").trim().toLocaleLowerCase("ja");
     let startKey: DynamoItem | undefined;
-    const prefix = filters.eventType ? `INPUT#${filters.eventType}#` : "INPUT#";
+    const prefix = "INPUT#talk_send#";
     do {
       const result = await this.transport.execute("Query", {
         TableName: this.tableName,
@@ -603,10 +742,9 @@ export class DynamoStore implements AppStore {
     } while (startKey && rows.length < filters.limit);
     return rows.slice(0, filters.limit).map((row) => ({
       id: stringValue(row.id),
-      eventType: row.eventType as "search" | "talk_send",
       playerId: stringValue(row.playerId),
       occurredAt: stringValue(row.occurredAt),
-      appId: stringValue(row.appId),
+      appId: nullableString(row.appId),
       talkId: nullableString(row.talkId),
       fromId: nullableString(row.fromId),
       userInput: stringValue(row.userInput),
@@ -632,10 +770,6 @@ export class DynamoStore implements AppStore {
     });
   }
 
-  async pendingGeneratedAudioJobs(playerId: string) {
-    return (await this.generatedAudioJobs(playerId)).filter((job) => job.status === "queued" || job.status === "running");
-  }
-
   async generatedAudioJobs(playerId: string) {
     return (await this.queryPk(playerPk(playerId), "AUDIO#")).map((row) => this.audioFrom(row));
   }
@@ -647,6 +781,7 @@ export class DynamoStore implements AppStore {
       provider: stringValue(row.provider),
       externalJobId: nullableString(row.externalJobId),
       inputHash: stringValue(row.inputHash),
+      inputText: nullableString(row.inputText),
       outputKey: nullableString(row.outputKey),
       status: row.status as GeneratedAudioJob["status"],
       errorCode: nullableString(row.errorCode),
@@ -698,7 +833,10 @@ export class DynamoStore implements AppStore {
         id: stringValue(row.id),
         ruleId: stringValue(row.ruleId),
         userInput: stringValue(row.userInput),
-        normalizedInput: stringValue(row.normalizedInput)
+        normalizedInput: stringValue(row.normalizedInput),
+        responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
+          ? row.responseSnapshot as Record<string, unknown>
+          : {}
       }));
   }
 

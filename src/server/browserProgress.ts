@@ -12,7 +12,6 @@ export class BrowserProgressTooLargeError extends Error {
 
 type BrowserProgressPayload = {
   projectId: string;
-  scenarioRevision: string;
   playerId: string;
   stateVersion: number;
   state: StoredPlayerState;
@@ -73,8 +72,6 @@ function validPayload(value: unknown): value is BrowserProgressPayload {
   const payload = value as Partial<BrowserProgressPayload>;
   return typeof payload.projectId === "string"
     && payload.projectId.length > 0
-    && typeof payload.scenarioRevision === "string"
-    && payload.scenarioRevision.length > 0
     && typeof payload.playerId === "string"
     && payload.playerId.length > 0
     && typeof payload.stateVersion === "number"
@@ -83,11 +80,10 @@ function validPayload(value: unknown): value is BrowserProgressPayload {
     && Boolean(payload.state && typeof payload.state === "object" && !Array.isArray(payload.state));
 }
 
-export async function encodeBrowserProgress(secret: string, projectId: string, scenarioRevision: string, player: PlayerRecord) {
+export async function encodeBrowserProgress(secret: string, projectId: string, player: PlayerRecord) {
   if (!secret) throw new Error("BROWSER_STATE_SECRETが設定されていません。");
   const payload: BrowserProgressPayload = {
     projectId,
-    scenarioRevision,
     playerId: player.id,
     stateVersion: player.stateVersion,
     state: player.state

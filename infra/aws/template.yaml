@@ -38,6 +38,44 @@ Parameters:
   LlmReasoningEffort:
     Type: String
     Default: ""
+  LlmProfileFastModel:
+    Type: String
+    Default: ""
+  LlmProfileFastReasoningEffort:
+    Type: String
+    Default: ""
+  LlmProfileFastTimeoutMs:
+    Type: String
+    Default: ""
+  LlmProfileSuperModel:
+    Type: String
+    Default: ""
+  LlmProfileSuperReasoningEffort:
+    Type: String
+    Default: ""
+  LlmProfileSuperTimeoutMs:
+    Type: String
+    Default: ""
+  LlmProfileUltraModel:
+    Type: String
+    Default: ""
+  LlmProfileUltraReasoningEffort:
+    Type: String
+    Default: ""
+  LlmProfileUltraTimeoutMs:
+    Type: String
+    Default: ""
+  LlmAnalyticsEnabled:
+    Type: String
+    AllowedValues: ["", "true", "false"]
+    Default: ""
+  LlmDebugLogs:
+    Type: String
+    AllowedValues: ["", "true", "false"]
+    Default: ""
+  LlmResultRetentionDays:
+    Type: String
+    Default: ""
   ReservedConcurrency:
     Type: Number
     Default: 5
@@ -56,6 +94,9 @@ Resources:
     Properties:
       TableName: !Sub xstoryphone-${EnvironmentName}
       BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: expiresAtEpoch
+        Enabled: true
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -123,6 +164,18 @@ Resources:
           LLM_BASE_URL: !Ref LlmBaseUrl
           LLM_TIMEOUT_MS: !Ref LlmTimeoutMs
           LLM_REASONING_EFFORT: !Ref LlmReasoningEffort
+          LLM_PROFILE_FAST_MODEL: !Ref LlmProfileFastModel
+          LLM_PROFILE_FAST_REASONING_EFFORT: !Ref LlmProfileFastReasoningEffort
+          LLM_PROFILE_FAST_TIMEOUT_MS: !Ref LlmProfileFastTimeoutMs
+          LLM_PROFILE_SUPER_MODEL: !Ref LlmProfileSuperModel
+          LLM_PROFILE_SUPER_REASONING_EFFORT: !Ref LlmProfileSuperReasoningEffort
+          LLM_PROFILE_SUPER_TIMEOUT_MS: !Ref LlmProfileSuperTimeoutMs
+          LLM_PROFILE_ULTRA_MODEL: !Ref LlmProfileUltraModel
+          LLM_PROFILE_ULTRA_REASONING_EFFORT: !Ref LlmProfileUltraReasoningEffort
+          LLM_PROFILE_ULTRA_TIMEOUT_MS: !Ref LlmProfileUltraTimeoutMs
+          LLM_ANALYTICS_ENABLED: !Ref LlmAnalyticsEnabled
+          LLM_DEBUG_LOGS: !Ref LlmDebugLogs
+          LLM_RESULT_RETENTION_DAYS: !Ref LlmResultRetentionDays
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref AppTable

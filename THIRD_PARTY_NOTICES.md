@@ -21,6 +21,7 @@ XStoryPhoneは、以下のオープンソースソフトウェアを利用して
 | `@tsconfig/svelte` | TypeScript設定 | MIT |
 | `@types/howler` | Howler型定義 | MIT |
 | `@types/node` | Node.js型定義 | MIT |
+| `fake-indexeddb` | IndexedDB保存処理の自動テスト | Apache-2.0 |
 | `svelte-check` | Svelte診断 | MIT |
 | `typescript` | 型検査 | Apache-2.0 |
 | `vite` | ビルドツール | MIT |

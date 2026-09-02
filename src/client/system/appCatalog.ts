@@ -12,6 +12,8 @@ import {
 import type { Component } from "svelte";
 import { demoDeviceStateGenerated } from "../generated/demoDeviceState.generated";
 import type { AppCatalogEntry, AppId } from "../scenario-runtime/types";
+import { APP_REGISTRY } from "../../shared/appRegistry.ts";
+import { projectAppIcons } from "../generated/projectAppIcons.generated";
 
 const iconByKey: Record<string, Component> = {
   album: Album,
@@ -33,13 +35,15 @@ export type AppCatalogItem = Omit<AppCatalogEntry, "icon"> & {
 export function createAppCatalog(entries: readonly AppCatalogEntry[] = []): AppCatalogItem[] {
   return entries.map((entry) => ({
     ...entry,
-    iconKey: entry.icon,
-    icon: iconByKey[entry.icon] ?? Phone
+    iconKey: entry.icon || APP_REGISTRY.find((app) => app.id === entry.id)?.defaultIcon || "phone",
+    icon: (projectAppIcons as Record<string, Component>)[entry.id]
+      ?? iconByKey[entry.icon || APP_REGISTRY.find((app) => app.id === entry.id)?.defaultIcon || "phone"]
+      ?? Phone
   }));
 }
 
 export const appCatalog: AppCatalogItem[] = createAppCatalog(demoDeviceStateGenerated.apps);
 
-export function getAppById(appId: AppId) {
-  return appCatalog.find((app) => app.id === appId);
+export function getAppById(appId: AppId, currentCatalog: readonly AppCatalogItem[] = appCatalog) {
+  return currentCatalog.find((app) => app.id === appId) ?? appCatalog.find((app) => app.id === appId);
 }

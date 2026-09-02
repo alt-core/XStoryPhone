@@ -1,3 +1,5 @@
-export function limitedSearchMessages<T>(messages: readonly T[]) {
-  return messages.length > 200 ? messages.slice(-200) : [...messages];
+import { MAX_SEARCH_AGENT_DISPLAY_ITEMS } from "../../shared/searchAgent.ts";
+
+export function limitedSearchAgentItems<T>(items: readonly T[]) {
+  return items.slice(-MAX_SEARCH_AGENT_DISPLAY_ITEMS);
 }

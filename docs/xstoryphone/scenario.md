@@ -3,10 +3,17 @@
 シナリオデータの原本は、次の3ファイルです。
 
 - `scenario/demo/scenario.json`: 端末、アプリ、コンテンツ、状態、通知、hook
-- `scenario/demo/authoring/talk_blocks.tsv`: 会話本文、添付、遅延、更新日、出典
-- `scenario/demo/authoring/talk_flow.tsv`: メッセージとチャットの会話分岐
+- `scenario/demo/authoring/talk_blocks.tsv`: 会話本文、添付、Quick Reply、遅延、更新日、出典
+- `scenario/demo/authoring/talk_flow.tsv`: メッセージ、チャット、検索AIの会話分岐
 
 `npm run scenario:build` は原本を検証し、クライアント用とWorker用のデータを生成します。内部IDから公開IDも同時に生成するため、生成済みファイルを手で編集しないでください。
+
+デモを残して別の作品を作る場合は、`scenario/demo` を作品用ディレクトリへ複製し、`XSTORYPHONE_SCENARIO_DIR` で選びます。環境変数を省略した場合だけ `scenario/demo` を使います。
+
+```sh
+XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run scenario:build
+XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
+```
 
 ## 端末設定
 
@@ -59,7 +66,7 @@
 - `chat`
 - `browser`
 
-`messages` と `chat` の中身は、`talks`、`talkPeople`、`attachments` と2つのTSVで定義します。修復可能な初期履歴blockだけは、検索・修復単位として `contents` から対象talkとblockを参照します。詳しくは[会話エンジン](conversation.md#初期履歴blockの修復)を参照してください。それ以外は `contents[].record` に、そのアプリの表示データを書きます。具体的な最小例はデモシナリオを参照してください。
+`messages` と `chat` の中身は、`talks`、`talkPeople`、`attachments` と2つのTSVで定義します。talk全体、または初期履歴blockを検索・修復対象にできます。自由入力composerの表示・有効状態とQuick Replyもtalk共通機能です。詳しくは[会話エンジン](conversation.md#talk全体の修復)と[入力欄とQuick Reply](conversation.md#入力欄とquick-reply)を参照してください。それ以外は `contents[].record` に、そのアプリの表示データを書きます。具体的な最小例はデモシナリオを参照してください。
 
 `notes` と `photos` の `record` には、任意で `tags` を指定できます。タグは記述順に詳細表示へ並び、多い場合は横へスクロールします。絞り込みには使いません。
 
@@ -121,7 +128,22 @@
 }
 ```
 
-`atMs` は音声開始からのミリ秒で、昇順に書きます。着信履歴へ案内する場合は、会話blockに `[着信履歴](open:phone:content_id)` のリンクを置けます。
+`phone` コンテンツの `record.kind` には `incoming`、`missed`、`outgoing`、`voicemail` を指定できます。`voicemail` は履歴一覧で「留守番電話」と表示し、`audioUrl` と `transcript` の再生・書き起こし機能はほかの着信履歴と共通です。
+
+```json
+{
+  "name": "案内係",
+  "kind": "voicemail",
+  "at": "19:48",
+  "durationLabel": "18秒",
+  "audioUrl": "/audio/voicemail.wav",
+  "transcript": [
+    { "atMs": 0, "text": "留守番電話の本文です。" }
+  ]
+}
+```
+
+`atMs` は音声開始からのミリ秒で、昇順に書きます。着信中の字幕同期には使いますが、履歴詳細の書き起こしにはタイムスタンプを表示せず、本文だけを順番に並べます。着信履歴へ案内する場合は、会話blockに `[着信履歴](open:phone:content_id)` のリンクを置けます。
 
 ### ブラウザ
 
@@ -147,11 +169,14 @@
 
 `apps`、`contents`、`talks`、`todos`、`notifications`、`assistantMessages` には任意の `cond` を書けます。条件を満たさない項目はクライアントへ表示されず、検索やAPIの直接呼び出しでも利用できません。
 
+`apps[].badgeCond` に条件式を書くと、条件を満たす間だけホームのアイコンへ未読ドットを表示します。メッセージ・チャットの通常の未読判定とはORで扱われます。作品固有の状態でバッジを点灯したい場合に使います。
+
 ```json
 {
   "id": "chat",
   "initialState": "repairable",
-  "cond": "clue_reported && !chat_auth_verified"
+  "cond": "clue_reported && !chat_auth_verified",
+  "badgeCond": "new_chat_notice"
 }
 ```
 
@@ -161,6 +186,7 @@
 {
   "stateVariables": {
     "clue_reported": false,
+    "new_chat_notice": false,
     "visit_count": { "type": "integer", "initial": 0 },
     "chapter": { "type": "enum", "initial": "opening", "values": ["opening", "ending"] },
     "player_name": { "type": "string", "initial": "" }
@@ -176,7 +202,7 @@ chapter == "ending"
 player_input =~ /^(はい|了解)/u
 ```
 
-表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。`match` で抽出した文字列は、string変数に限り `player_name = $match.name` で代入できます。
+表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。integer変数だけは整数literalによる`count += 1`と`count -= 1`も使えます。右辺の式・状態参照・`++`は使えません。`match` で抽出した文字列は、string変数に限り `player_name = $match.name` で代入できます。
 
 作品固有Stageの表示に必要な状態だけは、最上位の `publicStateVariables` へ状態変数IDを列挙できます。公開値はPlayerStateの `projectState` へ入り、未指定の状態変数はクライアントへ返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。未定義のIDや重複はscenario検証で拒否されます。
 
@@ -190,7 +216,7 @@ player_input =~ /^(はい|了解)/u
 
 ## 検索語
 
-アプリとコンテンツの `search` へ、プレイヤーが入力しそうな語句を列挙します。入力はNFKCで正規化し、プレイヤーの入力に検索語が含まれる場合に一致します。短い入力を長い検索語へ逆向きに一致させることはありません。
+アプリ、コンテンツ、talkの `search` へ、プレイヤーが入力しそうな語句を列挙します。入力はNFKCで正規化し、プレイヤーの入力に検索語が含まれる場合に一致します。短い入力を長い検索語へ逆向きに一致させることはありません。
 
 ```json
 {
@@ -214,21 +240,21 @@ player_input =~ /^(はい|了解)/u
 
 `repairLabel` は修復前に表示する壊れた名称です。
 
-`searchResponses` では、検索結果の有無を示す `when`、任意の検索語 `search`、状態条件 `cond`、返答本文を上から順に定義します。`suppressResults: true` は「ヒント」のように返答だけを表示する場合に使います。該当定義がなければ標準の発見／未発見メッセージを返します。
+検索AIの案内文、ヒント、検索結果の前後に出す台詞は、固定の`search_agent` talkとして`talk_blocks.tsv`と`talk_flow.tsv`へ記述します。固定の発見／未発見メッセージはなく、作品に合う文面をblockとして定義できます。検索実行と入力欄制御を含む書き方は[会話エンジン](conversation.md#検索ai-talk)を参照してください。
 
 ## ラジオの再生条件と音声cue
 
-ラジオcontentの `record.playbackCond` が偽の間は音声情報をクライアントへ渡さず、`playbackDisabledLabel` を表示します。投稿フォームは `formDisabledCond` が真の間だけ無効になります。どちらの条件式もサーバーで評価され、条件式自体はクライアントへ公開されません。フォームhookの `event.fields` には入力値に加えて、照合済みの `formId`、`appId`、`contentId` が入ります。この3名はシステム用として予約されています。
+ラジオcontentの `record.playbackCond` が偽の間は音声情報をクライアントへ渡さず、`playbackDisabledLabel` を表示します。投稿フォームは `formDisabledCond` が真の間だけ無効になります。どちらの条件式もサーバーで評価され、条件式自体はクライアントへ公開されません。フォームhookでは照合済みの`event.formId`と`event.contentId`を直接参照し、入力値と`appId`は`event.fields`に入ります。
 
 `record.transcript` を指定すると、ラジオ再生位置に同期した字幕を再生画面へ表示します。形式は着信字幕と同じ `{ "atMs": 0, "text": "..." }` の配列です。ラジオには全文書き起こし画面はありません。`transcript` は任意で、省略した番組は字幕欄を表示しません。
 
-`audioCues` は `{ "id": "cue_name", "atMs": 25000 }` の配列です。クライアントには順番と時刻だけを渡し、到達通知を受けたサーバーが `cueId` と `cueTarget`（`content_id:cue_name`）を復元してhookへ渡します。hookは `scenario_event` のtargetを `audio_cue_reached` とし、`event.fields.cueTarget` を確認します。
+`audioCues` は `{ "id": "cue_name", "atMs": 25000 }` の配列です。authoringでは`{ "id": "cue_name", "at": "00:25" }`のように秒、`MM:SS`、`HH:MM:SS`を指定しても、build時に`atMs`へ正規化されます。クライアントには順番と時刻だけを渡し、到達通知を受けたサーバーが `cueId` と `cueTarget`（`content_id:cue_name`）を復元してhookへ渡します。hookはeventを`audio_cue_reached`、targetを`content_id:cue_name`とし、`event.cueId / cueTarget / cueIndex`を確認します。
 
 固定音声と生成音声をつなぐ場合は、`audioSegments` に `{ "kind": "audio", "audioUrl": "/..." }` と `{ "kind": "generated", "genAudioId": "..." }` を並べます。生成音声の状態と再生URLは、ラジオ項目と着信履歴のどちらでもサーバー応答時に解決されます。
 
 ## チャット再認証
 
-`chatAuthGate` の `cond` を満たす間、チャットは再認証画面を表示し、直接投稿も拒否します。`linkSentCond` は認証リンク発行済みの表示に使います。リンク発行と認証完了の状態更新は通常のscenario event hookで書きます。デモの `send_chat_auth_link` と `verify_chat_auth` が一巡例です。
+`chatAuthGate` の `cond` を満たす間、チャットは再認証画面を表示し、直接投稿も拒否します。`linkSentCond` は認証リンク発行済みの表示に使います。リンク発行はcustom event、認証完了は`message_link_opened` hookで書きます。デモの `send_chat_auth_link` と `verify_chat_auth` が一巡例です。
 
 ## hook
 
@@ -237,21 +263,70 @@ player_input =~ /^(はい|了解)/u
 利用できるイベントは次の通りです。
 
 - `session_started`
+- `blocked_content_link_opened`
 - `content_repaired`
 - `content_opened`
 - `content_unlocked`
-- `talk_sent`
-- `scenario_event`
+- `audio_playback_completed`
+- `audio_cue_reached`
+- `incoming_call_completed`
+- `message_link_opened`
+- `talk_turn_completed`
+- `form_submitted`
+- `scheduled_event`
 
-hookからは、状態変数、コンテンツ、アプリ、会話block、ToDo、予約、着信、生成音声、終了演出を操作できます。ToDoは定義しただけでは表示されず、`context.todo.add(id)` で表示対象へ加え、完了時に `context.todo.remove(id)` で外します。`cond` は表示対象になっているToDoへ追加で掛ける条件です。外部サービスを使う生成音声ジョブはserverモード向けです。`context.talk.addBlock(talkId, blockId)` はTSVのblockをそのまま追加するため、リンク・添付・表示間隔も保持します。作品固有の処理はhookへ置き、汎用Workerへ条件分岐を増やさない方針です。
+このほか、`clientCallableEvents`や予約処理から呼ぶ作品固有event IDを定義できます。廃止済みの`talk_sent`と`scenario_event`は使用できません。
+
+hookからは、状態変数、コンテンツ、アプリ、会話block、ToDo、予約、着信、生成音声、終了演出を操作できます。複数の状態更新は`context.state.apply([...])`へまとめられます。ToDoは定義しただけでは表示されず、`context.todo.add(id)` で表示対象へ加え、完了時に `context.todo.remove(id)` で外します。
+
+`context.talk.addBlock(talkId, blockId)`はTSVのblockを追加し、その瞬間のtemplate値を固定したうえで、talk flowの通常遷移と同じく`from`を追加blockへ進めます。指定できるblockは、指定talkに属する非repeat blockのうち、repeat派生を含む全表示でtemplateを状態変数だけから解決できるものです。別talkのblockやmatch値を必要とするblockは、生成されたhook contextの型で拒否します。会話を続ける場合は、追加先blockを`from`にしたdefault ruleが必要です。`context.talk.addBlock(talkId, blockId, { mode: "stay" })`は、talk flowの`mode=stay`と同様にblockを追加しても`from`と`turnKey`を変更しません。会話位置と無関係な案内、新着、別eventの結果通知には`mode: "stay"`を使います。hook handlerは同期関数として副作用を順番に記録し、PlayerStateと同じcommitへ保存します。
+
+hookから検索結果カードだけを検索AIへ追加する場合は、`context.talk.search("search_agent", query)`を使います。これは固定の`search_agent` talkへ結果を追加しますが、talkの`from`と検索入力欄の状態は変更しません。
+
+hookから入力状態を変える場合は、SMS、チャット、検索AIのいずれにも次を使用できます。
+
+```ts
+context.talk.showInput("guide");
+context.talk.hideInput("guide");
+context.talk.enableInput("guide");
+context.talk.disableInput("guide");
+```
+
+show／hideは自由入力composerの表示だけを変え、Quick Replyには影響しません。enable／disableは通常入力、添付、共有、Quick Replyのすべてへ適用します。入力状態だけではfromとturnKeyを変更せず、ほかのtalk effectと同じく記述順にPlayerStateへ反映します。
+
+アプリに属さない単発演出は`context.effect.noise(durationMs?)`、`flash(options?)`、`blackout(options?)`で記録します。複数指定した場合は記述順に再生します。ノイズは既定100ms、上限8秒です。フラッシュと暗転は次のobject形式で、フェードイン、最大強度の維持、フェードアウトを指定します。旧来の数値だけを渡す形式は使用できません。
+
+```ts
+context.effect.flash({
+  fadeInMs: 30,
+  holdMs: 40,
+  fadeOutMs: 270,
+  intensity: 0.9,
+  color: "#fffaf2"
+});
+context.effect.blackout({
+  fadeInMs: 220,
+  holdMs: 180,
+  fadeOutMs: 300,
+  intensity: 1
+});
+```
+
+object自体と各項目は省略できます。上記がそれぞれの既定値です。`intensity`は0〜1へ補正し、暗転色は黒で固定します。フラッシュの`color`は6桁HEXだけを受け付け、小文字へ正規化します。不正値は`#fffaf2`になります。非有限または欠落した時間は既定値へ戻し、負の時間は補正します。`holdMs`は0まで、必須の`fadeInMs`と`fadeOutMs`は最小16msです。3区間の合計が8秒を超える場合は、両フェードの最小時間を確保したまま比率を保って8秒へ収めます。
+
+複数phaseとdismiss後の遷移を持つ演出は`context.effectSequence.gameOver(reasonMessage?)`または`allClear(appId, contentId, autoplay?)`を使います。effect sequenceは一度のhook実行で最大1件かつ最後の命令です。それ以前のstateやtalk変更はcommitし、同じrequest内の後続hook eventと予約event処理は実行しません。`context.form.deny(error)`だけは入力拒否として全変更と演出を破棄します。`scheduled_event`は応答先が安定しないため、effect、effect sequence、`form.deny`、`genAudio.reject`を使用できません。誤って使用した予定イベントは完了扱いにせず、再実行可能な待機状態へ戻します。
+
+`content_repaired` と `content_opened` の `target` には、コンテンツID、アプリID、talk IDを指定できます。`content_repaired`は対象が修復された時、`content_opened`は修復hookがeffect sequenceで後続処理を終了した場合を除き、利用可能な対象を開くたびにシナリオで定義したIDで発火します。hookから修復する場合は`context.content.setState(id, "repaired")`を使います。`content_unlocked` は鍵付きコンテンツだけを対象とするため、コンテンツIDを指定します。
 
 同じeventで実行するhookは、dispatch開始時点の状態から先に確定します。先に書いたhookが状態を変更しても、その変更によって同じdispatch内の別hookが新たに発火することはありません。連続処理が必要なら、1つのhookへまとめるか、別のscenario eventを予約してください。
 
-`context.schedule.after` で後続のscenario eventを予約でき、次の予定時刻はクライアントへ返されます。予約するevent IDには、同じtargetを持つ `scenario_event` hookを明示的に定義してください。`context.incomingCall.show` で `incomingCalls` に定義した着信を表示できます。通話完了時はコアが表示中の着信を閉じ、その後 `incoming_call_completed` eventをhookへ渡します。デモの `schedule_demo_call` と `show_demo_call` が最小例です。
+`context.schedule.after("show_call", 30_000, fields?, instanceId?)`で後続eventを予約でき、`scheduled_event` hookのtargetへ`show_call`を指定します。同じlogical eventを複数instance持つ場合だけ第4引数を使います。`context.incoming.start(id)`で着信を表示し、`markCompleted(id)`で完了済みとして再発火を防ぎます。通話完了時はコアが表示中の着信を閉じ、`incoming_call_completed` eventとcall IDをhookへ渡します。
 
 `schedule.after` のschedule IDは、一度の予約を識別する使い切りIDです。完了したIDの再予約は保存モードをまたいで保証されないため、同じ処理をもう一度予約するときは新しいIDを使ってください。
 
-作品固有UIから `ProjectStageContext.dispatchScenarioEvent` で呼ぶイベントだけは、シナリオ最上位の `clientCallableEvents` へtargetを指定します。許可はイベント単位で、同じtargetに対応する `scenario_event` hookはすべて通常どおり評価されます。音声再生完了、音声cue、着信完了、破損リンク通知はコアUIの標準イベントなので指定不要です。予約イベント、メッセージ内リンク、フォーム送信にも指定は不要です。
+一つのhook dispatch内だけでなく、コンテンツ修復時の`content_repaired`と`content_opened`など、一度の保存へまとまる複数hookでも同じschedule instance IDを複数操作できません。生成音声も、一度の保存で同じIDを複数回`prepare`しないでください。Cloudflare、AWS、browserのすべてで保存前にauthoring errorとして拒否します。
+
+作品固有UIから `ProjectStageContext.dispatchScenarioEvent` で呼ぶcustom eventだけは、シナリオ最上位の `clientCallableEvents` へevent IDを指定します。同じevent名のhookが通常どおり評価されます。音声再生完了、音声cue、着信完了、破損リンク通知はコアUIの標準eventなので指定不要です。予約イベント、メッセージ内リンク、フォーム送信にも指定は不要です。
 
 ```json
 {

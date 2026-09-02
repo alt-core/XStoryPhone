@@ -30,6 +30,7 @@ export type ScenarioApp = {
   initialState: ContentInitialState;
   search: readonly (string | readonly string[])[];
   cond: string;
+  badgeCond: string;
 };
 
 export type ScenarioContent = {
@@ -43,6 +44,12 @@ export type ScenarioContent = {
   record: Record<string, unknown>;
 };
 
+export type TalkOutputStep =
+  | { kind: "block"; blockId: string }
+  | { kind: "search"; queryTemplate: string }
+  | { kind: "input"; action: "show" | "hide" | "enable" | "disable" }
+  | { kind: "if"; cond: string; blockId: string };
+
 export type TalkRule = {
   id: string;
   order: number;
@@ -52,24 +59,46 @@ export type TalkRule = {
   intent: string;
   criteria: string;
   match: string;
+  outputSteps: readonly TalkOutputStep[];
   nextBlocks: readonly string[];
+  nextFromId: string;
   set: readonly string[];
   mode: "" | "stay" | "game_over";
   notes: string;
   example: string;
 };
 
-export type ScenarioTalk = {
+export type ScenarioDeviceTalk = {
   id: string;
   publicId: string;
   kind: "sms" | "chat";
   appId: "messages" | "chat";
   label: string;
+  avatarUrl?: string;
+  initialState: ContentInitialState;
+  repairLabel?: string;
+  search: readonly (string | readonly string[])[];
   cond: string;
+  inputVisible: boolean;
+  inputEnabled: boolean;
   startBlocks: readonly string[];
   initialFrom: string;
   rules: readonly TalkRule[];
 };
+
+export type ScenarioSearchAgentTalk = {
+  id: "search_agent";
+  publicId: string;
+  kind: "search_agent";
+  label: string;
+  inputVisible: boolean;
+  inputEnabled: boolean;
+  startSteps: readonly TalkOutputStep[];
+  initialFrom: string;
+  rules: readonly TalkRule[];
+};
+
+export type ScenarioTalk = ScenarioDeviceTalk | ScenarioSearchAgentTalk;
 
 export type ScenarioTalkPerson = {
   id: string;
@@ -95,6 +124,7 @@ export type ScenarioTalkBlockMessage = {
   attachmentId: string;
   sentAt: string;
   delayMs?: number;
+  quickReplies?: readonly string[];
   notes: string;
   updatedAt: string;
   source: string;
@@ -111,8 +141,8 @@ export type ScenarioTalkBlock = {
 
 export type ScenarioAttachmentDefinition = {
   id: string;
-  type: "image" | "audio" | "video";
-  asset: string;
+  type: "image" | "audio" | "video" | "document";
+  asset?: string;
   content?: string;
   lock?: "password";
   title?: string;
@@ -124,6 +154,7 @@ export type ScenarioIncomingCall = {
   id: string;
   publicId: string;
   name: string;
+  cond: string;
   audioUrl?: string;
   transcript?: readonly {
     atMs: number;
@@ -157,15 +188,6 @@ export type ScenarioAssistantMessage = {
   cond: string;
 };
 
-export type ScenarioSearchResponse = {
-  id: string;
-  when: "" | "found" | "not_found";
-  search: readonly (string | readonly string[])[];
-  cond: string;
-  body: string;
-  suppressResults: boolean;
-};
-
 export type ScenarioChatAuthGate = {
   cond: string;
   linkSentCond: string;
@@ -179,6 +201,9 @@ export type ClientScenario = {
 };
 
 export type WorkerScenario = ClientScenario & {
+  clientRevision: string;
+  transcriptRevision: string;
+  projectAppIds: readonly string[];
   features: {
     llm: boolean;
   };
@@ -197,7 +222,6 @@ export type WorkerScenario = ClientScenario & {
   todos: readonly { id: string; text: string; cond: string }[];
   notifications: readonly ScenarioNotification[];
   assistantMessages: readonly ScenarioAssistantMessage[];
-  searchResponses: readonly ScenarioSearchResponse[];
   chatAuthGate: ScenarioChatAuthGate | null;
   clientCallableEvents: readonly string[];
   hooks: readonly ScenarioHookDefinition[];
@@ -234,7 +258,7 @@ export type PublicGeneratedAudioState = {
 };
 
 export type ScenarioHookDefinition = {
-  event: "session_started" | "content_repaired" | "content_opened" | "content_unlocked" | "talk_sent" | "scenario_event";
+  event: string;
   target: string;
   handler: string;
   cond: string;
@@ -252,6 +276,7 @@ export type StoredTalkMessage = {
   segments?: readonly ScenarioMessageSegment[];
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
+  quickReplies?: readonly string[];
   attachment: ScenarioMessageAttachment | null;
   sentAt: string;
   scenarioBlockId?: string;

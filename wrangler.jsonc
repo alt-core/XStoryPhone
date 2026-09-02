@@ -21,7 +21,10 @@
         }
       ],
       "vars": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "LLM_ANALYTICS_ENABLED": "false",
+        "LLM_DEBUG_LOGS": "false",
+        "LLM_RESULT_RETENTION_DAYS": "30"
       }
     },
     "stg": {
@@ -41,7 +44,10 @@
         }
       ],
       "vars": {
-        "APP_ENV": "staging"
+        "APP_ENV": "staging",
+        "LLM_ANALYTICS_ENABLED": "false",
+        "LLM_DEBUG_LOGS": "false",
+        "LLM_RESULT_RETENTION_DAYS": "30"
       }
     },
     "prod": {
@@ -61,7 +67,10 @@
         }
       ],
       "vars": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "LLM_ANALYTICS_ENABLED": "false",
+        "LLM_DEBUG_LOGS": "false",
+        "LLM_RESULT_RETENTION_DAYS": "30"
       }
     }
   }

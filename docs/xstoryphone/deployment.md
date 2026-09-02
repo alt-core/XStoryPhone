@@ -62,7 +62,17 @@ npx wrangler secret put ACCESS_CODE_SECRET --env prod
 ACCESS_CODE_SECRET='登録した値' npm run access-code -- 0001
 ```
 
-LLM providerが推論強度の指定に対応している場合だけ、対象環境のvarsへ `LLM_REASONING_EFFORT` も設定できます。未設定ならproviderへこの項目を送りません。
+LLM providerが推論強度の指定に対応している場合だけ、対象環境のvarsへ `LLM_REASONING_EFFORT` も設定できます。未設定時はGemini 2.5系またはFlash-Lite系の非Proへ`none`、その他のGemini 3系へ`minimal`を既定値として送り、それ以外のmodelには送りません。
+
+hookで`fast / super / ultra`を使う場合は、必要なprofileだけ次のvarsを設定します。fastはmodel未設定時に`LLM_MODEL`を使います。super/ultraは専用model未設定時に利用不能として扱います。
+
+```text
+LLM_PROFILE_FAST_MODEL / REASONING_EFFORT / TIMEOUT_MS
+LLM_PROFILE_SUPER_MODEL / REASONING_EFFORT / TIMEOUT_MS
+LLM_PROFILE_ULTRA_MODEL / REASONING_EFFORT / TIMEOUT_MS
+```
+
+`LLM_ANALYTICS_ENABLED=true`は本文を含まないusage logを有効にします。`LLM_DEBUG_LOGS=true`は入力と応答を含むため、調査中だけ有効にし、調査後はfalseへ戻してください。hook LLM cacheの保持日数は`LLM_RESULT_RETENTION_DAYS`で指定し、未指定時は30日です。D1は期限切れ行を少数ずつbest-effort削除します。
 
 GA4による任意の計測を使う場合だけ、ビルド実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 

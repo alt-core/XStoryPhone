@@ -190,7 +190,7 @@
   .noise {
     position: absolute;
     inset: 0;
-    z-index: 8;
+    z-index: 30;
     contain: strict;
     overflow: hidden;
     background:

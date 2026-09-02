@@ -21,11 +21,13 @@
   },
   "stateVariables": {
     "image_color_reported": false,
+    "clue_attachments_pending": false,
     "old_note_opened": false,
     "rainy_window_opened": false,
     "chat_auth_link_sent": false,
     "chat_auth_verified": false,
     "demo_completed": false,
+    "demo_completion_announced": false,
     "demo_call_completed": false,
     "demo_chat_cross_received": false,
     "demo_chat_message_received": false,
@@ -39,7 +41,7 @@
   },
   "photoDescriptions": {
     "evening_platform": "夕暮れの駅のホーム。黄色い点字ブロックと遠くの列車が写っている。",
-    "rainy_window": "雨粒の付いた窓越しに夜景が見え、中央付近の黄色い灯りが最も大きく写っている。",
+    "rainy_window": "雨粒の付いた窓越しに夜景が見え、右下寄りの青い灯りが最も大きく写っている。",
     "coffee_table": "コーヒーカップと開いたノートが木製の机に置かれている。",
     "demo_received_image": "メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。",
     "demo_video": "プログラムで生成したカラーバーが動くデモ動画。"
@@ -59,7 +61,7 @@
       "icon": "message_circle",
       "accent": "#5cc8a7",
       "initialState": "normal",
-      "search": ["メッセージ", "デモ進行係"]
+      "search": ["メッセージ"]
     },
     {
       "id": "mail",
@@ -75,7 +77,7 @@
       "icon": "notebook_pen",
       "accent": "#8fd2ff",
       "initialState": "normal",
-      "search": ["メモ", "ノート"]
+      "search": ["メモアプリ", "ノートアプリ"]
     },
     {
       "id": "photos",
@@ -122,6 +124,25 @@
   ],
   "contents": [
     {
+      "id": "demo_call_history",
+      "appId": "phone",
+      "initialState": "normal",
+      "cond": "demo_call_completed",
+      "search": ["電話", "着信", "書き起こし"],
+      "record": {
+        "name": "着信テスト",
+        "kind": "incoming",
+        "at": "20:16",
+        "durationLabel": "6秒",
+        "audioUrl": "/system/call-caption-sample.wav",
+        "transcript": [
+          { "atMs": 0, "text": "［低い確認音］" },
+          { "atMs": 2000, "text": "［中くらいの確認音］" },
+          { "atMs": 4000, "text": "［高い確認音］" }
+        ]
+      }
+    },
+    {
       "id": "missed_call",
       "appId": "phone",
       "initialState": "normal",
@@ -131,6 +152,24 @@
         "kind": "missed",
         "at": "20:02",
         "durationLabel": "応答なし"
+      }
+    },
+    {
+      "id": "demo_voicemail",
+      "appId": "phone",
+      "initialState": "normal",
+      "search": ["留守番電話", "留守電", "ボイスメール"],
+      "record": {
+        "name": "案内係",
+        "kind": "voicemail",
+        "at": "19:48",
+        "durationLabel": "6秒",
+        "audioUrl": "/system/call-caption-sample.wav",
+        "transcript": [
+          { "atMs": 0, "text": "留守番電話の再生確認です。" },
+          { "atMs": 2000, "text": "書き起こしは時刻を付けずに表示します。" },
+          { "atMs": 4000, "text": "最後までスクロールして確認できます。" }
+        ]
       }
     },
     {
@@ -174,25 +213,6 @@
       "initialState": "normal",
       "search": ["ダミーデータ"],
       "record": { "name": "ダミーデータ", "kind": "missed", "at": "00:00", "durationLabel": "応答なし" }
-    },
-    {
-      "id": "demo_call_history",
-      "appId": "phone",
-      "initialState": "normal",
-      "cond": "demo_call_completed",
-      "search": ["電話", "着信", "書き起こし"],
-      "record": {
-        "name": "着信テスト",
-        "kind": "incoming",
-        "at": "20:16",
-        "durationLabel": "6秒",
-        "audioUrl": "/system/call-caption-sample.wav",
-        "transcript": [
-          { "atMs": 0, "text": "［低い確認音］" },
-          { "atMs": 2000, "text": "［中くらいの確認音］" },
-          { "atMs": 4000, "text": "［高い確認音］" }
-        ]
-      }
     },
     {
       "id": "mail_guide",
@@ -293,7 +313,7 @@
       "search": ["機能テスト", "試し方", "着信テスト", "遅延メッセージ"],
       "record": {
         "title": "機能テスト一覧",
-        "body": "ナビで「消えた連絡記録」と検索すると、メッセージ内の破損した初期履歴を修復できます。\n\nメッセージの「デモ進行係」へ、次の語を1つずつ送信できます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・メッセージ連携：別のメッセージルームへ届きます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャット復旧後は、ナビで「消えた談話記録」と検索するとチャット内の破損履歴を修復できます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\n各受信では通知も表示されます。繰り返す場合は通知シェードのテスト用リセットを使ってください。",
+        "body": "ナビで「機能テスト」と入力するか、Quick Replyの「機能テスト」を選ぶと、次の操作を選べます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・ノイズ演出：端末全体にノイズを表示します。\n・フラッシュ演出：端末全体を白く光らせます。\n・暗転演出：端末全体を一時的に暗転します。\n・ゲームオーバー演出：ゲームオーバー画面を表示します。\n・オールクリア演出：オールクリア画面の後、ラジオへ移動します。\n\nメッセージの「デモ連絡先」では、何か送信すると連携先を選ぶQuick Replyが表示されます。\n・別ルームへ送る：別のメッセージルームへ届きます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\nナビで「消えた連絡記録」または「消えた談話記録」と検索すると、会話内の破損した初期履歴を修復できます。各受信では通知も表示されます。繰り返す場合は通知シェードの「最初から」を使ってください。",
         "tags": ["案内", "機能テスト"]
       }
     },
@@ -302,10 +322,10 @@
       "appId": "notes",
       "initialState": "repairable",
       "repairLabel": "古▚▐▀▜メモ",
-      "search": ["古いメモ", "ふるいメモ", "手がかり"],
+      "search": ["古いメモ", "ふるいメモ"],
       "record": {
         "title": "古いメモ",
-        "body": "次は画像の修復です。ナビで「雨」と検索して画像を開き、表示されたタグから灯りの色を確認してください。色が分かったら、メッセージでデモ進行係にその色を伝えてください。",
+        "body": "次は画像を探します。ナビで「雨」と検索し、表示された画像で一番大きく見える灯りの色を確認してください。色が分かったら、そのままナビに色を伝えてください。",
         "tags": ["操作", "画像"]
       }
     },
@@ -383,7 +403,7 @@
       "record": {
         "title": "雨の日の窓",
         "imageUrl": "/demo/album/rainy-window.webp",
-        "tags": ["雨", "窓", "黄色い灯り"]
+        "tags": ["雨", "窓"]
       }
     },
     {
@@ -657,7 +677,7 @@
     },
     {
       "id": "guide",
-      "name": "デモ進行係",
+      "name": "デモ連絡先",
       "role": "npc"
     },
     {
@@ -706,7 +726,8 @@
       "id": "guide",
       "kind": "sms",
       "appId": "messages",
-      "label": "デモ進行係",
+      "label": "デモ連絡先",
+      "search": ["デモ連絡先", "連絡先"],
       "startBlocks": ["history_archive_a", "history_archive_b", "intro"]
     },
     {
@@ -771,6 +792,7 @@
       "appId": "chat",
       "label": "サンプルルーム",
       "cond": "sealed_note_unlocked",
+      "search": ["サンプルルーム"],
       "startBlocks": ["history_archive", "start"]
     },
     {
@@ -828,6 +850,11 @@
       "label": "ダミーデータ",
       "cond": "sealed_note_unlocked",
       "startBlocks": ["start"]
+    },
+    {
+      "id": "search_agent",
+      "kind": "search_agent",
+      "startSteps": ["/input hide", "intro", "/input show"]
     }
   ],
   "todos": [
@@ -839,11 +866,11 @@
     {
       "id": "find_rainy_window",
       "text": "ナビで「雨」と検索し、写真の灯りの色を確かめる",
-      "cond": "old_note_opened && !rainy_window_opened"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
     },
     {
       "id": "report_clue",
-      "text": "メッセージでデモ進行係に灯りの色を伝える",
+      "text": "ナビに写真の灯りの色を伝える",
       "cond": "rainy_window_opened && !image_color_reported"
     },
     {
@@ -869,18 +896,18 @@
   ],
   "notifications": [
     {
-      "id": "welcome",
+      "id": "clue_attachments",
       "appId": "messages",
       "targetTalkId": "guide",
-      "title": "デモ進行係",
-      "body": "ナビ検索とコンテンツ修復を試してみよう。",
-      "cond": "!old_note_opened"
+      "title": "デモ連絡先",
+      "body": "確認用の画像と鍵付き添付が届きました。",
+      "cond": "image_color_reported && !sealed_note_unlocked"
     },
     {
       "id": "chat_auth",
       "appId": "messages",
       "targetTalkId": "guide",
-      "title": "チャット認証",
+      "title": "デモ連絡先",
       "body": "再認証用のリンクを発行しました。",
       "cond": "chat_auth_link_sent && !chat_auth_verified"
     },
@@ -937,7 +964,7 @@
     {
       "id": "home_hint",
       "surface": "home",
-      "body": "ナビで壊れたデータを検索し、修復してみよう。",
+      "body": "ナビで「古いメモ」を検索し、修復してみよう。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "!old_note_opened"
@@ -948,20 +975,20 @@
       "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
       "weight": 1,
       "agentAction": "hi",
-      "cond": "old_note_opened && !rainy_window_opened"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
     },
     {
       "id": "report_hint",
       "surface": "home",
-      "body": "写真で一番大きく見える灯りの色を、メッセージで教えて。",
+      "body": "写真で一番大きく見える灯りの色を、ナビで教えて。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "rainy_window_opened && !image_color_reported"
     },
     {
       "id": "sealed_note_opened",
-      "surface": "home",
-      "body": "「チャット」を検索して開き、再認証リンクを発行しよう。",
+      "surface": "messages",
+      "body": "次の案内がナビに届いています。右下のナビを開いてください。",
       "weight": 1,
       "agentAction": "hi",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent"
@@ -975,88 +1002,19 @@
       "cond": "chat_auth_verified && !demo_completed"
     },
     {
+      "id": "demo_completed_nav",
+      "surface": "chat",
+      "body": "基本デモが完了しました。右下のナビから機能テストも試せます。",
+      "weight": 1,
+      "agentAction": "hi",
+      "cond": "demo_completed"
+    },
+    {
       "id": "radio_completed",
       "surface": "radio",
       "body": "音声の再生完了イベントを受け取りました。",
       "weight": 1,
       "cond": "radio_playback_completed"
-    }
-  ],
-  "searchResponses": [
-    {
-      "id": "hint",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "まずは「古いメモ」と検索して、コンテンツ修復を試してみて。",
-      "cond": "!old_note_opened",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_photo",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "「雨」と検索して写真を開き、一番大きく見える灯りの色を確かめて。",
-      "cond": "old_note_opened && !rainy_window_opened",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_report",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "メッセージでデモ進行係に、写真で一番大きく見えた灯りの色を送って。",
-      "cond": "rainy_window_opened && !image_color_reported",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_unlock",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "メッセージに届いた鍵付きメモを、パスワード「0420」で開いて。",
-      "cond": "image_color_reported && !sealed_note_unlocked",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_chat",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "「チャット」を検索して開き、再認証リンクを発行して。",
-      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_auth",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "メッセージに届いた再認証リンクから、チャットを開いて。",
-      "cond": "chat_auth_link_sent && !chat_auth_verified",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_contact",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "再認証したチャットを開いて、サンプルルームでメッセージを送ってみて。",
-      "cond": "chat_auth_verified && !demo_completed",
-      "suppressResults": true
-    },
-    {
-      "id": "hint_done",
-      "when": "",
-      "search": ["ヒント"],
-      "body": "検索・修復・会話・添付解錠・再認証のデモは完了しています。",
-      "cond": "demo_completed",
-      "suppressResults": true
-    },
-    {
-      "id": "found",
-      "when": "found",
-      "body": "見つかったよ。"
-    },
-    {
-      "id": "not_found",
-      "when": "not_found",
-      "body": "該当するデータは見つかりませんでした。",
-      "suppressResults": true
     }
   ],
   "chatAuthGate": {
@@ -1105,15 +1063,20 @@
       "cond": "!rainy_window_opened"
     },
     {
-      "event": "talk_sent",
-      "target": "guide",
-      "handler": "activate_unlock_todo",
-      "cond": "image_color_reported && !sealed_note_unlocked"
+      "event": "talk_turn_completed",
+      "target": "search_agent",
+      "handler": "deliver_clue_attachments",
+      "cond": "clue_attachments_pending"
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
+      "target": "search_agent",
+      "handler": "handle_demo_nav_test_command"
+    },
+    {
+      "event": "talk_turn_completed",
       "target": "guide",
-      "handler": "handle_demo_test_command"
+      "handler": "handle_demo_message_test_command"
     },
     {
       "event": "content_unlocked",
@@ -1122,67 +1085,62 @@
       "cond": "!sealed_note_unlocked"
     },
     {
-      "event": "scenario_event",
-      "target": "schedule_demo_call",
+      "event": "schedule_demo_call",
       "handler": "schedule_demo_call"
     },
     {
-      "event": "scenario_event",
+      "event": "scheduled_event",
       "target": "show_demo_call",
       "handler": "show_demo_call"
     },
     {
-      "event": "scenario_event",
+      "event": "scheduled_event",
       "target": "deliver_demo_delayed_message",
       "handler": "deliver_demo_delayed_message"
     },
     {
-      "event": "scenario_event",
-      "target": "incoming_call_completed",
+      "event": "incoming_call_completed",
+      "target": "demo_call",
       "handler": "mark_demo_call_completed",
       "cond": "!demo_call_completed"
     },
     {
-      "event": "scenario_event",
-      "target": "demo_form",
+      "event": "demo_form",
       "handler": "demo_form_game_over"
     },
     {
-      "event": "scenario_event",
-      "target": "demo_all_clear",
+      "event": "demo_all_clear",
       "handler": "demo_all_clear"
     },
     {
-      "event": "scenario_event",
-      "target": "demo_form_reject",
+      "event": "demo_form_reject",
       "handler": "demo_form_reject"
     },
     {
-      "event": "scenario_event",
-      "target": "chat_auth_link_requested",
+      "event": "chat_auth_link_requested",
       "handler": "send_chat_auth_link",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified"
     },
     {
-      "event": "scenario_event",
-      "target": "message_link_opened",
+      "event": "message_link_opened",
+      "target": "chat_auth_link_opened",
       "handler": "verify_chat_auth",
       "cond": "chat_auth_link_sent && !chat_auth_verified"
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
       "target": "lobby",
       "handler": "complete_demo_todo",
-      "cond": "demo_completed"
+      "cond": "demo_completed && !demo_completion_announced"
     },
     {
-      "event": "talk_sent",
+      "event": "talk_turn_completed",
       "target": "lobby",
       "handler": "handle_demo_chat_test_command"
     },
     {
-      "event": "scenario_event",
-      "target": "audio_playback_completed",
+      "event": "audio_playback_completed",
+      "target": "sample_radio",
       "handler": "mark_radio_playback_completed",
       "cond": "!radio_playback_completed"
     }

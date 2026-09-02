@@ -59,6 +59,38 @@ test("実行時も未定義の状態変数へsetしない", () => {
   const definitions = new Map([["known", { type: "boolean" }]]);
   assert.throws(
     () => applyStateAssignments({ known: false }, ["unknown = true"], {}, definitions),
-    /setの状態変数が未定義です/u
+    /set の状態変数が未定義です/u
   );
+});
+
+test("integer stateだけを安全な範囲で加減算する", () => {
+  const definitions = new Map([
+    ["count", { type: "integer" }],
+    ["label", { type: "string" }]
+  ]);
+  assert.deepEqual(
+    applyStateAssignments({ count: 2, label: "" }, ["count += 3", "count -= 1"], {}, definitions),
+    { count: 4, label: "" }
+  );
+  assert.match(validateStateAssignments(["label += 1"], definitions).join("\n"), /integer state/u);
+  assert.match(validateStateAssignments(["count += $match.value"], definitions, new Set(["value"])).join("\n"), /整数literal/u);
+  assert.throws(
+    () => applyStateAssignments({ count: Number.MAX_SAFE_INTEGER, label: "" }, ["count += 1"], {}, definitions),
+    /安全な整数範囲/u
+  );
+});
+
+test("安全でない整数と閉じていないset文字列を拒否する", () => {
+  const definitions = new Map([
+    ["count", { type: "integer" }],
+    ["label", { type: "string" }]
+  ]);
+  assert.match(validateConditionExpression("count == 9007199254740992", definitions).join("\n"), /安全な範囲/u);
+  assert.match(validateStateAssignments(["count = 9007199254740992"], definitions).join("\n"), /安全な範囲/u);
+  assert.match(validateStateAssignments(["label = '未完了"], definitions).join("\n"), /閉じていません/u);
+});
+
+test("大小比較はnumber同士だけを比較する", () => {
+  assert.equal(evaluateCondition("count > 2", { count: 3 }), true);
+  assert.equal(evaluateCondition("count > 2", { count: "3" }), false);
 });

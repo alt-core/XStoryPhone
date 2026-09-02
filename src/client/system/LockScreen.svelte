@@ -3,9 +3,11 @@
   import { Delete } from "@lucide/svelte";
   import { formatStoryDateLabel } from "../../shared/storyDate";
   import type { DeviceState } from "../scenario-runtime/types";
+  import { appCatalog, type AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
 
   export let deviceState: DeviceState;
+  export let apps: AppCatalogItem[] = appCatalog;
   export let onUnlock: (serialCode: string) => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false });
   export let onOpenNotification: (notificationId: string) => void = () => {};
   export let pinLength = 8;
@@ -152,7 +154,7 @@
       <span>{lockNotifications.length}件</span>
     </header>
     {#each lockNotifications.slice(0, 2) as notification}
-      <NotificationCard {notification} variant="lock" onSelect={() => onOpenNotification(notification.id)} />
+      <NotificationCard {notification} {apps} variant="lock" onSelect={() => onOpenNotification(notification.id)} />
     {/each}
   </section>
 </section>

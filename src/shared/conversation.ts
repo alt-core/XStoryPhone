@@ -1,5 +1,7 @@
 import { evaluateCondition } from "./condition.ts";
 import type { TalkRule } from "./scenario.ts";
+import { orderedTalkFlowRules } from "../worker/product/talkFlowSelection.ts";
+import { parseTalkFlowRegexCriteria } from "../worker/product/talkFlowLlmSelection.ts";
 
 export type RegexCriteria =
   | { kind: "none" }
@@ -24,41 +26,8 @@ export type TalkRuleResolution =
     };
 
 export function parseRegexCriteria(criteria: string): RegexCriteria {
-  const source = criteria.trim();
-  if (!source.startsWith("/")) {
-    return { kind: "none" };
-  }
-
-  let escaped = false;
-  let inClass = false;
-  let end = -1;
-  for (let index = 1; index < source.length; index += 1) {
-    const char = source[index];
-    if (escaped) {
-      escaped = false;
-    } else if (char === "\\") {
-      escaped = true;
-    } else if (char === "[") {
-      inClass = true;
-    } else if (char === "]") {
-      inClass = false;
-    } else if (char === "/" && !inClass) {
-      end = index;
-    }
-  }
-
-  if (end < 1) {
-    return { kind: "invalid", error: "正規表現を閉じる / がありません。" };
-  }
-
-  try {
-    return {
-      kind: "ready",
-      regex: new RegExp(source.slice(1, end), source.slice(end + 1))
-    };
-  } catch (error) {
-    return { kind: "invalid", error: error instanceof Error ? error.message : String(error) };
-  }
+  const parsed = parseTalkFlowRegexCriteria(criteria);
+  return parsed.kind === "ready" ? { kind: "ready", regex: parsed.regex } : parsed;
 }
 
 export async function resolveTalkRule(input: {
@@ -71,10 +40,11 @@ export async function resolveTalkRule(input: {
   semanticSelector?: SemanticRuleSelector;
 }): Promise<TalkRuleResolution> {
   const normalizedInput = input.playerInput.normalize("NFC").trim();
-  const activeRules = input.rules
-    .filter((rule) => rule.from === "*" || rule.from === input.from)
-    .filter((rule) => evaluateCondition(rule.cond, { ...input.stateValues, player_input: normalizedInput }))
-    .sort((left, right) => left.order - right.order);
+  const activeRules = orderedTalkFlowRules(
+    input.rules.filter((rule) => rule.from === "*"),
+    input.rules.filter((rule) => rule.from === input.from)
+  )
+    .filter((rule) => evaluateCondition(rule.cond, { ...input.stateValues, player_input: normalizedInput }));
   const defaultRule = activeRules.find((rule) => rule.from === input.from && rule.isDefault);
   if (!defaultRule) {
     return { ok: false, error: "missing_default" };

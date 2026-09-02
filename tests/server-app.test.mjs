@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createApp } from "../src/server/app.ts";
 import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
+import { encodeBrowserProgress } from "../src/server/browserProgress.ts";
+import { mergeTranscriptAppend } from "../src/server/store.ts";
 import { scenarioHookHandlers } from "../src/project/hooks.ts";
 import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
@@ -13,6 +15,7 @@ class MemoryStore {
   player = { id: "player-1", state: createInitialPlayerState(), stateVersion: 0 };
   transcripts = new Map();
   schedules = [];
+  audioJobs = new Map();
   createCalls = 0;
   playerCalls = 0;
   reviewEvents = [];
@@ -28,10 +31,22 @@ class MemoryStore {
   lastAccessCode = null;
   playerInputReviewRows = [];
   playerInputReviewFilters = null;
+  recordedInputEvents = [];
+  initialScheduleSeeds = [];
 
-  async createPasscodeSession(accessCode) {
+  async createPasscodeSession(accessCode, _initialState, initialSchedules = []) {
     this.createCalls += 1;
     this.lastAccessCode = accessCode;
+    this.initialScheduleSeeds = structuredClone(initialSchedules);
+    this.schedules.push(...initialSchedules.map((schedule) => ({
+      id: schedule.id,
+      scheduleId: schedule.id,
+      eventId: schedule.eventId,
+      fields: structuredClone(schedule.fields),
+      dueAt: schedule.dueAt,
+      playerId: this.player.id,
+      status: "queued"
+    })));
     return { playerId: this.player.id, sessionToken: "memory-token", created: true };
   }
   async isAccessCodeLocked(counter, at) {
@@ -52,16 +67,37 @@ class MemoryStore {
       ? structuredClone(transcript)
       : { streamId, transcriptKey, messages: [] };
   }
-  async savePlayer(player, nextState, transcripts = []) {
+  async savePlayer(player, nextState, transcripts = [], effects = {}) {
     if (this.saveConflictsRemaining > 0) {
       this.saveConflictsRemaining -= 1;
       return false;
     }
     if (player.stateVersion !== this.player.stateVersion) return false;
-    this.player = { ...player, state: structuredClone(nextState), stateVersion: player.stateVersion + 1 };
+    this.player = {
+      id: player.id,
+      state: structuredClone(nextState),
+      stateVersion: player.stateVersion + 1
+    };
     for (const transcript of transcripts) {
-      this.transcripts.set(`${player.id}\0${transcript.streamId}`, structuredClone(transcript));
+      const key = `${player.id}\0${transcript.streamId}`;
+      const current = this.transcripts.get(key) ?? {
+        streamId: transcript.streamId,
+        transcriptKey: transcript.transcriptKey,
+        messages: []
+      };
+      this.transcripts.set(key, structuredClone(mergeTranscriptAppend(current, transcript)));
     }
+    for (const effect of effects.schedules ?? []) {
+      const current = this.schedules.find((item) => item.scheduleId === effect.id);
+      if (effect.type === "cancel") {
+        if (current && (current.status === "queued" || current.status === "running")) current.status = "canceled";
+      } else if (current?.status !== "completed") {
+        const next = { id: effect.id, scheduleId: effect.id, eventId: effect.eventId, fields: effect.fields, dueAt: effect.dueAt, playerId: player.id, status: "queued" };
+        if (current) Object.assign(current, next);
+        else this.schedules.push(next);
+      }
+    }
+    for (const job of effects.generatedAudioJobs ?? []) this.audioJobs.set(job.audioId, structuredClone(job));
     return true;
   }
   async clearPlayerRuntimeJobs() { this.schedules = []; }
@@ -87,15 +123,16 @@ class MemoryStore {
     const event = this.schedules.find((item) => item.id === id);
     if (event) event.status = "queued";
   }
-  async recordInputEvent() {}
+  async recordInputEvent(event, enabled) {
+    if (enabled) this.recordedInputEvents.push(structuredClone(event));
+  }
   async playerInputEvents(filters) {
     this.playerInputReviewFilters = filters;
     return this.playerInputReviewRows;
   }
-  async generatedAudioJob() { return null; }
-  async saveGeneratedAudioJob() {}
-  async pendingGeneratedAudioJobs() { return []; }
-  async generatedAudioJobs() { return []; }
+  async generatedAudioJob(_playerId, audioId) { return structuredClone(this.audioJobs.get(audioId) ?? null); }
+  async saveGeneratedAudioJob(_playerId, job) { this.audioJobs.set(job.audioId, structuredClone(job)); }
+  async generatedAudioJobs() { return [...this.audioJobs.values()].map((job) => structuredClone(job)); }
   async reviewJudgments() { return this.reviewJudgmentRows; }
   async reviewInputEvents(talkId, fromId) {
     this.reviewInputRequests.push([talkId, fromId]);
@@ -113,6 +150,37 @@ class MemoryStore {
   async updateReviewJudgmentStatus() {}
   async deleteReviewTrialInput() { return false; }
   async updateReviewJudgmentSourceIds() {}
+}
+
+async function searchAgentRequest(app, init) {
+  const request = JSON.parse(init.body ?? "{}");
+  const stateResponse = await app.request("http://localhost/api/player-state", {
+    method: "POST",
+    headers: init.headers,
+    body: JSON.stringify({ ...(typeof request.progressToken === "string" ? { progressToken: request.progressToken } : {}) })
+  });
+  assert.equal(stateResponse.status, 200);
+  const stateBody = await stateResponse.json();
+  const talk = stateBody.playerState.talks.find((item) => item.kind === "search_agent");
+  assert.ok(talk);
+  return app.request("http://localhost/api/talk/send", {
+    method: "POST",
+    headers: init.headers,
+    body: JSON.stringify({
+      ...(stateBody.playerState.progressToken ? { progressToken: stateBody.playerState.progressToken } : {}),
+      talkId: talk.talkId,
+      turnKey: talk.turnKey,
+      message: request.query
+    })
+  });
+}
+
+function searchResultsFrom(body) {
+  return body.playerState.transcriptDeltas
+    .filter((delta) => delta.kind === "search_agent")
+    .flatMap((delta) => delta.messages)
+    .filter((item) => item.kind === "search_results")
+    .flatMap((item) => item.results);
 }
 
 test("共通HonoアプリはStoreを注入してセッション開始と状態取得を処理する", async () => {
@@ -144,6 +212,50 @@ test("共通HonoアプリはStoreを注入してセッション開始と状態�
   assert.equal(state.status, 200);
   assert.equal((await state.json()).playerState.stateVersion, store.player.stateVersion);
 
+  const searchTalk = startBody.playerState.talks.find((item) => item.kind === "search_agent");
+  assert.ok(searchTalk);
+  const searched = await app.request("http://localhost/api/talk/send", {
+    method: "POST",
+    headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+    body: JSON.stringify({ talkId: searchTalk.talkId, turnKey: searchTalk.turnKey, message: "古いメモ" })
+  });
+  assert.equal(searched.status, 200);
+  const transcript = await app.request(`http://localhost/api/transcript/${searchTalk.talkId}?after=0`, {
+    headers: { authorization: "Bearer memory-token" }
+  });
+  assert.equal(transcript.status, 200);
+  const transcriptBody = await transcript.json();
+  assert.equal(transcriptBody.delta.kind, "search_agent");
+  assert.deepEqual(transcriptBody.delta.messages.map((item) => item.seq), [1, 2, 3, 4]);
+  assert.deepEqual(transcriptBody.delta.messages.slice(-3).map((item) => item.kind), ["message", "search_results", "message"]);
+  assert.deepEqual(transcriptBody.delta.messages.at(-1).quickReplies, ["ヒント", "機能テスト", "ヘルプ"]);
+});
+
+test("serverの初期scheduleは新規player作成と同じStore操作へ渡す", async () => {
+  const schedule = {
+    id: "test_initial_schedule",
+    eventId: "show_demo_call",
+    delayMs: 60_000,
+    fields: { source: "initial" }
+  };
+  workerScenario.initialSchedules.push(schedule);
+  try {
+    const store = new MemoryStore();
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const before = Date.now();
+    const response = await app.request("http://localhost/api/session/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serialCode: "1234" })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(store.initialScheduleSeeds.length, 1);
+    assert.equal(store.schedules.length, 1);
+    assert.deepEqual(store.initialScheduleSeeds[0].fields, { source: "initial" });
+    assert.ok(Date.parse(store.initialScheduleSeeds[0].dueAt) >= before + schedule.delayMs);
+  } finally {
+    workerScenario.initialSchedules.splice(workerScenario.initialSchedules.indexOf(schedule), 1);
+  }
 });
 
 test("固定PINはクライアントへ正解を渡さずサーバーで一致判定する", async () => {
@@ -190,15 +302,16 @@ test("検索でtalk初期履歴blockを修復し、元のseqへ保存する", as
   assert.ok(historyContent);
   assert.ok(guide);
 
-  const searched = await app.request("http://localhost/api/search-agent/search", {
+  const searched = await searchAgentRequest(app, {
     method: "POST",
     headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-    body: JSON.stringify({ query: "消えた連絡記録", requestId: "history-repair-search" })
+    body: JSON.stringify({ query: "消えた連絡記録" })
   });
   assert.equal(searched.status, 200);
   const searchBody = await searched.json();
-  assert.equal(searchBody.results[0]?.targetKind, "talk_history");
-  assert.equal(searchBody.results[0]?.targetTalkId, guide.publicId);
+  const searchResults = searchResultsFrom(searchBody);
+  assert.equal(searchResults[0]?.targetKind, "talk_history");
+  assert.equal(searchResults[0]?.targetTalkId, guide.publicId);
 
   const opened = await app.request("http://localhost/api/content/opened", {
     method: "POST",
@@ -207,18 +320,77 @@ test("検索でtalk初期履歴blockを修復し、元のseqへ保存する", as
   });
   assert.equal(opened.status, 200);
   const openedBody = await opened.json();
-  const restoredDelta = openedBody.playerState.transcriptDeltas.find((delta) => delta.talkId === guide.publicId);
-  assert.deepEqual(restoredDelta?.messages.map((message) => message.seq), [1, 2]);
-  assert.ok(restoredDelta?.messages.every((message) => message.historyRepairId === historyContent.publicId));
+  const openedGuide = openedBody.playerState.visibleDeviceState.messages.find((thread) => thread.id === guide.publicId);
+  assert.deepEqual(openedGuide?.messages.map((message) => message.seq), [1, 2, 4]);
+  assert.ok(openedGuide?.messages.filter((message) => message.seq < 3)
+    .every((message) => message.historyRepairId === historyContent.publicId));
   assert.deepEqual(
     openedBody.playerState.visibleDeviceState.messages.find((thread) => thread.id === guide.publicId)?.brokenHistoryRanges,
     [{ beforeSeq: 4 }]
   );
   assert.equal(openedBody.playerState.talks.find((talk) => talk.talkId === guide.publicId)?.historyRevision, 1);
   assert.deepEqual(
-    store.transcripts.get(`${store.player.id}\0talk:guide`).messages.map((message) => message.seq),
-    [1, 2, 4]
+    store.transcripts.get(`${store.player.id}\0talk:guide`)?.messages ?? [],
+    []
   );
+});
+
+test("検索でrepairableなtalk全体を修復し、同じルームを開く", async () => {
+  const talk = workerScenario.talks.find((item) => item.id === "sms_receiver");
+  assert.ok(talk);
+  const original = {
+    initialState: talk.initialState,
+    repairLabel: talk.repairLabel,
+    search: talk.search
+  };
+  Object.assign(talk, {
+    initialState: "repairable",
+    repairLabel: "受▚▐▀箱",
+    search: ["修復対象ルーム"]
+  });
+  try {
+    const store = new MemoryStore();
+    const initialized = await reconcileScenarioState(store.player.state, store.player.id);
+    store.player.state = initialized.state;
+    for (const transcript of initialized.transcriptAppends) {
+      store.transcripts.set(`${store.player.id}\0${transcript.streamId}`, structuredClone(transcript));
+    }
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+
+    const directOpen = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "messages", contentId: talk.publicId })
+    });
+    assert.equal(directOpen.status, 409);
+
+    const searched = await searchAgentRequest(app, {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ query: "修復対象ルーム" })
+    });
+    assert.equal(searched.status, 200);
+    const searchBody = await searched.json();
+    const talkResult = searchResultsFrom(searchBody).find((result) => result.contentId === talk.publicId);
+    assert.equal(talkResult?.contentId, talk.publicId);
+    assert.equal(talkResult?.repairable, true);
+
+    const opened = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "messages", contentId: talk.publicId })
+    });
+    assert.equal(opened.status, 200);
+    const openedBody = await opened.json();
+    assert.equal(store.player.state.repairedContentIds.includes(talk.id), true);
+    assert.equal(openedBody.playerState.contentStates.some((item) => item.contentId === talk.publicId && item.state === "repaired"), true);
+    assert.equal(openedBody.playerState.talks.some((item) => item.talkId === talk.publicId), true);
+    const thread = openedBody.playerState.visibleDeviceState.messages.find((item) => item.id === talk.publicId);
+    assert.equal(thread?.contactName, talk.label);
+    assert.ok(thread?.messages.length);
+  } finally {
+    Object.assign(talk, original);
+  }
 });
 
 test("設定時だけアクセスコードのHMACチェック桁を検証する", async () => {
@@ -292,6 +464,17 @@ test("テストプレイ用進行リセットはdevとstgだけで公開ホス�
     headers: { authorization: "Bearer memory-token" }
   });
   assert.equal(localResponse.status, 200);
+
+  const poisonedStore = new MemoryStore();
+  poisonedStore.dueScheduledEvents = async () => {
+    throw new Error("恒久的に失敗する予定イベント");
+  };
+  const poisonedApp = createApp({ store: poisonedStore, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const recovered = await poisonedApp.request("https://example.com/api/reset-for-testing", {
+    method: "POST",
+    headers: { authorization: "Bearer memory-token" }
+  });
+  assert.equal(recovered.status, 200, "dev/stgのリセットは壊れた予定イベントを実行せず初期化する");
 });
 
 test("browserモードはDBを使わず署名済み進行トークンと差分履歴で進行する", async () => {
@@ -303,7 +486,7 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
   workerScenario.playerMode = "browser";
   workerScenario.clientCallableEvents.push("schedule_demo_call");
   scenarioHookHandlers.schedule_demo_call = (context) => {
-    context.schedule.after("demo_call_once", 0, "show_demo_call");
+    context.schedule.after("show_demo_call", 0, {}, "demo_call_once");
   };
   try {
     const app = createApp({
@@ -321,7 +504,7 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     let firstToken = startBody.playerState.progressToken;
     assert.equal(typeof firstToken, "string");
     assert.equal(startBody.sessionToken, firstToken);
-    assert.ok(startBody.playerState.transcriptDeltas.some((delta) => delta.kind === "sms"));
+    assert.ok(startBody.playerState.visibleDeviceState.messages.some((thread) => thread.messages.length > 0));
 
     workerScenario.revision = `${originalRevision}-updated`;
     const refreshedAfterUpdate = await app.request("http://localhost/api/player-state", {
@@ -331,19 +514,19 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     });
     assert.equal(refreshedAfterUpdate.status, 200);
     const refreshedAfterUpdateBody = await refreshedAfterUpdate.json();
-    assert.notEqual(refreshedAfterUpdateBody.playerState.progressToken, firstToken);
+    assert.equal(refreshedAfterUpdateBody.playerState.progressToken, firstToken);
     firstToken = refreshedAfterUpdateBody.playerState.progressToken;
 
-    const searched = await app.request("http://localhost/api/search-agent/search", {
+    const searched = await searchAgentRequest(app, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ progressToken: firstToken, query: "古いメモ", requestId: "browser-search-1" })
+      body: JSON.stringify({ progressToken: firstToken, query: "古いメモ" })
     });
     assert.equal(searched.status, 200);
     const searchBody = await searched.json();
     const secondToken = searchBody.playerState.progressToken;
     assert.notEqual(secondToken, firstToken);
-    assert.equal(searchBody.playerState.transcriptDeltas.at(-1)?.kind, "search");
+    assert.equal(searchBody.playerState.transcriptDeltas.at(-1)?.kind, "search_agent");
 
     const oldNote = workerScenario.contents.find((content) => content.id === "old_note");
     const opened = await app.request("http://localhost/api/content/opened", {
@@ -403,6 +586,338 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
   }
 });
 
+test("期限到来eventと通常操作が同じrequestで進んでも両方の履歴差分を返す", async () => {
+  const originalMode = workerScenario.playerMode;
+  const originalScheduleHandler = scenarioHookHandlers.schedule_demo_call;
+  const originalShowHandler = scenarioHookHandlers.show_demo_call;
+  workerScenario.clientCallableEvents.push("schedule_demo_call");
+  scenarioHookHandlers.schedule_demo_call = (context) => {
+    context.schedule.after("show_demo_call", 0, {}, "test_due_talk_delta");
+  };
+  scenarioHookHandlers.show_demo_call = (context) => {
+    context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+  };
+
+  try {
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      const store = new MemoryStore();
+      const app = createApp({
+        store,
+        config: {
+          appEnv: "development",
+          browserStateSecret: "due-transcript-delta-test-secret",
+          playerInputLogging: false,
+          llm: {}
+        }
+      });
+      let credential = "memory-token";
+      if (mode === "browser") {
+        const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+        assert.equal(started.status, 200);
+        credential = (await started.json()).playerState.progressToken;
+      } else {
+        const initialized = await reconcileScenarioState(store.player.state, store.player.id);
+        store.player.state = initialized.state;
+        for (const transcript of initialized.transcriptAppends) {
+          store.transcripts.set(`${store.player.id}\0${transcript.streamId}`, structuredClone(transcript));
+        }
+      }
+      const headers = mode === "server"
+        ? { authorization: `Bearer ${credential}`, "content-type": "application/json" }
+        : { "content-type": "application/json" };
+      const scheduled = await app.request("http://localhost/api/scenario/event", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ progressToken: credential, eventId: "schedule_demo_call" })
+      });
+      assert.equal(scheduled.status, 200);
+      const scheduledBody = await scheduled.json();
+      credential = scheduledBody.playerState.progressToken ?? credential;
+      const searchTalk = scheduledBody.playerState.talks.find((item) => item.kind === "search_agent");
+      assert.ok(searchTalk);
+
+      const searched = await app.request("http://localhost/api/talk/send", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          progressToken: credential,
+          talkId: searchTalk.talkId,
+          turnKey: searchTalk.turnKey,
+          message: "古いメモ"
+        })
+      });
+      assert.equal(searched.status, 200);
+      const deltas = (await searched.json()).playerState.transcriptDeltas;
+      assert.deepEqual(
+        deltas.map((delta) => delta.kind).sort(),
+        ["search_agent", "sms"],
+        `${mode}で予定eventと通常操作の履歴差分を両方返す`
+      );
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    workerScenario.clientCallableEvents.pop();
+    scenarioHookHandlers.schedule_demo_call = originalScheduleHandler;
+    scenarioHookHandlers.show_demo_call = originalShowHandler;
+  }
+});
+
+test("browserのsearch agent入力はtalk turnとしてblock・結果card・stateを一度に保存する", async () => {
+  const originalMode = workerScenario.playerMode;
+  workerScenario.playerMode = "browser";
+  try {
+    const store = new MemoryStore();
+    const app = createApp({
+      store,
+      config: {
+        appEnv: "development",
+        browserStateSecret: "search-agent-talk-test-secret",
+        playerInputLogging: true,
+        llm: {}
+      }
+    });
+    const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+    assert.equal(started.status, 200);
+    const startBody = await started.json();
+    const talk = startBody.playerState.talks.find((item) => item.kind === "search_agent");
+    assert.ok(talk);
+    assert.deepEqual(
+      startBody.playerState.transcriptDeltas.find((item) => item.kind === "search_agent")?.messages.map((item) => item.kind),
+      ["message"]
+    );
+    assert.deepEqual(
+      startBody.playerState.transcriptDeltas.find((item) => item.kind === "search_agent")?.messages[0]?.quickReplies,
+      ["古いメモ", "ヒント", "機能テスト", "ヘルプ"]
+    );
+
+    const sent = await app.request("http://localhost/api/talk/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: startBody.playerState.progressToken,
+        talkId: talk.talkId,
+        turnKey: talk.turnKey,
+        message: "古いメモ"
+      })
+    });
+    assert.equal(sent.status, 200);
+    const sentBody = await sent.json();
+    const delta = sentBody.playerState.transcriptDeltas.find((item) => item.kind === "search_agent");
+    assert.deepEqual(delta.messages.map((item) => item.kind), ["message", "search_results", "message"]);
+    assert.equal(delta.messages.find((item) => item.kind === "search_results")?.results.length > 0, true);
+    assert.deepEqual(delta.messages.map((item) => item.seq), [2, 3, 4]);
+    assert.deepEqual(delta.messages.at(-1).quickReplies, ["ヒント", "機能テスト", "ヘルプ"]);
+    assert.equal(sentBody.playerState.talks.find((item) => item.kind === "search_agent")?.inputVisible, true);
+    assert.equal(store.recordedInputEvents.length, 1);
+    assert.equal(store.recordedInputEvents[0].talkId, "search_agent");
+    assert.equal("appId" in store.recordedInputEvents[0], false);
+    assert.equal("eventType" in store.recordedInputEvents[0], false);
+
+    const commandLikeInput = `photo:${workerScenario.publicIds.content.rainy_window}`;
+    const nextTalk = sentBody.playerState.talks.find((item) => item.kind === "search_agent");
+    const commandLikeResponse = await app.request("http://localhost/api/talk/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: sentBody.playerState.progressToken,
+        talkId: nextTalk.talkId,
+        turnKey: nextTalk.turnKey,
+        message: commandLikeInput
+      })
+    });
+    assert.equal(commandLikeResponse.status, 200);
+    const commandLikeBody = await commandLikeResponse.json();
+    const commandLikeDelta = commandLikeBody.playerState.transcriptDeltas.find((item) => item.kind === "search_agent");
+    assert.equal(commandLikeDelta.messages.find((item) => item.sender === "owner")?.body, commandLikeInput);
+
+    const oldEndpoint = await app.request("http://localhost/api/search-agent/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: sentBody.playerState.progressToken, query: "古いメモ" })
+    });
+    assert.equal(oldEndpoint.status, 404);
+  } finally {
+    workerScenario.playerMode = originalMode;
+  }
+});
+
+test("browserのテスト用リセットは更新前の履歴deltaを新しいstreamへ混ぜない", async () => {
+  const originalMode = workerScenario.playerMode;
+  const secret = "reset-stream-replacement-test-secret";
+  workerScenario.playerMode = "browser";
+  try {
+    const app = createApp({
+      store: new MemoryStore(),
+      config: {
+        appEnv: "development",
+        browserStateSecret: secret,
+        playerInputLogging: false,
+        llm: {}
+      }
+    });
+    const progressToken = await encodeBrowserProgress(secret, workerScenario.project.id, {
+      id: "pre-search-agent-player",
+      state: createInitialPlayerState(),
+      stateVersion: 3
+    });
+    const migrated = await app.request("http://localhost/api/player-state", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken })
+    });
+    assert.equal(migrated.status, 200);
+    const migratedBody = await migrated.json();
+    const migratedSearchDeltas = migratedBody.playerState.transcriptDeltas.filter((delta) => delta.kind === "search_agent");
+    assert.equal(migratedSearchDeltas.length, 1, "更新前tokenのreconcileが旧stream差分を生成する前提を確認する");
+
+    const response = await app.request("http://localhost/api/reset-for-testing", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const searchDeltas = body.playerState.transcriptDeltas.filter((delta) => delta.kind === "search_agent");
+    assert.equal(searchDeltas.length, 1);
+    assert.equal(new Set(searchDeltas.map((delta) => delta.transcriptKey)).size, 1);
+    assert.notEqual(searchDeltas[0].transcriptKey, migratedSearchDeltas[0].transcriptKey);
+  } finally {
+    workerScenario.playerMode = originalMode;
+  }
+});
+
+test("browserモードでは発話を追加した同じ更新でtalkを非表示にしない", async () => {
+  const originalMode = workerScenario.playerMode;
+  const guide = workerScenario.talks.find((talk) => talk.id === "guide");
+  const originalCond = guide.cond;
+  const hook = {
+    event: "test_hide_talk_after_append",
+    target: "",
+    handler: "test_hide_talk_after_append",
+    cond: "",
+    llm: false
+  };
+  workerScenario.playerMode = "browser";
+  workerScenario.stateVariables.test_hide_talk_after_append = false;
+  workerScenario.clientCallableEvents.push("test_hide_talk_after_append");
+  workerScenario.hooks.push(hook);
+  guide.cond = "!test_hide_talk_after_append";
+  scenarioHookHandlers.test_hide_talk_after_append = (context) => {
+    context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+    context.state.set("test_hide_talk_after_append", true);
+  };
+
+  try {
+    const app = createApp({
+      store: new MemoryStore(),
+      config: {
+        appEnv: "development",
+        browserStateSecret: "hide-talk-after-append-test-secret",
+        playerInputLogging: false,
+        llm: {}
+      }
+    });
+    const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+    assert.equal(started.status, 200);
+    const progressToken = (await started.json()).playerState.progressToken;
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    let response;
+    try {
+      response = await app.request("http://localhost/api/scenario/event", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ progressToken, eventId: "test_hide_talk_after_append" })
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.equal(response.status, 500);
+    assert.equal((await response.json()).error, "server_error");
+  } finally {
+    workerScenario.playerMode = originalMode;
+    guide.cond = originalCond;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    workerScenario.clientCallableEvents.pop();
+    delete workerScenario.stateVariables.test_hide_talk_after_append;
+    delete scenarioHookHandlers.test_hide_talk_after_append;
+  }
+});
+
+test("browserモードでは同じrequestの予定eventが追加した発話も非表示にしない", async () => {
+  const originalMode = workerScenario.playerMode;
+  const guide = workerScenario.talks.find((talk) => talk.id === "guide");
+  const originalCond = guide.cond;
+  const originalScheduleHandler = scenarioHookHandlers.schedule_demo_call;
+  const originalShowHandler = scenarioHookHandlers.show_demo_call;
+  const hideHook = {
+    event: "test_hide_talk_after_due_append",
+    target: "",
+    handler: "test_hide_talk_after_due_append",
+    cond: "",
+    llm: false
+  };
+  workerScenario.playerMode = "browser";
+  workerScenario.stateVariables.test_hide_talk_after_due_append = false;
+  workerScenario.clientCallableEvents.push("schedule_demo_call", "test_hide_talk_after_due_append");
+  workerScenario.hooks.push(hideHook);
+  guide.cond = "!test_hide_talk_after_due_append";
+  scenarioHookHandlers.schedule_demo_call = (context) => {
+    context.schedule.after("show_demo_call", 0, {}, "test_due_talk_before_hide");
+  };
+  scenarioHookHandlers.show_demo_call = (context) => {
+    context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+  };
+  scenarioHookHandlers.test_hide_talk_after_due_append = (context) => {
+    context.state.set("test_hide_talk_after_due_append", true);
+  };
+
+  try {
+    const app = createApp({
+      store: new MemoryStore(),
+      config: {
+        appEnv: "development",
+        browserStateSecret: "hide-talk-after-due-append-test-secret",
+        playerInputLogging: false,
+        llm: {}
+      }
+    });
+    const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+    const startToken = (await started.json()).playerState.progressToken;
+    const scheduled = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: startToken, eventId: "schedule_demo_call" })
+    });
+    assert.equal(scheduled.status, 200);
+    const scheduledToken = (await scheduled.json()).playerState.progressToken;
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    let response;
+    try {
+      response = await app.request("http://localhost/api/scenario/event", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ progressToken: scheduledToken, eventId: "test_hide_talk_after_due_append" })
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.equal(response.status, 500);
+    assert.equal((await response.json()).error, "server_error");
+  } finally {
+    workerScenario.playerMode = originalMode;
+    guide.cond = originalCond;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hideHook), 1);
+    workerScenario.clientCallableEvents.splice(-2, 2);
+    delete workerScenario.stateVariables.test_hide_talk_after_due_append;
+    scenarioHookHandlers.schedule_demo_call = originalScheduleHandler;
+    scenarioHookHandlers.show_demo_call = originalShowHandler;
+    delete scenarioHookHandlers.test_hide_talk_after_due_append;
+  }
+});
+
 test("browserモードの既定署名鍵はローカル開発以外では使わない", async () => {
   const originalMode = workerScenario.playerMode;
   workerScenario.playerMode = "browser";
@@ -434,13 +949,12 @@ test("browserモードでもtalk初期履歴blockを進行tokenと差分で修�
     });
     const started = await app.request("http://localhost/api/session/start", { method: "POST" });
     const startBody = await started.json();
-    const searched = await app.request("http://localhost/api/search-agent/search", {
+    const searched = await searchAgentRequest(app, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         progressToken: startBody.playerState.progressToken,
-        query: "消えた連絡記録",
-        requestId: "browser-history-repair-search"
+        query: "消えた連絡記録"
       })
     });
     assert.equal(searched.status, 200);
@@ -460,12 +974,62 @@ test("browserモードでもtalk初期履歴blockを進行tokenと差分で修�
     const openedBody = await opened.json();
     assert.equal(typeof openedBody.playerState.progressToken, "string");
     assert.deepEqual(
-      openedBody.playerState.transcriptDeltas.find((delta) => delta.kind === "sms")?.messages.map((message) => message.seq),
-      [1, 2]
+      openedBody.playerState.visibleDeviceState.messages
+        .find((thread) => thread.id === workerScenario.publicIds.talk.guide)?.messages.map((message) => message.seq),
+      [1, 2, 4]
     );
     assert.equal(openedBody.playerState.talks.find((talk) => talk.kind === "sms")?.historyRevision, 1);
   } finally {
     workerScenario.playerMode = originalMode;
+  }
+});
+
+test("browserモードでもrepairableなtalk全体を同じ進行tokenで修復する", async () => {
+  const talk = workerScenario.talks.find((item) => item.id === "sms_receiver");
+  assert.ok(talk);
+  const originalMode = workerScenario.playerMode;
+  const original = { initialState: talk.initialState, repairLabel: talk.repairLabel, search: talk.search };
+  workerScenario.playerMode = "browser";
+  Object.assign(talk, { initialState: "repairable", repairLabel: "受▚▐▀箱", search: ["ブラウザ修復ルーム"] });
+  try {
+    const app = createApp({
+      store: new MemoryStore(),
+      config: {
+        appEnv: "production",
+        browserStateSecret: "browser-talk-repair-secret",
+        playerInputLogging: false,
+        llm: {}
+      }
+    });
+    const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+    const startBody = await started.json();
+    const searched = await searchAgentRequest(app, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: startBody.playerState.progressToken,
+        query: "ブラウザ修復ルーム"
+      })
+    });
+    const searchBody = await searched.json();
+    const opened = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        progressToken: searchBody.playerState.progressToken,
+        appId: "messages",
+        contentId: talk.publicId
+      })
+    });
+    assert.equal(opened.status, 200);
+    const openedBody = await opened.json();
+    assert.equal(typeof openedBody.playerState.progressToken, "string");
+    assert.equal(openedBody.playerState.contentStates.some((item) => item.contentId === talk.publicId && item.state === "repaired"), true);
+    assert.equal(openedBody.playerState.talks.some((item) => item.talkId === talk.publicId), true);
+    assert.ok(openedBody.playerState.visibleDeviceState.messages.find((item) => item.id === talk.publicId)?.messages.length);
+  } finally {
+    workerScenario.playerMode = originalMode;
+    Object.assign(talk, original);
   }
 });
 
@@ -526,7 +1090,7 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
   const store = new MemoryStore();
   let capturedTalkEvent = null;
   const talkHook = {
-    event: "talk_sent",
+    event: "talk_turn_completed",
     target: "guide",
     handler: "test_capture_talk_transition",
     cond: "",
@@ -534,7 +1098,7 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
   };
   workerScenario.hooks.push(talkHook);
   scenarioHookHandlers.test_capture_talk_transition = (_context, event) => { capturedTalkEvent = structuredClone(event); };
-  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: true, llm: {} } });
   try {
     const started = await app.request("http://localhost/api/session/start", {
       method: "POST",
@@ -544,18 +1108,20 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
     const startBody = await started.json();
     const talk = startBody.playerState.talks.find((item) => item.talkId === workerScenario.publicIds.talk.guide);
     assert.ok(talk);
+    const initialGuideThread = startBody.playerState.visibleDeviceState.messages.find((thread) => thread.id === talk.talkId);
+    assert.equal(initialGuideThread?.unread, undefined, "デモ連絡先は初期未読を作らない");
     const request = () => app.request("http://localhost/api/talk/send", {
       method: "POST",
       headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-      body: JSON.stringify({ talkId: talk.talkId, message: "見つけた", turnKey: talk.turnKey })
+      body: JSON.stringify({ talkId: talk.talkId, message: "確認します", turnKey: talk.turnKey })
     });
 
     const sent = await request();
     assert.equal(sent.status, 200);
     const sentBody = await sent.json();
     assert.equal(sentBody.stale, undefined);
-    assert.equal(capturedTalkEvent.target, "guide");
-    assert.equal(capturedTalkEvent.playerInput, "見つけた");
+    assert.equal(capturedTalkEvent.talkId, "guide");
+    assert.equal(capturedTalkEvent.playerInput, "確認します");
     assert.equal(capturedTalkEvent.ruleId, capturedTalkEvent.fields.ruleId);
     assert.equal(capturedTalkEvent.fields.kind, "sms");
     assert.ok(capturedTalkEvent.fields.fromId);
@@ -566,7 +1132,11 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
       await nextTalkTurnKey(store.player.id, "guide", talk.turnKey, capturedTalkEvent.fields.nextFromId)
     );
     const transcriptAfterSend = structuredClone(store.transcripts.get(`${store.player.id}\0talk:guide`));
-    assert.ok(transcriptAfterSend.messages.some((message) => message.sender === "owner" && message.body === "見つけた"));
+    assert.ok(transcriptAfterSend.messages.some((event) => event.event_type === "player_message" && event.body === "確認します"));
+    assert.ok(transcriptAfterSend.messages.some((event) => event.event_type === "message_block" && event.body === null && event.block_id));
+    assert.deepEqual(store.recordedInputEvents[0]?.responseSnapshot.outputSteps, capturedTalkEvent
+      ? workerScenario.talks.find((item) => item.id === "guide")?.rules.find((rule) => rule.id === capturedTalkEvent.ruleId)?.outputSteps
+      : undefined);
 
     const replayed = await request();
     assert.equal(replayed.status, 200);
@@ -575,6 +1145,52 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(talkHook), 1);
     delete scenarioHookHandlers.test_capture_talk_transition;
+  }
+});
+
+test("talk flowのgame_overは一時会話をpresentation sequenceで返す", async () => {
+  const store = new MemoryStore();
+  store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
+  const guide = workerScenario.talks.find((talk) => talk.id === "guide");
+  assert.ok(guide);
+  const baseRule = guide.rules.find((rule) => rule.from === guide.initialFrom && rule.isDefault);
+  assert.ok(baseRule);
+  const gameOverRule = {
+    ...baseRule,
+    id: "test-game-over-rule",
+    intent: "ゲームオーバー確認",
+    criteria: "/^終了$/u",
+    example: "終了",
+    isDefault: false,
+    mode: "game_over",
+    outputSteps: [{ kind: "block", blockId: "guide::message_reply" }],
+    nextBlocks: ["guide::message_reply"],
+    nextFromId: "guide::message_reply"
+  };
+  guide.rules.unshift(gameOverRule);
+  store.player.state.talks.guide.from = guide.initialFrom;
+  store.player.state.talks.guide.turnKey = "game-over-turn";
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: true, llm: {} } });
+
+  try {
+    const response = await app.request("http://localhost/api/talk/send", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        talkId: workerScenario.publicIds.talk.guide,
+        message: "終了",
+        turnKey: "game-over-turn"
+      })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.presentation?.sequence?.type, "game_over");
+    assert.equal(body.presentation?.sequence?.talk.talkId, workerScenario.publicIds.talk.guide);
+    assert.ok(body.presentation?.sequence?.talk.messages.some((message) => message.body.includes("メッセージの送受信")));
+    assert.equal(store.transcripts.has(`${store.player.id}\0talk:guide`), false);
+    assert.deepEqual(store.recordedInputEvents[0]?.responseSnapshot.outputSteps, gameOverRule.outputSteps);
+  } finally {
+    guide.rules.splice(guide.rules.indexOf(gameOverRule), 1);
   }
 });
 
@@ -622,10 +1238,10 @@ test("修復対象を開く時は修復hookの後に開封hookを実行する", 
   scenarioHookHandlers.test_capture_repaired_order = () => { order.push("repaired"); };
   scenarioHookHandlers.test_capture_opened_order = () => { order.push("opened"); };
   try {
-    const searched = await app.request("http://localhost/api/search-agent/search", {
+    const searched = await searchAgentRequest(app, {
       method: "POST",
       headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-      body: JSON.stringify({ query: "古いメモ", requestId: "repair-order-search" })
+      body: JSON.stringify({ query: "古いメモ" })
     });
     assert.equal(searched.status, 200);
 
@@ -641,6 +1257,157 @@ test("修復対象を開く時は修復hookの後に開封hookを実行する", 
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
     delete scenarioHookHandlers.test_capture_repaired_order;
     delete scenarioHookHandlers.test_capture_opened_order;
+  }
+});
+
+test("修復hookと開封hookが同じ外部副作用IDを操作した場合は保存前に拒否する", async () => {
+  const originalMode = workerScenario.playerMode;
+  const repairedHook = {
+    event: "content_repaired",
+    target: "old_note",
+    handler: "test_duplicate_repaired_effect",
+    cond: "",
+    llm: false
+  };
+  const openedHook = {
+    event: "content_opened",
+    target: "old_note",
+    handler: "test_duplicate_opened_effect",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(repairedHook, openedHook);
+  try {
+    for (const playerMode of ["server", "browser"]) {
+      for (const effectKind of ["schedule", "generated_audio"]) {
+        workerScenario.playerMode = playerMode;
+        if (effectKind === "schedule") {
+          scenarioHookHandlers.test_duplicate_repaired_effect = (context) => {
+            context.schedule.after("show_demo_call", 100, {}, "same_content_effect");
+          };
+          scenarioHookHandlers.test_duplicate_opened_effect = (context) => {
+            context.schedule.cancel("same_content_effect");
+          };
+        } else {
+          scenarioHookHandlers.test_duplicate_repaired_effect = (context) => {
+            context.genAudio.prepare("demo_voice", { inputText: "修復時の音声" });
+          };
+          scenarioHookHandlers.test_duplicate_opened_effect = (context) => {
+            context.genAudio.prepare("demo_voice", { inputText: "開封時の音声" });
+          };
+        }
+
+        const store = new MemoryStore();
+        let generatedAudioJobReads = 0;
+        const generatedAudioJob = store.generatedAudioJob.bind(store);
+        store.generatedAudioJob = async (...args) => {
+          generatedAudioJobReads += 1;
+          return generatedAudioJob(...args);
+        };
+        const app = createApp({
+          store,
+          config: {
+            appEnv: "development",
+            browserStateSecret: "duplicate-hook-effect-test-secret",
+            playerInputLogging: false,
+            llm: {}
+          }
+        });
+        let progressToken;
+        const headers = playerMode === "server"
+          ? { authorization: "Bearer memory-token", "content-type": "application/json" }
+          : { "content-type": "application/json" };
+        if (playerMode === "browser") {
+          const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+          assert.equal(started.status, 200);
+          progressToken = (await started.json()).playerState.progressToken;
+        }
+        const searched = await searchAgentRequest(app, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ progressToken, query: "古いメモ" })
+        });
+        assert.equal(searched.status, 200);
+        const searchBody = await searched.json();
+        progressToken = searchBody.playerState.progressToken;
+
+        const originalConsoleError = console.error;
+        console.error = () => {};
+        let opened;
+        try {
+          opened = await app.request("http://localhost/api/content/opened", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              progressToken,
+              appId: "notes",
+              contentId: workerScenario.publicIds.content.old_note
+            })
+          });
+        } finally {
+          console.error = originalConsoleError;
+        }
+        assert.equal(opened.status, 500, `${playerMode}/${effectKind}は同じauthoring errorとして拒否する`);
+        assert.equal(generatedAudioJobReads, 0, "生成音声intentのDB readより先に拒否する");
+        assert.equal(store.schedules.length, 0);
+        assert.equal(store.audioJobs.size, 0);
+        assert.equal(store.player.state.repairedContentIds.includes("old_note"), false);
+      }
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(repairedHook), 1);
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
+    delete scenarioHookHandlers.test_duplicate_repaired_effect;
+    delete scenarioHookHandlers.test_duplicate_opened_effect;
+  }
+});
+
+test("修復hookがeffect sequenceを開始した後は同じrequestの開封hookを実行しない", async () => {
+  const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  let opened = false;
+  const repairedHook = {
+    event: "content_repaired",
+    target: "old_note",
+    handler: "test_repair_sequence",
+    cond: "",
+    llm: false
+  };
+  const openedHook = {
+    event: "content_opened",
+    target: "old_note",
+    handler: "test_open_after_sequence",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(repairedHook, openedHook);
+  scenarioHookHandlers.test_repair_sequence = (context) => context.effectSequence.gameOver();
+  scenarioHookHandlers.test_open_after_sequence = () => { opened = true; };
+  try {
+    const searched = await searchAgentRequest(app, {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ query: "古いメモ" })
+    });
+    assert.equal(searched.status, 200);
+
+    const response = await app.request("http://localhost/api/content/opened", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "notes", contentId: workerScenario.publicIds.content.old_note })
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.presentation?.sequence?.type, "game_over");
+    assert.equal(body.presentation?.sequence?.reasonMessage, undefined);
+    assert.equal(opened, false);
+    assert.ok(store.player.state.repairedContentIds.includes("old_note"));
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(repairedHook), 1);
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
+    delete scenarioHookHandlers.test_repair_sequence;
+    delete scenarioHookHandlers.test_open_after_sequence;
   }
 });
 
@@ -670,6 +1437,38 @@ test("開封hookは同じコンテンツを開くたびに実行する", async (
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
     delete scenarioHookHandlers.test_count_content_opened;
+  }
+});
+
+test("通常talkの開封hookは公開IDを内部talk IDへ戻して毎回実行する", async () => {
+  const store = new MemoryStore();
+  store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
+  const openedContentIds = [];
+  const openedHook = {
+    event: "content_opened",
+    target: "guide",
+    handler: "test_count_talk_content_opened",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(openedHook);
+  scenarioHookHandlers.test_count_talk_content_opened = (_context, event) => {
+    openedContentIds.push(event.contentId);
+  };
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    for (let index = 0; index < 2; index += 1) {
+      const opened = await app.request("http://localhost/api/content/opened", {
+        method: "POST",
+        headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+        body: JSON.stringify({ appId: "messages", contentId: workerScenario.publicIds.talk.guide })
+      });
+      assert.equal(opened.status, 200);
+    }
+    assert.deepEqual(openedContentIds, ["guide", "guide"]);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
+    delete scenarioHookHandlers.test_count_talk_content_opened;
   }
 });
 
@@ -731,8 +1530,8 @@ test("メッセージ内リンクhookへ照合済みの遷移先を渡す", asyn
   });
   let capturedEvent = null;
   const linkHook = {
-    event: "scenario_event",
-    target: "message_link_opened",
+    event: "message_link_opened",
+    target: "verified_action",
     handler: "test_capture_message_link",
     cond: "",
     llm: false
@@ -751,10 +1550,10 @@ test("メッセージ内リンクhookへ照合済みの遷移先を渡す", asyn
       })
     });
     assert.equal(response.status, 200);
-    assert.equal(capturedEvent?.fields.actionId, "verified_action");
-    assert.equal(capturedEvent?.fields.talkId, talk.id);
+    assert.equal(capturedEvent?.actionId, "verified_action");
+    assert.equal(capturedEvent?.talkId, talk.id);
     assert.equal(capturedEvent?.fields.appId, content.appId);
-    assert.equal(capturedEvent?.fields.contentId, content.id);
+    assert.equal(capturedEvent?.contentId, content.id);
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(linkHook), 1);
     delete scenarioHookHandlers.test_capture_message_link;
@@ -801,10 +1600,10 @@ test("到達済み能力がなければ修復・添付解錠・会話リンク�
   assert.equal(transcript.status, 200);
   assert.ok((await transcript.json()).delta.messages.length > 0);
 
-  const searched = await app.request("http://localhost/api/search-agent/search", {
+  const searched = await searchAgentRequest(app, {
     method: "POST",
     headers: { authorization, "content-type": "application/json" },
-    body: JSON.stringify({ query: "古いメモ", requestId: "server-search-1" })
+    body: JSON.stringify({ query: "古いメモ" })
   });
   assert.equal(searched.status, 200);
   const reachedOpen = await app.request("http://localhost/api/content/opened", {
@@ -829,17 +1628,55 @@ test("鍵付き添付は到達後にNFKC正規化したパスワードhashで解
   assert.ok(store.player.state.unlockedContentIds.includes("sealed_note"));
 });
 
+test("予定イベントの公開拒否は完了扱いにせず再実行可能な状態へ戻す", async () => {
+  const store = new MemoryStore();
+  const hook = {
+    event: "scheduled_event",
+    target: "test_scheduled_rejection",
+    handler: "test_scheduled_rejection",
+    cond: "",
+    llm: false
+  };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_scheduled_rejection = (context) => context.form.deny("rejected");
+  store.schedules.push({
+    id: "scheduled-rejection",
+    scheduleId: "scheduled-rejection",
+    eventId: "test_scheduled_rejection",
+    fields: {},
+    dueAt: "2000-01-01T00:00:00.000Z",
+    playerId: store.player.id,
+    status: "queued"
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const response = await app.request("http://localhost/api/player-state", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token" }
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error, "scheduled_event_unavailable");
+    assert.equal(store.schedules[0].status, "queued");
+  } finally {
+    console.error = originalConsoleError;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_scheduled_rejection;
+  }
+});
+
 test("完了イベントの状態更新後に期限到来済み予約イベントを評価する", async () => {
   const store = new MemoryStore();
   const completionHook = {
-    event: "scenario_event",
-    target: "audio_playback_completed",
+    event: "audio_playback_completed",
+    target: "sample_radio",
     handler: "test_mark_completion",
     cond: "!test_completion",
     llm: false
   };
   const scheduledHook = {
-    event: "scenario_event",
+    event: "scheduled_event",
     target: "test_after_completion",
     handler: "test_apply_scheduled",
     cond: "test_completion && !test_scheduled",
@@ -887,7 +1724,7 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
   const store = new MemoryStore();
   workerScenario.stateVariables.test_after_incoming = false;
   const afterIncomingHook = {
-    event: "scenario_event",
+    event: "scheduled_event",
     target: "test_after_incoming",
     handler: "test_after_incoming",
     cond: "",
@@ -909,10 +1746,10 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
 
   try {
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
-    const interrupted = await app.request("http://localhost/api/search-agent/search", {
+    const interrupted = await searchAgentRequest(app, {
       method: "POST",
       headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
-      body: JSON.stringify({ query: "古いメモ", requestId: "interrupted-search" })
+      body: JSON.stringify({ query: "古いメモ" })
     });
     assert.equal(interrupted.status, 409);
     const interruptedBody = await interrupted.json();
@@ -947,14 +1784,14 @@ test("完了イベントの保存競合では予約を先に消費せず、再�
     store.transcripts.set(`${store.player.id}\0${transcript.streamId}`, structuredClone(transcript));
   }
   const completionHook = {
-    event: "scenario_event",
-    target: "audio_playback_completed",
+    event: "audio_playback_completed",
+    target: "sample_radio",
     handler: "test_mark_completion_conflict",
     cond: "!test_completion_conflict",
     llm: false
   };
   const scheduledHook = {
-    event: "scenario_event",
+    event: "scheduled_event",
     target: "test_after_completion_conflict",
     handler: "test_apply_scheduled_conflict",
     cond: "test_completion_conflict && !test_scheduled_conflict",
@@ -1002,20 +1839,82 @@ test("完了イベントの保存競合では予約を先に消費せず、再�
   }
 });
 
+test("完了イベントがeffect sequenceを開始した時は同じrequestで予約イベントを進めない", async () => {
+  const store = new MemoryStore();
+  const initialized = await reconcileScenarioState(store.player.state, store.player.id);
+  store.player.state = initialized.state;
+  const completionHook = {
+    event: "audio_playback_completed",
+    target: "sample_radio",
+    handler: "test_completion_sequence",
+    cond: "",
+    llm: false
+  };
+  const scheduledHook = {
+    event: "scheduled_event",
+    target: "test_after_completion_sequence",
+    handler: "test_after_completion_sequence",
+    cond: "",
+    llm: false
+  };
+  workerScenario.stateVariables.test_after_completion_sequence = false;
+  workerScenario.hooks.push(completionHook, scheduledHook);
+  scenarioHookHandlers.test_completion_sequence = (context) => context.effectSequence.gameOver();
+  scenarioHookHandlers.test_after_completion_sequence = (context) => context.state.set("test_after_completion_sequence", true);
+  store.schedules.push({
+    id: "event-after-sequence",
+    scheduleId: "schedule-after-sequence",
+    eventId: "test_after_completion_sequence",
+    fields: {},
+    dueAt: "2000-01-01T00:00:00.000Z",
+    playerId: store.player.id,
+    status: "queued"
+  });
+
+  try {
+    const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+    const response = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ eventId: "audio_playback_completed", fields: { contentId: "sample_radio" } })
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).presentation?.sequence?.type, "game_over");
+    assert.equal(store.schedules[0].status, "queued");
+    assert.equal(store.player.state.stateValues.test_after_completion_sequence, undefined);
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(completionHook), 1);
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(scheduledHook), 1);
+    delete workerScenario.stateVariables.test_after_completion_sequence;
+    delete scenarioHookHandlers.test_completion_sequence;
+    delete scenarioHookHandlers.test_after_completion_sequence;
+  }
+});
+
 test("クライアントからの作品固有イベントは明示許可されたtargetだけを受理する", async () => {
   const store = new MemoryStore();
   store.player.state.stateValues.sealed_note_unlocked = true;
   workerScenario.stateVariables.test_client_secondary = false;
   store.player.state.stateValues.test_client_secondary = false;
   const secondaryHook = {
-    event: "scenario_event",
-    target: "chat_auth_link_requested",
+    event: "chat_auth_link_requested",
+    target: "",
     handler: "test_client_secondary",
     cond: "",
     llm: false
   };
   workerScenario.hooks.push(secondaryHook);
-  scenarioHookHandlers.test_client_secondary = (context) => context.state.set("test_client_secondary", true);
+  scenarioHookHandlers.test_client_secondary = (context) => {
+    context.state.set("test_client_secondary", true);
+    context.effect.flash({
+      fadeInMs: 50,
+      holdMs: 0,
+      fadeOutMs: 100,
+      intensity: 0.6,
+      color: "#AABBCC"
+    });
+  };
+  workerScenario.clientCallableEvents.push("demo_all_clear");
 
   try {
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
@@ -1033,10 +1932,30 @@ test("クライアントからの作品固有イベントは明示許可され�
       body: JSON.stringify({ eventId: "chat_auth_link_requested" })
     });
     assert.equal(allowed.status, 200);
+    const allowedBody = await allowed.json();
     assert.equal(store.player.state.stateValues.chat_auth_link_sent, true);
     assert.equal(store.player.state.stateValues.test_client_secondary, true);
+    assert.deepEqual(allowedBody.presentation?.effects, [{
+      type: "flash",
+      fadeInMs: 50,
+      holdMs: 0,
+      fadeOutMs: 100,
+      intensity: 0.6,
+      color: "#aabbcc"
+    }]);
+
+    const allClear = await app.request("http://localhost/api/scenario/event", {
+      method: "POST",
+      headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ eventId: "demo_all_clear" })
+    });
+    assert.equal(allClear.status, 200);
+    const allClearBody = await allClear.json();
+    assert.equal(allClearBody.presentation?.sequence?.type, "all_clear");
+    assert.equal(allClearBody.presentation?.sequence?.target.contentId, workerScenario.publicIds.content.sample_radio);
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(secondaryHook), 1);
+    workerScenario.clientCallableEvents.pop();
     delete workerScenario.stateVariables.test_client_secondary;
     delete scenarioHookHandlers.test_client_secondary;
   }
@@ -1051,7 +1970,7 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
   const originalPublicFormId = workerScenario.publicIds.form.demo_form;
   let capturedEvent = null;
   const formHook = {
-    event: "scenario_event",
+    event: "form_submitted",
     target: "demo_form",
     handler: "test_capture_form_context",
     cond: "",
@@ -1061,7 +1980,14 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
   content.record.formDisabledCond = "radio_playback_completed";
   workerScenario.publicIds.form.demo_form = "form_demo_public";
   workerScenario.hooks.push(formHook);
-  scenarioHookHandlers.test_capture_form_context = (_context, event) => { capturedEvent = structuredClone(event); };
+  scenarioHookHandlers.test_capture_form_context = (context, event) => {
+    capturedEvent = structuredClone(event);
+    context.state.set("radio_playback_completed", true);
+    context.effect.noise(120);
+    context.effect.flash({ fadeInMs: 20, holdMs: 10, fadeOutMs: 50, intensity: 0.8, color: "white" });
+    context.effect.blackout({ fadeInMs: 30, holdMs: 0, fadeOutMs: 30, intensity: -1 });
+    context.effectSequence.gameOver("form_test");
+  };
   try {
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
     const invalid = await app.request("http://localhost/api/form/submit", {
@@ -1077,11 +2003,32 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
       body: JSON.stringify({ formId: workerScenario.publicIds.form.demo_form, fields: { message: "確認" } })
     });
     assert.equal(valid.status, 200);
-    assert.equal((await valid.json()).gameOver?.kind, "form");
+    const validBody = await valid.json();
+    assert.deepEqual(validBody.presentation?.effects, [
+      { type: "noise", durationMs: 120 },
+      {
+        type: "flash",
+        fadeInMs: 20,
+        holdMs: 10,
+        fadeOutMs: 50,
+        intensity: 0.8,
+        color: "#fffaf2"
+      },
+      {
+        type: "blackout",
+        fadeInMs: 30,
+        holdMs: 0,
+        fadeOutMs: 30,
+        intensity: 0
+      }
+    ]);
+    assert.equal(validBody.presentation?.sequence?.type, "game_over");
+    assert.equal(validBody.presentation?.sequence?.reasonMessage, "form_test");
+    assert.equal(store.player.state.stateValues.radio_playback_completed, true);
     assert.equal(capturedEvent?.fields.message, "確認");
-    assert.equal(capturedEvent?.fields.formId, "demo_form");
+    assert.equal(capturedEvent?.formId, "demo_form");
     assert.equal(capturedEvent?.fields.appId, content.appId);
-    assert.equal(capturedEvent?.fields.contentId, content.id);
+    assert.equal(capturedEvent?.contentId, content.id);
 
     store.player.state.stateValues.radio_playback_completed = true;
     const disabled = await app.request("http://localhost/api/form/submit", {
@@ -1110,8 +2057,8 @@ test("音声cueは表示中のラジオ定義と照合して非公開IDをhook�
   let capturedEvent = null;
   content.record.audioCues = [{ id: "private_marker", atMs: 1_000 }];
   const cueHook = {
-    event: "scenario_event",
-    target: "audio_cue_reached",
+    event: "audio_cue_reached",
+    target: "sample_radio:private_marker",
     handler: "test_capture_audio_cue",
     cond: "",
     llm: false
@@ -1130,10 +2077,10 @@ test("音声cueは表示中のラジオ定義と照合して非公開IDをhook�
       })
     });
     assert.equal(valid.status, 200);
-    assert.equal(capturedEvent.fields.contentId, "sample_radio");
-    assert.equal(capturedEvent.fields.cueId, "private_marker");
-    assert.equal(capturedEvent.fields.cueTarget, "sample_radio:private_marker");
-    assert.equal(capturedEvent.fields.cueIndex, "1");
+    assert.equal(capturedEvent.contentId, "sample_radio");
+    assert.equal(capturedEvent.cueId, "private_marker");
+    assert.equal(capturedEvent.cueTarget, "sample_radio:private_marker");
+    assert.equal(capturedEvent.cueIndex, 1);
 
     const invalid = await app.request("http://localhost/api/scenario/event", {
       method: "POST",
@@ -1157,10 +2104,9 @@ test("入力ログ確認APIは監修認証・絞り込み・安全なCSVを提�
   const store = new MemoryStore();
   store.playerInputReviewRows = [{
     id: "input-1",
-    eventType: "search",
     playerId: "player-1",
     occurredAt: "2026-08-17T00:00:00.000Z",
-    appId: "search-agent",
+    appId: null,
     talkId: null,
     fromId: null,
     userInput: "=HYPERLINK(\"bad\")",
@@ -1177,18 +2123,19 @@ test("入力ログ確認APIは監修認証・絞り込み・安全なCSVを提�
   const unauthorized = await app.request("https://example.test/api/admin/player-input-review/events");
   assert.equal(unauthorized.status, 401);
   const headers = { "x-admin-review-secret": "review-secret" };
-  const response = await app.request("https://example.test/api/admin/player-input-review/events?eventType=search&playerId=player-1&talkId=guide&q=灯り&limit=200", { headers });
+  const response = await app.request("https://example.test/api/admin/player-input-review/events?playerId=player-1&talkId=guide&q=灯り&limit=200", { headers });
   assert.equal(response.status, 200);
   assert.deepEqual(store.playerInputReviewFilters, {
-    eventType: "search",
     playerId: "player-1",
     talkId: "guide",
     query: "灯り",
     limit: 200
   });
-  assert.equal((await response.json()).items[0].userInput, '=HYPERLINK("bad")');
+  const responseBody = await response.json();
+  assert.equal(responseBody.items[0].userInput, '=HYPERLINK("bad")');
+  assert.equal(responseBody.items[0].appId, null);
 
-  const csv = await app.request("https://example.test/api/admin/player-input-review.csv?eventType=search", { headers });
+  const csv = await app.request("https://example.test/api/admin/player-input-review.csv", { headers });
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get("content-type") ?? "", /text\/csv/u);
   assert.match(await csv.text(), /'=HYPERLINK/u);
@@ -1207,6 +2154,7 @@ test("入力ログ確認画面の組み込みスクリプトは構文エラー�
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
   assert.match(html, /行を選択すると詳細を表示します。/u);
+  assert.doesNotMatch(html, /id="eventType"/u);
 });
 
 test("監修集計APIは認証・revision・入力所属を検証してStoreへ保存する", async () => {
@@ -1272,6 +2220,69 @@ test("監修集計APIは認証・revision・入力所属を検証してStoreへ�
   assert.equal(unknownSource.status, 400);
 });
 
+test("旧rule IDの監修入力は保存snapshotから現在ruleへ一意に割り当てる", async () => {
+  const store = new MemoryStore();
+  const talk = workerScenario.talks[0];
+  const rule = talk.rules.find((item) => item.from !== "*" && item.outputSteps.length > 0);
+  assert.ok(talk && rule);
+  store.reviewEvents = [{
+    id: "legacy-event",
+    ruleId: "removed-rule",
+    userInput: "旧リビジョンの入力",
+    normalizedInput: "旧リビジョンの入力",
+    responseSnapshot: {
+      outputSteps: structuredClone(rule.outputSteps),
+      nextBlocks: [...rule.nextBlocks]
+    }
+  }, {
+    id: "unresolved-event",
+    ruleId: "unknown-rule",
+    userInput: "割当不能な入力",
+    normalizedInput: "割当不能な入力",
+    responseSnapshot: {}
+  }];
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const params = new URLSearchParams({ talkId: talk.id, fromId: rule.from });
+
+  const detailResponse = await app.request(`http://localhost/api/admin/talk-branch-review/from?${params}`);
+  assert.equal(detailResponse.status, 200);
+  const branch = (await detailResponse.json()).detail.branches.find((item) => item.ruleId === rule.id);
+  assert.equal(branch.inputCount, 1);
+  assert.deepEqual(branch.clusters.flatMap((cluster) => cluster.sourceEventIds), ["legacy-event"]);
+
+  const replacement = {
+    talkId: talk.id,
+    fromId: rule.from,
+    actualRuleId: rule.id,
+    scenarioRevision: workerScenario.revision,
+    analysisVersion: "test-v1",
+    clusters: [{
+      id: "legacy-cluster",
+      fit: "blue",
+      representativeInput: "旧リビジョンの入力",
+      sourceEventIds: ["legacy-event"],
+      reason: "現在ruleへ一意に対応"
+    }]
+  };
+  const saved = await app.request("http://localhost/api/admin/talk-branch-review/clusters", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(replacement)
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(store.replacedClusters?.[4][0].sourceEventIds, ["legacy-event"]);
+
+  const unresolved = await app.request("http://localhost/api/admin/talk-branch-review/clusters", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...replacement,
+      clusters: [{ ...replacement.clusters[0], sourceEventIds: ["unresolved-event"] }]
+    })
+  });
+  assert.equal(unresolved.status, 400);
+});
+
 test("監修指示更新APIはtalk・from・idをStoreへ渡す", async () => {
   const store = new MemoryStore();
   const app = createApp({
@@ -1295,12 +2306,13 @@ test("監修指示更新APIはtalk・from・idをStoreへ渡す", async () => {
 
 test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ保存する", async () => {
   const store = new MemoryStore();
-  const talk = workerScenario.talks.find((item) => item.id === "guide");
-  const rule = talk?.rules.find((item) => item.from !== "*" && item.criteria.startsWith("/"));
+  const talk = workerScenario.talks.find((item) => item.id === "search_agent");
+  const rule = talk?.rules.find((item) => item.intent === "灯りの色を報告");
   assert.ok(talk && rule);
+  const fromId = talk.initialFrom;
   const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
   const detailResponse = await app.request(
-    `http://localhost/api/admin/talk-branch-review/from?talkId=${talk.id}&fromId=${encodeURIComponent(rule.from)}`
+    `http://localhost/api/admin/talk-branch-review/from?talkId=${talk.id}&fromId=${encodeURIComponent(fromId)}`
   );
   assert.equal(detailResponse.status, 200);
   const detail = (await detailResponse.json()).detail;
@@ -1309,7 +2321,7 @@ test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ
   const simulated = await app.request("http://localhost/api/admin/talk-branch-review/simulate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "黄色です" })
+    body: JSON.stringify({ talkId: talk.id, fromId, targetRuleId: rule.id, message: "青です" })
   });
   assert.equal(simulated.status, 200);
   const simulatedBody = await simulated.json();
@@ -1329,7 +2341,7 @@ test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ
     const presetResponse = await app.request("http://localhost/api/admin/talk-branch-review/simulate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ talkId: talk.id, fromId: rule.from, targetRuleId: rule.id, message: "黄色です" })
+      body: JSON.stringify({ talkId: talk.id, fromId, targetRuleId: rule.id, message: "青です" })
     });
     assert.equal(presetResponse.status, 200);
     const preset = (await presetResponse.json()).result;
@@ -1348,6 +2360,32 @@ test("監修試行は正規表現判定を明示し、判定根拠をsnapshotへ
     delete workerScenario.stateVariableDefinitions.test_review_count;
     delete workerScenario.stateVariableDefinitions.test_review_phase;
   }
+});
+
+test("検索AIの監修試行は条件blockと検索件数を副作用なしでpreviewする", async () => {
+  const store = new MemoryStore();
+  const talk = workerScenario.talks.find((item) => item.kind === "search_agent");
+  const rule = talk?.rules.find((item) => item.from === talk.initialFrom && item.isDefault);
+  assert.ok(talk && rule);
+  const beforeState = structuredClone(store.player.state);
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const response = await app.request("http://localhost/api/admin/talk-branch-review/simulate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      talkId: talk.id,
+      fromId: talk.initialFrom,
+      targetRuleId: rule.id,
+      message: "消えた連絡記録"
+    })
+  });
+  assert.equal(response.status, 200);
+  const result = (await response.json()).result;
+  assert.deepEqual(result.selectedBlockIds, ["search_agent::found"]);
+  assert.ok(result.resultCount > 0);
+  assert.deepEqual(store.savedReviewTrial.responseSnapshot.selectedBlockIds, ["search_agent::found"]);
+  assert.equal(store.savedReviewTrial.responseSnapshot.resultCount, result.resultCount);
+  assert.deepEqual(store.player.state, beforeState, "監修previewはgameplay stateを変更しない");
 });
 
 test("保存済みクラスタがあっても後から届いた未集計入力を隠さない", async () => {

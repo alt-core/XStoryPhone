@@ -1,11 +1,22 @@
 import { evaluateCondition } from "../../shared/condition.ts";
 import { parseRegexCriteria } from "../../shared/conversation.ts";
-import type { ScenarioTalk, TalkRule } from "../../shared/scenario.ts";
+import type { ScenarioTalk, TalkOutputStep, TalkRule } from "../../shared/scenario.ts";
 import type { AppStore, ReviewJudgmentFilter, ReviewJudgmentStatus } from "../../server/store.ts";
 import type { LlmProviderEnv } from "../providers/structuredOutput.ts";
-import { contentByInternalId, messageTemplatesForBlock, talkBlockIdForRepeatDisplay, workerScenario } from "../scenario.ts";
+import {
+  contentByInternalId,
+  createInitialPlayerState,
+  messageTemplatesForBlock,
+  reconcileScenarioState,
+  searchScenario,
+  talkBlockIdForRepeatDisplay,
+  workerScenario
+} from "../scenario.ts";
 import { internalizeTalkCommand, semanticInputForTalkCommand, talkCommand } from "../services/talkCommand.ts";
 import { resolveScenarioTalkRule } from "../services/talkResolver.ts";
+import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../services/talkOutput.ts";
+import { applyCompactStateAssignments, compactStateValues, effectiveStateValues } from "../stateValues.ts";
+import { currentRuleIdForReviewEvent } from "./reviewClusterRules.ts";
 
 type JudgmentStatus = ReviewJudgmentStatus;
 
@@ -32,6 +43,7 @@ type InputEvent = {
   ruleId: string;
   userInput: string;
   normalizedInput: string;
+  responseSnapshot: Record<string, unknown>;
 };
 
 type TrialInput = {
@@ -71,11 +83,27 @@ function shortBlockLabel(blockId: string) {
 }
 
 function blockPreviewMessages(blockId: string) {
-  return messageTemplatesForBlock(blockId).map((message) => line(message.body, message.senderName, {
-    attachment: message.attachment ? "[attachment]" : "",
-    source: message.source,
-    updatedAt: message.updatedAt
-  }));
+  return messageTemplatesForBlock(blockId).flatMap((message) => [
+    line(message.body, message.senderName, {
+      attachment: message.attachment ? "[attachment]" : "",
+      source: message.source,
+      updatedAt: message.updatedAt
+    }),
+    ...(message.quickReplies?.length
+      ? [line(`[Quick Reply] ${message.quickReplies.join(" / ")}`, "SYSTEM")]
+      : [])
+  ]);
+}
+
+function outputStepPreviewMessages(steps: readonly TalkOutputStep[]) {
+  return steps.flatMap((step) => {
+    if (step.kind === "block") return blockPreviewMessages(step.blockId);
+    if (step.kind === "if") {
+      return [line(`[条件: ${step.cond}]`, "SYSTEM"), ...blockPreviewMessages(step.blockId)];
+    }
+    if (step.kind === "search") return [line(`/search ${step.queryTemplate}`, "SYSTEM")];
+    return [line(`/input ${step.action}`, "SYSTEM")];
+  });
 }
 
 function lastBlockPreviewMessage(blockId: string) {
@@ -84,23 +112,34 @@ function lastBlockPreviewMessage(blockId: string) {
 }
 
 function representativeIncomingByTalkAndFrom() {
-  const incoming = new Map<string, string[]>();
+  const incoming = new Map<string, TalkRule["outputSteps"]>();
   for (const talk of workerScenario.talks) {
     for (const fromId of fromIdsFor(talk)) {
       for (const rule of talk.rules.filter((item) => item.from === fromId)) {
-        if (rule.mode || !rule.nextBlocks.length) continue;
-        const nextFrom = rule.nextBlocks[rule.nextBlocks.length - 1] ?? "";
+        if (rule.mode || !rule.nextFromId) continue;
+        const nextFrom = rule.nextFromId;
         const key = `${talk.id}\0${nextFrom}`;
-        if (!incoming.has(key)) incoming.set(key, [...rule.nextBlocks.slice(0, -1), nextFrom]);
+        if (!incoming.has(key)) incoming.set(key, rule.outputSteps);
       }
     }
   }
   return incoming;
 }
 
-function incomingBlocks(talk: ScenarioTalk, fromId: string) {
-  return representativeIncomingByTalkAndFrom().get(`${talk.id}\0${fromId}`)
-    ?? (fromId === talk.initialFrom ? [...talk.startBlocks] : [fromId]);
+function incomingOutputSteps(talk: ScenarioTalk, fromId: string): readonly TalkOutputStep[] {
+  const incoming = representativeIncomingByTalkAndFrom().get(`${talk.id}\0${fromId}`);
+  if (incoming) return incoming;
+  if (talk.kind === "search_agent" && fromId === talk.initialFrom) return talk.startSteps;
+  const blockIds = talk.kind !== "search_agent" && fromId === talk.initialFrom ? talk.startBlocks : [fromId];
+  return blockIds.map((blockId) => ({ kind: "block" as const, blockId }));
+}
+
+function incomingPreviewMessages(talk: ScenarioTalk, fromId: string) {
+  return outputStepPreviewMessages(incomingOutputSteps(talk, fromId));
+}
+
+function lastSpokenPreviewMessage(messages: readonly ReturnType<typeof line>[]) {
+  return [...messages].reverse().find((message) => message.speaker !== "SYSTEM") ?? messages[messages.length - 1] ?? null;
 }
 
 function ruleLabel(rule: TalkRule) {
@@ -112,7 +151,7 @@ function transitionFor(rule: TalkRule) {
   if (rule.mode === "game_over") {
     return { kind: "game-over", label: "GAME OVER" };
   }
-  const nextFrom = rule.nextBlocks[rule.nextBlocks.length - 1] ?? "";
+  const nextFrom = rule.nextFromId;
   if (rule.mode === "stay" || nextFrom === rule.from) {
     return { kind: "stay", label: "→ 同じfromに留まる" };
   }
@@ -349,7 +388,7 @@ async function loadSavedClusters(store: AppStore, talkId: string, fromId: string
 
 function rawClustersFor(events: InputEvent[], ruleId: string) {
   const groups = new Map<string, InputEvent[]>();
-  for (const event of events.filter((item) => item.ruleId === ruleId)) {
+  for (const event of events) {
     const key = event.normalizedInput || event.userInput;
     groups.set(key, [...(groups.get(key) ?? []), event]);
   }
@@ -390,8 +429,8 @@ function parsedClusterInputs(raw: string, sourceIds: string[], currentInputs: Ma
 export async function talkBranchReviewFromItems(store: AppStore) {
   const judgments = await loadJudgments(store, { status: "open" });
   return workerScenario.talks.flatMap((talk) => fromIdsFor(talk).map((fromId) => {
-    const lineMeta = incomingBlocks(talk, fromId).flatMap(blockPreviewMessages);
-    const lastMessage = lineMeta[lineMeta.length - 1] ?? line("", talk.label);
+    const lineMeta = incomingPreviewMessages(talk, fromId);
+    const lastMessage = lastSpokenPreviewMessage(lineMeta) ?? line("", talk.label);
     return {
       talkId: talk.id,
       fromId,
@@ -412,8 +451,9 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
     loadJudgments(store, { talkId, fromId, status: "open" }),
     loadSavedClusters(store, talkId, fromId)
   ]);
-  const incomingMessages = incomingBlocks(talk, fromId).flatMap(blockPreviewMessages);
+  const incomingMessages = incomingPreviewMessages(talk, fromId);
   const currentInputs = new Map(events.map((event) => [event.id, event.userInput]));
+  const currentRuleIds = new Map(events.map((event) => [event.id, currentRuleIdForReviewEvent(talk, fromId, event)]));
   const branches = rulesFor(talk, fromId).map((rule) => {
     const regexCriteria = parseRegexCriteria(rule.criteria);
     const savedSourceIds = new Set<string>();
@@ -429,7 +469,8 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
         inputs: parsedClusterInputs(cluster.inputsJson, sourceEventIds, currentInputs)
       };
     });
-    const unsavedEvents = events.filter((event) => event.ruleId === rule.id && !savedSourceIds.has(event.id));
+    const currentRuleEvents = events.filter((event) => currentRuleIds.get(event.id) === rule.id);
+    const unsavedEvents = currentRuleEvents.filter((event) => !savedSourceIds.has(event.id));
     return {
       ruleId: rule.id,
       label: ruleLabel(rule),
@@ -447,14 +488,14 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
       stateUpdates: [...rule.set],
       mode: rule.mode || "normal",
       example: rule.example,
-      fromLast: incomingMessages[incomingMessages.length - 1] ?? null,
-      nextMessages: rule.nextBlocks.flatMap(blockPreviewMessages),
+      fromLast: lastSpokenPreviewMessage(incomingMessages),
+      nextMessages: outputStepPreviewMessages(rule.outputSteps),
       repeatNextMessages: rule.nextBlocks.flatMap((blockId) => {
         const repeatBlockId = talkBlockIdForRepeatDisplay(blockId, 1);
         return repeatBlockId === blockId ? [] : blockPreviewMessages(repeatBlockId);
       }),
       transition: transitionFor(rule),
-      inputCount: events.filter((event) => event.ruleId === rule.id).length,
+      inputCount: currentRuleEvents.length,
       trialInputs: trials.filter((trial) => trial.actualRuleId === rule.id).map((trial) => ({ id: trial.id, input: trial.userInput })),
       clusters: [...ruleSavedClusters, ...rawClustersFor(unsavedEvents, rule.id)],
       judgments: judgments.filter((judgment) => judgment.actualRuleId === rule.id)
@@ -463,7 +504,8 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
   return {
     talkId,
     fromId,
-    context: `${talk.label}（${talk.kind === "sms" ? "メッセージ" : "チャット"}） / ${shortBlockLabel(fromId)}`,
+    context: rulesFor(talk, fromId).find((rule) => rule.isDefault && rule.from === fromId)?.criteria
+      || `${talk.label}（${talk.kind === "sms" ? "メッセージ" : talk.kind === "chat" ? "チャット" : "検索AI"}） / ${shortBlockLabel(fromId)}`,
     incomingMessages,
     branches,
     judgments
@@ -504,7 +546,9 @@ export async function replaceTalkBranchReviewClusters(store: AppStore, input: {
     return { ok: false as const, error: "revision_conflict" };
   }
   const events = await loadInputEvents(store, input.talkId, input.fromId);
-  const allowedIds = new Set(events.filter((event) => event.ruleId === input.actualRuleId).map((event) => event.id));
+  const allowedIds = new Set(events
+    .filter((event) => currentRuleIdForReviewEvent(talk, input.fromId, event) === input.actualRuleId)
+    .map((event) => event.id));
   const assignedIds = new Set<string>();
   for (const cluster of input.clusters) {
     if (!cluster.sourceEventIds.length) return { ok: false as const, error: "invalid_source" };
@@ -539,15 +583,20 @@ export async function simulateTalkBranchReviewSelection(
   const targetRule = talk ? rulesFor(talk, input.fromId).find((rule) => rule.id === input.targetRuleId) : null;
   if (!talk || !targetRule) return { ok: false as const, error: "not_found", status: 404 as const };
   const preset = talkBranchReviewStatePresetForCond(targetRule.cond);
-  const playerInput = internalizeReviewTalkCommand(input.message);
+  const playerInput = talk.kind === "search_agent" ? input.message : internalizeReviewTalkCommand(input.message);
+  const recentMessages = incomingPreviewMessages(talk, input.fromId)
+    .filter((message) => message.speaker !== "SYSTEM")
+    .slice(-4)
+    .map((message) => ({ speaker: message.speaker, body: message.body }));
   const selected = await resolveScenarioTalkRule({
     env,
     llmEnabled: workerScenario.features.llm,
     talk,
     from: input.fromId,
     playerInput,
-    semanticPlayerInput: semanticInputForTalkCommand(playerInput),
-    stateValues: preset.stateValues
+    semanticPlayerInput: talk.kind === "search_agent" ? playerInput : semanticInputForTalkCommand(playerInput),
+    stateValues: preset.stateValues,
+    recentMessages
   });
   if (!selected.ok) return { ok: false as const, error: selected.error, status: 503 as const };
   const selectedRule = selected.rule;
@@ -555,8 +604,41 @@ export async function simulateTalkBranchReviewSelection(
   const id = crypto.randomUUID();
   const nextFromId = selectedRule.mode === "stay" || selectedRule.mode === "game_over"
     ? input.fromId
-    : selectedRule.nextBlocks[selectedRule.nextBlocks.length - 1] ?? input.fromId;
-  const response = selectedRule.nextBlocks.flatMap(blockPreviewMessages).map((message) => message.body).join("\n");
+    : selectedRule.nextFromId || input.fromId;
+  const response = outputStepPreviewMessages(selectedRule.outputSteps).map((message) => message.body).join("\n");
+  let outputPreview: { selectedBlockIds: string[]; resultCount?: number } = {
+    selectedBlockIds: [...selectedRule.nextBlocks]
+  };
+  if (talk.kind === "search_agent") {
+    const seededState = createInitialPlayerState();
+    seededState.stateValues = compactStateValues(
+      workerScenario.stateVariables,
+      preset.stateValues as Record<string, string | number | boolean>
+    );
+    const previewState = (await reconcileScenarioState(seededState, "review-preview")).state;
+    previewState.stateValues = applyCompactStateAssignments(
+      workerScenario.stateVariables,
+      previewState.stateValues,
+      selectedRule.set,
+      selected.matchGroups,
+      workerScenario.stateVariableDefinitions
+    );
+    const evaluated = evaluateTalkOutputSteps({
+      steps: selectedRule.outputSteps,
+      env: {
+        ...effectiveStateValues(workerScenario.stateVariables, previewState.stateValues),
+        ...talkOutputMatchEnv(selectedRule.match, selected.matchGroups),
+        player_input: playerInput
+      },
+      search: (query) => searchScenario(query, previewState)
+    });
+    outputPreview = {
+      selectedBlockIds: evaluated.outputs.flatMap((step) => step.kind === "block" ? [step.blockId] : []),
+      ...(selectedRule.outputSteps.some((step) => step.kind === "search")
+        ? { resultCount: evaluated.searchResults.length }
+        : {})
+    };
+  }
   await store.saveReviewTrialInput({
     id,
     talkId: input.talkId,
@@ -567,7 +649,8 @@ export async function simulateTalkBranchReviewSelection(
     responseSnapshot: {
       response,
       selectionSource: selected.source,
-      match: selected.matchGroups
+      match: selected.matchGroups,
+      ...outputPreview
     },
     createdAt: now
   });
@@ -584,6 +667,7 @@ export async function simulateTalkBranchReviewSelection(
       match: selected.matchGroups,
       targetCondSatisfied: preset.condSatisfied,
       condPreset: preset.lines,
+      ...outputPreview,
       event: { id, input: input.message }
     }
   };

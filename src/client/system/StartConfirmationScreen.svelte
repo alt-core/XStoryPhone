@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, CircleHelp, Fullscreen, Hash, Headphones, ShieldCheck, Smartphone } from "@lucide/svelte";
+  import { Check, CircleHelp, Fullscreen, Hash, ShieldCheck, Smartphone } from "@lucide/svelte";
 
   export let variant: "confirmation" | "hold" = "confirmation";
   export let onConfirm: () => void | Promise<{ ok: boolean; error?: string }> = () => {};
@@ -38,11 +38,6 @@
     </div>
 
     <div class="confirmation-panel">
-      <section class="confirmation-block">
-        <Headphones size={20} strokeWidth={2.1} aria-hidden="true" />
-        <p>このゲームでは、<b>音声を聞く必要があります</b>。</p>
-      </section>
-
       <section class="confirmation-block">
         <ShieldCheck size={20} strokeWidth={2.1} aria-hidden="true" />
         <p>{browserMode ? "検索語や会話入力は、判定のためサーバで処理します。" : "ゲームの進行や会話分岐の調整のため、入力内容をサーバで処理・保存します。"}個人を特定できる情報は入力しないようお願いします。</p>

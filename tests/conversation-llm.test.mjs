@@ -54,7 +54,6 @@ test("LLM分岐は直近文脈を渡し、低確信と危険分岐をdefaultへ�
   assert.equal(high.requests[0].temperature, 0);
   assert.deepEqual(high.requests[0].input.recent_messages, [{ speaker: "案内役", body: "進めますか？" }]);
   assert.equal(high.requests[0].input.current_context, "");
-  assert.equal(high.requests[0].input.candidate_rules[0].from, "start");
   assert.match(high.requests[0].instructions, /短い肯定、否定、指示語/u);
   assert.match(high.requests[0].instructions, /同じ添付ID/u);
 
@@ -85,6 +84,7 @@ test("match抽出は同じ値を2回確認し、best項目は一致度で選ぶ"
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.values, { name: "田中太郎", reading: "たなかたろう" });
   assert.equal(fake.requests.length, 3);
+  assert.equal(fake.requests.every((request) => request.operation === "match_extraction"), true);
 });
 
 test("match抽出の壊れた応答は503相当、合意不成立はdefaultへ戻す", async () => {
@@ -122,4 +122,26 @@ test("LLM互換providerのschema外の値を成功扱いしない", async () => 
     isDefault: false,
     match: '{"name":"名前"}'
   }, "名前です"), { ok: false, error: "provider_invalid" });
+});
+
+test("criteria templateとdefault contextは現在stateで展開してLLMへ渡す", async () => {
+  const fake = providerFrom([{ rule_id: "normal", confidence: 0.9, reason_code: "matched_intent" }]);
+  const normal = { ...defaultRule, id: "normal", order: 1, isDefault: false, intent: "進行", criteria: "場面は{{scene}}", example: "進める" };
+  const currentDefault = { ...defaultRule, criteria: "現在は{{scene}}", example: "分からない" };
+  const result = await resolveScenarioTalkRule({
+    env: {},
+    llmEnabled: true,
+    provider: fake.provider,
+    talk: {
+      id: "talk", publicId: "public", kind: "sms", appId: "messages", label: "会話",
+      initialState: "normal", search: [], cond: "", startBlocks: ["start"], initialFrom: "start",
+      rules: [normal, currentDefault]
+    },
+    from: "start",
+    playerInput: "進める",
+    stateValues: { scene: "駅前" }
+  });
+  assert.equal(result.ok && result.rule.id, "normal");
+  assert.equal(fake.requests[0].input.current_context, "現在は駅前");
+  assert.match(JSON.stringify(fake.requests[0].input.candidate_rules), /場面は駅前/u);
 });

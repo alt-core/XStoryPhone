@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { ChevronLeft, ChevronRight, Clock3, FileText, PhoneCall, Play, Square } from "@lucide/svelte";
+  import { ChevronLeft, ChevronRight, Clock3, FileText, PhoneCall, Play, Square, Voicemail } from "@lucide/svelte";
   import type { CallLogItem } from "../scenario-runtime/types";
   import { playAudio, stopAudioPlayback } from "../system/audioEngine";
   import AppShell from "./AppShell.svelte";
@@ -65,11 +65,6 @@
 
   function closeCallDetail() {
     detailCallId = "";
-  }
-
-  function transcriptTimeLabel(atMs: number) {
-    const seconds = Math.floor(atMs / 1_000);
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   }
 
   async function toggleRecording(call: CallLogItem) {
@@ -160,15 +155,19 @@
     </nav>
 
     {#if tab === "history" && detailCall}
-      <section class="call-detail" aria-label={`${detailCall.name}の通話詳細`}>
+      <section class="call-detail" aria-label={`${detailCall.name}の${detailCall.kind === "voicemail" ? "留守番電話" : "通話"}詳細`}>
         <button class="detail-back" type="button" on:click={closeCallDetail}>
           <ChevronLeft size={17} strokeWidth={2.35} />
           <span>着信履歴</span>
         </button>
 
         <header class="detail-summary">
-          <span class:missed={detailCall.kind === "missed"} class:outgoing={detailCall.kind === "outgoing"}>
-            <PhoneCall size={20} strokeWidth={2.2} />
+          <span class:missed={detailCall.kind === "missed"} class:outgoing={detailCall.kind === "outgoing"} class:voicemail={detailCall.kind === "voicemail"}>
+            {#if detailCall.kind === "voicemail"}
+              <Voicemail size={21} strokeWidth={2.2} />
+            {:else}
+              <PhoneCall size={20} strokeWidth={2.2} />
+            {/if}
           </span>
           <div>
             <strong>{detailCall.name}</strong>
@@ -202,7 +201,6 @@
             <div class="transcript-body">
               {#each detailCall.transcript as cue}
                 <p>
-                  <time>{transcriptTimeLabel(cue.atMs)}</time>
                   <span>{cue.text}</span>
                 </p>
               {/each}
@@ -215,11 +213,18 @@
         {#each callLogs as call}
           <article class:focused={(call.contentId ?? call.id) === focusedCallContentId} class:recording={Boolean(call.audioUrl)}>
             <button class="call-entry" type="button" on:click={() => openCallHistoryEntry(call)}>
-              <span class:missed={call.kind === "missed"} class:outgoing={call.kind === "outgoing"}>
-                <PhoneCall size={15} strokeWidth={2.2} />
+              <span class:missed={call.kind === "missed"} class:outgoing={call.kind === "outgoing"} class:voicemail={call.kind === "voicemail"}>
+                {#if call.kind === "voicemail"}
+                  <Voicemail size={16} strokeWidth={2.2} />
+                {:else}
+                  <PhoneCall size={15} strokeWidth={2.2} />
+                {/if}
               </span>
               <div>
                 <strong>{call.name}</strong>
+                {#if call.kind === "voicemail"}
+                  <small>留守番電話</small>
+                {/if}
               </div>
               <time>
                 <span>{call.at}</span>
@@ -373,6 +378,11 @@
     transform: rotate(-35deg);
   }
 
+  .call-entry > span.voicemail {
+    background: rgba(174, 188, 255, 0.16);
+    color: #dbe0ff;
+  }
+
   .call-entry div {
     display: grid;
     align-content: center;
@@ -389,6 +399,15 @@
 
   .call-entry strong {
     font-size: 0.86rem;
+  }
+
+  .call-entry small {
+    overflow: hidden;
+    color: rgba(219, 224, 255, 0.68);
+    font-size: 0.64rem;
+    font-weight: 680;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .call-entry time {
@@ -487,6 +506,11 @@
     transform: rotate(-35deg);
   }
 
+  .detail-summary > span.voicemail {
+    background: rgba(174, 188, 255, 0.16);
+    color: #dbe0ff;
+  }
+
   .detail-summary div {
     min-width: 0;
   }
@@ -565,20 +589,11 @@
   }
 
   .transcript-body p {
-    display: grid;
-    grid-template-columns: 36px minmax(0, 1fr);
-    gap: 8px;
     margin: 0;
     padding: 7px 5px;
     color: rgba(255, 255, 255, 0.84);
     font-size: 0.79rem;
     line-height: 1.55;
-  }
-
-  .transcript-body time {
-    color: rgba(167, 255, 193, 0.58);
-    font-size: 0.63rem;
-    font-variant-numeric: tabular-nums;
   }
 
   .dialer {

@@ -1,15 +1,23 @@
 <script lang="ts">
   import { afterUpdate, beforeUpdate, onDestroy } from "svelte";
   import { FileImage, FileLock2, ImagePlus, List, MessageCircle, Radio, Send, Unlock, Video, X } from "@lucide/svelte";
-  import type { AppId, LockedAttachment, MessageAttachment, MessageThread, PendingShareDraft, PhotoItem } from "../scenario-runtime/types";
+  import type { AppId, LockedAttachment, MessageAttachment, MessageThread, PendingShareDraft, PhotoItem, TalkInputState } from "../scenario-runtime/types";
   import AttachmentImageFrame from "../system/AttachmentImageFrame.svelte";
   import AudioPlaybackButton from "../system/AudioPlaybackButton.svelte";
   import MessageBody from "../system/MessageBody.svelte";
+  import QuickReplies from "../system/QuickReplies.svelte";
   import ScrollHint from "../system/ScrollHint.svelte";
   import TypingIndicator from "../system/TypingIndicator.svelte";
   import UserAvatar from "../system/UserAvatar.svelte";
   import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
+  import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
+  import {
+    queuedTalkMessageDelayMs,
+    shouldDelayTalkMessage,
+    shouldQueueTalkMessage,
+    type TalkDelayMessage as DelayedMessage
+  } from "../system/talkMessageDelay";
   import AppShell from "./AppShell.svelte";
   import BrokenTalkHistory from "./BrokenTalkHistory.svelte";
   import {
@@ -27,16 +35,7 @@
     type SeenMessageIdsByThread
   } from "./talkDelaySeenStorage";
 
-  const DEFAULT_MESSAGE_DELAY_MS = 100;
-  const MAX_MESSAGE_DELAY_MS = 8000;
   const DELAY_MEMORY_APP_ID = "messages";
-
-  type DelayedMessage = {
-    id: string;
-    sender?: "owner" | "other";
-    delayMs?: number;
-    delayOnFirstDisplay?: boolean;
-  };
 
   type ReplyDelayAnchor = {
     waiting: boolean;
@@ -53,7 +52,7 @@
   export let onOpenSharedContent: (appId: AppId, contentId: string) => void = () => {};
   export let albumMediaContentId: (attachment: MessageAttachment | undefined) => string = () => "";
   export let onOpenAlbumMedia: (attachment: MessageAttachment | undefined) => void = () => {};
-  export let postEnabledByThread: Record<string, boolean> = {};
+  export let inputStateByThread: Record<string, TalkInputState> = {};
   export let onUnlockAttachment: (contentId: string, password: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "開けません。"
@@ -153,7 +152,7 @@
     lastReportedVisibleMediaOpenKey = "";
     onContentOpen(selectedThreadContentId, mediaAttachmentContentIds(selectedThread?.messages ?? []));
   }
-  $: selectedThreadCanPost = selectedThread ? postEnabledByThread[selectedThread.id] === true : false;
+  $: selectedThreadInput = selectedThread ? inputStateByThread[selectedThread.id] : undefined;
   $: conversationVisible = Boolean(threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen);
   $: reportDisplayedThread(conversationVisible ? selectedThreadContentId : "");
   $: sendablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
@@ -166,8 +165,6 @@
     lastReportedPhotoDraftActive = photoDraftActive;
     onPhotoDraftChange(photoDraftActive);
   }
-  $: latestMessageId = selectedThread?.messages[selectedThread.messages.length - 1]?.id ?? "";
-  $: historySignature = selectedThread ? `${selectedThread.id}:${selectedThread.messages.length}:${latestMessageId}` : "";
   $: syncDelayedMessages(
     conversationVisible ? selectedThread?.id ?? "" : "",
     conversationVisible ? selectedThread?.messages ?? [] : []
@@ -192,6 +189,20 @@
   $: typingMessage = selectedThread?.messages.find((message) => pendingMessageIds.has(message.id));
   $: replyDelayAnchor = selectedThread ? replyDelayAnchorsByThread[selectedThread.id] : undefined;
   $: typingVisible = Boolean(typingMessage || replyDelayAnchor?.waiting);
+  $: resolvedInput = resolvedTalkInputState(selectedThreadInput, selectedThread?.messages ?? [], visibleMessageIds);
+  $: composerVisible = resolvedInput.visible;
+  $: selectedThreadCanPost = resolvedInput.canSubmit;
+  $: quickReplyPlacement = sending
+    ? undefined
+    : latestQuickReplyPlacement(selectedThread?.messages ?? [], visibleMessageIds, selectedThreadCanPost);
+  $: latestMessageId = selectedThread?.messages[selectedThread.messages.length - 1]?.id ?? "";
+  $: quickReplySignature = quickReplyPlacement?.messageId ?? "";
+  $: historySignature = selectedThread
+    ? `${selectedThread.id}:${selectedThread.messages.length}:${latestMessageId}:${quickReplySignature}`
+    : "";
+  $: if (!composerVisible && photoPickerOpen) {
+    setPhotoPickerOpen(false);
+  }
 
   beforeUpdate(() => {
     historyWasNearBottomBeforeUpdate = isHistoryNearBottom();
@@ -365,6 +376,30 @@
     scrollHistoryToBottom();
   }
 
+  async function sendQuickReply(reply: string) {
+    if (!selectedThread || selectedThread.corrupted || !selectedThreadCanPost || sending) {
+      return;
+    }
+
+    readDividerArmed = false;
+    readDividerAfterMessageId = "";
+    flushPendingRead();
+    sending = true;
+    sendError = "";
+    try {
+      const result = await onSend(selectedThread.id, reply);
+      if (!result.ok) {
+        sendError = result.error ?? "送信に失敗しました。";
+        return;
+      }
+      scrollHistoryToBottom();
+    } catch {
+      sendError = "送信に失敗しました。";
+    } finally {
+      sending = false;
+    }
+  }
+
   function selectPhoto(photoId: string) {
     selectedPhotoId = photoId;
     selectedShare = null;
@@ -534,7 +569,7 @@
       return true;
     }
 
-    return !shouldDelayNewlyTrackedMessage(message);
+    return !shouldDelayTalkMessage(message);
   }
 
   function threadAvatarUrl(thread: MessageThread) {
@@ -594,26 +629,6 @@
     );
   }
 
-  function messageDelayMs(message: DelayedMessage) {
-    if (typeof message.delayMs === "number" && Number.isFinite(message.delayMs)) {
-      return Math.max(0, Math.min(message.delayMs, MAX_MESSAGE_DELAY_MS));
-    }
-    return DEFAULT_MESSAGE_DELAY_MS;
-  }
-
-  function explicitMessageDelayMs(message: DelayedMessage) {
-    if (typeof message.delayMs !== "number" || !Number.isFinite(message.delayMs)) {
-      return undefined;
-    }
-
-    return Math.max(0, Math.min(message.delayMs, MAX_MESSAGE_DELAY_MS));
-  }
-
-  function shouldDelayNewlyTrackedMessage(message: DelayedMessage) {
-    const delayMs = explicitMessageDelayMs(message);
-    return message.sender !== "owner" && message.delayOnFirstDisplay === true && delayMs !== undefined && delayMs > 0;
-  }
-
   function lastOwnerMessageIndex(messages: DelayedMessage[]) {
     let ownerIndex = -1;
     messages.forEach((message, index) => {
@@ -622,10 +637,6 @@
       }
     });
     return ownerIndex;
-  }
-
-  function canDelayMessageAtIndex(messageIndex: number, ownerIndex: number) {
-    return ownerIndex < 0 || messageIndex > ownerIndex;
   }
 
   function seenMessageIds(threadId: string) {
@@ -723,7 +734,7 @@
       return;
     }
 
-    const delayMs = messageDelayMs(message);
+    const delayMs = queuedTalkMessageDelayMs(message);
     scheduledMessageId = message.id;
     messageDelayTimer = window.setTimeout(() => revealDelayedMessage(message.id, trackedThreadId), delayMs);
   }
@@ -752,6 +763,7 @@
       const seenIds = seenMessageIds(threadId);
       const nextVisible = new Set<string>();
       const nextPending = new Set<string>();
+      let earlierReplyPending = false;
 
       for (const [index, message] of messages.entries()) {
         if (seenIds.has(message.id)) {
@@ -759,8 +771,9 @@
           continue;
         }
 
-        if (canDelayMessageAtIndex(index, ownerIndex) && shouldDelayNewlyTrackedMessage(message)) {
+        if (shouldQueueTalkMessage(message, index, ownerIndex, earlierReplyPending)) {
           nextPending.add(message.id);
+          earlierReplyPending = true;
           continue;
         }
 
@@ -782,17 +795,22 @@
     const nextPending = new Set([...pendingMessageIds].filter((messageId) => messageIds.has(messageId)));
     let changed = nextVisible.size !== visibleMessageIds.size || nextPending.size !== pendingMessageIds.size;
     let addedPendingMessage = false;
+    let earlierReplyPending = false;
 
     if (scheduledMessageId && !nextPending.has(scheduledMessageId)) {
       clearMessageDelayTimers();
     }
 
     for (const [index, message] of messages.entries()) {
-      if (nextVisible.has(message.id) || nextPending.has(message.id)) {
+      if (nextPending.has(message.id)) {
+        earlierReplyPending = true;
+        continue;
+      }
+      if (nextVisible.has(message.id)) {
         continue;
       }
 
-      if (message.sender === "owner" || !canDelayMessageAtIndex(index, ownerIndex) || !shouldDelayNewlyTrackedMessage(message)) {
+      if (!shouldQueueTalkMessage(message, index, ownerIndex, earlierReplyPending)) {
         nextVisible.add(message.id);
         markMessageSeen(threadId, message.id);
         changed = true;
@@ -800,6 +818,7 @@
       }
 
       nextPending.add(message.id);
+      earlierReplyPending = true;
       addedPendingMessage = true;
       changed = true;
     }
@@ -1008,6 +1027,11 @@
                       </section>
                     {/if}
                   </article>
+                  {#if quickReplyPlacement?.messageId === message.id}
+                    <div class="history-quick-replies">
+                      <QuickReplies replies={quickReplyPlacement.replies} accent="#5cc8a7" onSelect={sendQuickReply} />
+                    </div>
+                  {/if}
                   {#if readDividerAfterMessageId === message.id}
                     <div class="read-position-divider" role="separator" aria-label="ここまで既読"></div>
                   {/if}
@@ -1023,7 +1047,10 @@
           </ScrollHint>
         </div>
 
-        <form class="composer" aria-label="メッセージ入力欄" on:submit|preventDefault={submitMessage}>
+        {#if composerVisible || sendError || unlockError}
+          <div class="conversation-controls">
+            {#if composerVisible}
+            <form class="composer" aria-label="メッセージ入力欄" on:submit|preventDefault={submitMessage}>
           <button
             class="photo-button"
             type="button"
@@ -1065,12 +1092,15 @@
           <button type="submit" disabled={sending || selectedThread.corrupted || !selectedThreadCanPost || (!draft.trim() && !selectedPhoto && !selectedShare)} aria-label="送信" title="送信">
             <Send size={16} strokeWidth={2.1} />
           </button>
-        </form>
-        {#if sendError}
-          <p class="send-error">{sendError}</p>
-        {/if}
-        {#if unlockError}
-          <p class="send-error">{unlockError}</p>
+            </form>
+            {/if}
+            {#if sendError}
+              <p class="send-error">{sendError}</p>
+            {/if}
+            {#if unlockError}
+              <p class="send-error">{unlockError}</p>
+            {/if}
+          </div>
         {/if}
       </section>
     {:else if threads.length}
@@ -1141,7 +1171,7 @@
   }
 
   .conversation-screen {
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 6px;
     padding-bottom: 20px;
   }
@@ -1391,6 +1421,11 @@
     margin-top: auto;
   }
 
+  .history-quick-replies {
+    align-self: stretch;
+    min-width: 0;
+  }
+
   article {
     display: grid;
     align-self: start;
@@ -1428,6 +1463,12 @@
     color: rgba(255, 255, 255, 0.48);
     font-size: 0.78rem;
     font-weight: 700;
+  }
+
+  .conversation-controls {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
   }
 
   .composer input {

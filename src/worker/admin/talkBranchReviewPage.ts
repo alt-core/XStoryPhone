@@ -878,12 +878,18 @@ export function talkBranchReviewPageHtml() {
           const mode = selected.mode && selected.mode !== 'normal' ? ' / ' + selected.mode : '';
           const condNote = selected.targetCondSatisfied === false ? '\\ncond設定を自動生成しきれていません' : '';
           const preset = selected.condPreset && selected.condPreset.length ? '\\n' + selected.condPreset.join('\\n') : '';
+          const selectedBlocks = Array.isArray(selected.selectedBlockIds) && selected.selectedBlockIds.length
+            ? '\\n表示block: ' + selected.selectedBlockIds.map((id) => String(id).split('::').pop()).join(', ')
+            : '';
+          const searchResult = Number.isFinite(selected.resultCount) ? '\\n検索結果: ' + selected.resultCount + '件' : '';
           const selectedBranch = detail.branches.find((candidate) => candidate.ruleId === selected.selectedRuleId);
           const resultText =
             '→ ' + (selected.label || selected.selectedRuleId || '') + mode +
             matchResultText(selected.match, Boolean(selectedBranch && selectedBranch.match)) +
             condNote +
-            preset;
+            preset +
+            selectedBlocks +
+            searchResult;
           state.simulatorResult = '判定しました';
           state.simulatorHistory = [
             ...state.simulatorHistory,

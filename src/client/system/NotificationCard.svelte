@@ -1,13 +1,14 @@
 <script lang="ts">
   import { Bell } from "@lucide/svelte";
   import type { NotificationItem } from "../scenario-runtime/types";
-  import { getAppById } from "./appCatalog";
+  import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
 
   export let notification: NotificationItem;
+  export let apps: AppCatalogItem[] = appCatalog;
   export let variant: "lock" | "shade" | "todo" = "shade";
   export let onSelect: (notification: NotificationItem) => void = () => {};
 
-  $: app = getAppById(notification.appId);
+  $: app = getAppById(notification.appId, apps);
 </script>
 
 <button

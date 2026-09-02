@@ -1,4 +1,5 @@
 import type { AppId } from "../scenario-runtime/types";
+import { isAppId } from "../../shared/appRegistry.ts";
 
 export type PhoneHistoryRoute =
   | { kind: "home" }
@@ -15,8 +16,6 @@ export type PhoneHistoryState = {
 
 type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
 
-const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
-
 function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -26,7 +25,7 @@ function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (route.kind === "home") {
     return { kind: "home" };
   }
-  if (route.kind !== "app" || typeof route.appId !== "string" || !appIds.has(route.appId)) {
+  if (route.kind !== "app" || !isAppId(route.appId)) {
     return null;
   }
   if (route.contentId !== undefined && (typeof route.contentId !== "string" || !route.contentId.trim())) {

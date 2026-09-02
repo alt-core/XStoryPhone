@@ -3,6 +3,7 @@
   import ProjectStage from "../project/ProjectStage.svelte";
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
   import { formatStoryDateCompact } from "../shared/storyDate";
+  import { isAppId, isProjectAppId } from "../shared/appRegistry.ts";
   import BrowserApp from "./apps/BrowserApp.svelte";
   import CalendarApp from "./apps/CalendarApp.svelte";
   import ChatApp from "./apps/ChatApp.svelte";
@@ -13,6 +14,7 @@
   import RadioApp from "./apps/RadioApp.svelte";
   import AlbumApp from "./apps/PhotosApp.svelte";
   import { clearTalkDelaySeenMessagesForMemoryKey } from "./apps/talkDelaySeenStorage";
+  import { talkMessageTimeLabel } from "./apps/talkMessageTime.ts";
   import { demoDeviceStateGenerated as demoDeviceState } from "./generated/demoDeviceState.generated";
   import { demoProjectConstantsGenerated as projectConstants } from "./generated/demoProjectConstants.generated";
   import type {
@@ -22,8 +24,8 @@
     CalendarEvent,
     ChatAppMessage,
     ChatAppThread,
-    SearchAgentSearchResponse,
     SearchAgentSearchResult,
+    SearchAgentTalkView,
     DeviceState,
     IncomingCallItem,
     LockedAttachment,
@@ -37,11 +39,19 @@
     PhotoItem,
     RadioEpisodeItem,
     ScenarioContentMeta,
+    TalkInputState,
     TalkShareTarget
   } from "./scenario-runtime/types";
   import { trackClientError, trackEvent } from "./system/analytics";
   import { createAppCatalog, type AppCatalogItem } from "./system/appCatalog";
   import { safeLocalStorage, safeSessionStorage } from "./system/browserStorage";
+  import {
+    BROWSER_PLAYER_CLEARED_EVENT,
+    BROWSER_PLAYER_STORAGE_ERROR_EVENT,
+    isBrowserPlayerStorageError,
+    loadBrowserPlayerMarker,
+    loadCachedBrowserPlayerState
+  } from "./system/browserPlayerStorage.ts";
   import {
     goBackInPhoneHistory,
     phoneHistoryStateFrom,
@@ -50,7 +60,6 @@
     type PhoneHistoryRoute
   } from "./system/phoneHistory";
   import { localPlayerMemoryKey, playerSessionChanged } from "./system/playerSession";
-  import { clearSearchAgentLocalMessages } from "./system/searchAgentStorage";
   import AllClearOverlay from "./system/AllClearOverlay.svelte";
   import GameOverOverlay from "./system/GameOverOverlay.svelte";
   import HomeScreen from "./system/HomeScreen.svelte";
@@ -60,6 +69,8 @@
   import NotificationToast from "./system/NotificationToast.svelte";
   import PhoneFrame from "./system/PhoneFrame.svelte";
   import PhoneStage from "./system/PhoneStage.svelte";
+  import PresentationEffectOverlay from "./system/PresentationEffectOverlay.svelte";
+  import ProjectAppHost from "./system/ProjectAppHost.svelte";
   import GlobalErrorScreen from "./system/GlobalErrorScreen.svelte";
   import PlayerPasscodeScreen from "./system/PlayerPasscodeScreen.svelte";
   import StartConfirmationScreen from "./system/StartConfirmationScreen.svelte";
@@ -70,9 +81,8 @@
     clearAlbumAssistantStateForPhotoDraft
   } from "./system/albumAssistantUiState";
   import {
-    searchAgentSearch,
+    clearPlayerStorageForLogout,
     clearTranscriptStorage,
-    loadBrowserProgressToken,
     loadPlayerState,
     recordContentMediaObserved,
     recordContentOpened,
@@ -89,6 +99,8 @@
     type GameOverPayload,
     type GameOverTalkMessage,
     type PlayerState,
+    type PresentationPayload,
+    type PresentationResponse,
     type TalkReadCursorPayload
   } from "./system/playerApi";
   import {
@@ -131,7 +143,7 @@
   const lockScreenPinLength = deviceLockMethod === "fixed-pin" ? fixedPinLength || 4 : pinLength;
   const initialDeviceLocked = deviceLockMethod !== "none";
   const PLAYER_STATE_CACHE_KEY = "xstoryphone.player-state-cache";
-  const PLAYER_STATE_CACHE_VERSION = 11;
+  const PLAYER_STATE_CACHE_VERSION = 12;
   const CLIENT_RUNTIME_REVISION = String(projectConstants["client.runtime_revision"] ?? "");
   const FORCE_RELOAD_STORAGE_KEY = "xstoryphone.force-reload-revision";
   const RESET_FOR_TESTING_PATH_SUFFIX = "/reset-for-testing";
@@ -186,35 +198,46 @@
   type StartedSession = {
     sessionToken: string;
     playerState: PlayerState;
-  };
+  } & PresentationResponse;
   const TALK_BACK_LINK_LABELS: Record<TalkBackLinkAppId, string> = {
     messages: "メッセージ",
     chat: "チャット"
   };
 
   const persistedUiState = loadUiState();
-  const browserProgressToken = loadBrowserProgressToken();
+  const browserPlayerMarker = playerMode === "browser" ? loadBrowserPlayerMarker() : undefined;
   let uiState: PersistedUiState = localQaMode
     ? {
         ...defaultUiState,
         locked: qaView === "lock",
-        sessionToken: "qa-display-check",
-        serialCounter: "qa"
+        sessionToken: "qa-display-check"
       }
-    : {
-        ...persistedUiState,
-        ...(browserProgressToken ? { sessionToken: browserProgressToken } : {})
-      };
+    : playerMode === "browser"
+      ? {
+          ...persistedUiState,
+          locked: browserPlayerMarker ? persistedUiState.locked : initialDeviceLocked,
+          sessionToken: browserPlayerMarker
+        }
+      : persistedUiState;
   if (!localQaMode && uiState.lockMethod !== deviceLockMethod) {
     uiState = { ...uiState, locked: initialDeviceLocked, lockMethod: deviceLockMethod };
-    saveUiState(uiState);
   }
+  if (!localQaMode) saveCurrentUiState();
   let playerState: PlayerState | null = localQaMode ? null : loadCachedPlayerState(uiState.sessionToken, uiState.locked);
   let deviceState: DeviceState = demoDeviceState;
   let activeAppId: AppId | null = qaMode && !uiState.locked && qaView !== "incoming" ? qaAppId : null;
   let shadeOpen = qaMode && qaView === "shade";
   let noiseVisible = false;
   let noiseTimer: number | undefined;
+  let presentationEffectActive = false;
+  let presentationEffectOverlay: {
+    play(effect: Exclude<PresentationPayload["effects"][number], { type: "noise" }>): Promise<void>;
+    cancel(): void;
+  } | undefined;
+  let presentationGeneration = 0;
+  let presentationQueue: Promise<void> = Promise.resolve();
+  let presentationSequenceResolve: (() => void) | null = null;
+  let pendingPresentationSequenceCount = 0;
   let incomingCall: IncomingCallItem | undefined;
   let locallyCompletedIncomingCallIds: string[] = [];
   let interruptedIncomingCallId = "";
@@ -248,6 +271,7 @@
   let lastPlayerStateRefreshRequestedAt = 0;
   let scenarioWakeTimer: number | undefined;
   let scenarioWakeTimerKey = "";
+  let scenarioWakeGeneration = 0;
   let gameOverVisible = qaMode && qaView === "game-over";
   let gameOverReturning = false;
   let gameOverTalk: { talkId: string; kind: "sms" | "chat" } | null = null;
@@ -270,6 +294,7 @@
   let phoneHistoryScope = crypto.randomUUID();
   let phoneHistoryReady = false;
   let phoneHistoryNavigationId = 0;
+  let searchAgentCloseRequestId = 0;
   // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
   let pendingPlayerPasscode = "";
   const storedStartConfirmationDone = hasStartConfirmation();
@@ -295,7 +320,7 @@
   );
   $: outOfGameVisible = globalErrorVisible || holdScreenRequired || startConfirmationRequired || playerPasscodeEntryRequired;
   $: projectStageContext = {
-    sessionToken: uiState.sessionToken ?? "",
+    playerReady: Boolean(uiState.sessionToken),
     playerState,
     projectState: playerState?.projectState ?? {},
     dispatchScenarioEvent: dispatchProjectScenarioEvent
@@ -327,7 +352,10 @@
   $: activeIncomingCall = incomingCall ?? stateIncomingCall;
   $: if (activeIncomingCall?.id && activeIncomingCall.id !== interruptedIncomingCallId) {
     interruptedIncomingCallId = activeIncomingCall.id;
+    requestSearchAgentClose();
     stopBackgroundMediaPlayback();
+    // 着信画面を最優先にし、演出中でも直ちに操作可能な状態へ戻す。
+    cancelPresentations();
   } else if (!activeIncomingCall && interruptedIncomingCallId) {
     interruptedIncomingCallId = "";
   }
@@ -352,8 +380,14 @@
   $: rawAssistantSurfaceMessage = transientAssistantMessage ?? selectedAssistantMessage;
   $: assistantSurfaceMessage = visibleSurfaceMessageFor(rawAssistantSurfaceMessage, activeAppId, shadeOpen);
   $: assistantSurfaceMessageMode = surfaceMessageModeFor(assistantSurfaceMessage, activeAppId, shadeOpen);
+  $: searchAgentTalkView = searchAgentTalkViewFor(playerState);
   $: updateNotificationToast(deviceState.notifications);
-  $: syncScenarioWakeTimer(playerState?.nextScenarioWakeAt ?? null, uiState.sessionToken, uiState.locked, outOfGameVisible);
+  $: syncScenarioWakeTimer(
+    playerState?.nextScenarioWakeAt ?? null,
+    uiState.sessionToken,
+    uiState.locked,
+    outOfGameVisible || pendingPresentationSequenceCount > 0 || presentationSequenceResolve !== null
+  );
 
   onMount(() => {
     initializePhoneHistory();
@@ -373,7 +407,7 @@
         colno: event.colno
       });
       showGlobalError(event.error ?? event.message, {
-        supportCode: "AP-CLIENT"
+        supportCode: isBrowserPlayerStorageError(event.error) ? "AP-STORAGE" : "AP-CLIENT"
       });
     };
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
@@ -388,18 +422,26 @@
         reason: event.reason
       });
       showGlobalError(event.reason, {
-        supportCode: "AP-PROMISE"
+        supportCode: isBrowserPlayerStorageError(event.reason) ? "AP-STORAGE" : "AP-PROMISE"
       });
     };
+    const handleBrowserPlayerStorageError = (event: Event) => {
+      const error = event instanceof CustomEvent ? event.detail : event;
+      trackClientError({ kind: "storage_error", reason: error });
+      showGlobalError(error, { supportCode: "AP-STORAGE" });
+    };
+    const handleBrowserPlayerCleared = () => clearUnauthorizedPlayerUi();
 
     window.addEventListener("error", handleWindowError);
     window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    window.addEventListener(BROWSER_PLAYER_STORAGE_ERROR_EVENT, handleBrowserPlayerStorageError);
+    window.addEventListener(BROWSER_PLAYER_CLEARED_EVENT, handleBrowserPlayerCleared);
     window.addEventListener("popstate", handlePhoneHistoryPop);
 
     if (qaMode) {
       void loadQaPlayerState();
     } else if (shouldLogoutFromUrl()) {
-      logoutPlayerFromUrl();
+      void logoutPlayerFromUrl();
     } else if (shouldResetPlayerStateFromUrl()) {
       void resetPlayerStateFromUrl();
     } else if (holdScreenRequired) {
@@ -417,6 +459,8 @@
       removeAudioUnlockListeners();
       window.removeEventListener("error", handleWindowError);
       window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      window.removeEventListener(BROWSER_PLAYER_STORAGE_ERROR_EVENT, handleBrowserPlayerStorageError);
+      window.removeEventListener(BROWSER_PLAYER_CLEARED_EVENT, handleBrowserPlayerCleared);
       window.removeEventListener("popstate", handlePhoneHistoryPop);
       window.removeEventListener("xstoryphone:incoming-call", handleIncomingCallEvent as EventListener);
       window.removeEventListener("xstoryphone:audio-playback-complete", handleAudioPlaybackComplete as EventListener);
@@ -436,12 +480,16 @@
     reason: unknown,
     options: { message?: string; supportCode?: string } = {}
   ) {
+    if (globalErrorVisible && globalErrorSupportCode === "AP-STORAGE" && options.supportCode !== "AP-STORAGE") {
+      return;
+    }
     console.error("XStoryPhone のグローバルエラーです。", reason);
     try {
       stopBackgroundMediaPlayback();
     } catch (error) {
       console.warn("[global-error:media-stop]", error);
     }
+    cancelPresentations();
     globalErrorMessage = options.message ?? "";
     globalErrorSupportCode = options.supportCode ?? "AP-CLIENT";
     globalErrorVisible = true;
@@ -463,6 +511,9 @@
   function loadCachedPlayerState(sessionToken: string | undefined, locked: boolean): PlayerState | null {
     if (!sessionToken || locked) {
       return null;
+    }
+    if (playerMode === "browser") {
+      return loadCachedBrowserPlayerState();
     }
 
     const rawValue = safeLocalStorage.getItem(PLAYER_STATE_CACHE_KEY);
@@ -494,7 +545,7 @@
   }
 
   function cachePlayerState(state: PlayerState) {
-    if (localQaMode || !uiState.sessionToken || uiState.locked) {
+    if (playerMode === "browser" || localQaMode || !uiState.sessionToken || uiState.locked) {
       return;
     }
 
@@ -509,6 +560,7 @@
   }
 
   function clearPlayerStateCache() {
+    if (playerMode === "browser") return;
     safeLocalStorage.removeItem(PLAYER_STATE_CACHE_KEY);
   }
 
@@ -541,13 +593,6 @@
       return false;
     }
 
-    if (!options.force && playerState && state.stateVersion === playerState.stateVersion && state.revision !== playerState.revision) {
-      return false;
-    }
-
-    if (playerMode === "browser" && state.progressToken && state.progressToken !== uiState.sessionToken) {
-      persist({ sessionToken: state.progressToken });
-    }
     playerState = state;
     cachePlayerState(state);
     return true;
@@ -555,9 +600,32 @@
 
   function applyErrorPlayerState(result: { ok: false; error: string; playerState?: PlayerState }) {
     showBrowserProgressSizeError(result.error);
+    if (result.error === "unauthorized") {
+      clearUnauthorizedPlayerUi();
+      return;
+    }
     if (result.playerState) {
       applyPlayerState(result.playerState);
     }
+  }
+
+  function clearUnauthorizedPlayerUi() {
+    const playerMemoryKey = localPlayerMemoryKey(playerMode, uiState.sessionToken);
+    clearPlayerStateCache();
+    if (playerMode === "server") clearTranscriptStorage();
+    clearTalkDelaySeenMessagesForMemoryKey(playerMemoryKey);
+    clearRuntimeState();
+    playerState = null;
+    if (playerMode === "browser" && deviceLockMethod === "none") {
+      clearStartConfirmationForReset();
+    }
+    persist({
+      locked: initialDeviceLocked,
+      sessionToken: undefined,
+      lastContentByAppId: {},
+      localTalkReadCursors: {},
+      pendingTalkReadCursors: {}
+    });
   }
 
   function showBrowserProgressSizeError(error: string | undefined) {
@@ -734,6 +802,7 @@
       browserTabs: visibleState.browserTabs ?? baseState.browserTabs,
       radioItems: visibleState.radioItems ?? baseState.radioItems,
       chatThreads: visibleState.chatThreads ?? baseState.chatThreads,
+      projectApps: visibleState.projectApps ?? baseState.projectApps,
       chatAuthGate: visibleState.chatAuthGate,
       notifications: visibleState.notifications ?? baseState.notifications,
       apps: visibleState.apps ?? baseState.apps,
@@ -875,8 +944,7 @@
       return null;
     }
 
-    return new Set(["phone", "messages", "notes", "mail", "photos", "calendar", "radio", "chat", "browser"])
-      .has(value) ? (value as AppId) : null;
+    return isAppId(value) ? value : null;
   }
 
   function applyContentAvailability<T extends ScenarioContentMeta>(
@@ -1078,7 +1146,11 @@
     const unlockedAttachments = new Map((state.unlockedAttachments ?? []).map((item) => [item.contentId, item]));
     const threads = baseThreads.map((thread) => ({
       ...thread,
-      messages: thread.messages.map((message) => applyAttachmentState(message, contentStates, unlockedAttachments))
+      messages: thread.messages.map((message) => applyAttachmentState(
+        { ...message, sentAt: talkMessageTimeLabel(message.sentAt) },
+        contentStates,
+        unlockedAttachments
+      ))
     }));
 
     const smsMessages = [
@@ -1107,10 +1179,10 @@
         body: talkMessageBody(smsMessage.body, attachment),
         ...(smsMessage.avatarUrl ? { avatarUrl: smsMessage.avatarUrl } : {}),
         ...(smsMessage.segments ? { segments: smsMessage.segments } : {}),
-        sentAt: new Date(smsMessage.sentAt).toLocaleTimeString("ja-JP", {
-          hour: "2-digit",
-          minute: "2-digit"
-        }),
+        ...("quickReplies" in smsMessage && Array.isArray(smsMessage.quickReplies) && smsMessage.quickReplies.length
+          ? { quickReplies: smsMessage.quickReplies }
+          : {}),
+        sentAt: talkMessageTimeLabel(smsMessage.sentAt),
         ...(typeof smsMessage.delayMs === "number" ? { delayMs: smsMessage.delayMs } : {}),
         ...(smsMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
         ...(smsMessage.historyRepairId ? { historyRepairId: smsMessage.historyRepairId } : {}),
@@ -1166,7 +1238,7 @@
   ) {
     const threads = baseThreads.map((thread) => ({
       ...thread,
-      messages: [...thread.messages]
+      messages: thread.messages.map((message) => ({ ...message, sentAt: talkMessageTimeLabel(message.sentAt) }))
     }));
 
     const chatMessages = [
@@ -1196,10 +1268,10 @@
         body: talkMessageBody(chatMessage.body, attachment),
         ...(chatMessage.avatarUrl ? { avatarUrl: chatMessage.avatarUrl } : {}),
         ...(chatMessage.segments ? { segments: chatMessage.segments } : {}),
-        sentAt: new Date(chatMessage.sentAt).toLocaleTimeString("ja-JP", {
-          hour: "2-digit",
-          minute: "2-digit"
-        }),
+        ...("quickReplies" in chatMessage && Array.isArray(chatMessage.quickReplies) && chatMessage.quickReplies.length
+          ? { quickReplies: chatMessage.quickReplies }
+          : {}),
+        sentAt: talkMessageTimeLabel(chatMessage.sentAt),
         ...(typeof chatMessage.delayMs === "number" ? { delayMs: chatMessage.delayMs } : {}),
         ...(chatMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
         ...(chatMessage.historyRepairId ? { historyRepairId: chatMessage.historyRepairId } : {}),
@@ -1213,7 +1285,11 @@
 
   function persist(partial: Partial<PersistedUiState>) {
     uiState = { ...uiState, ...partial };
-    saveUiState(uiState);
+    saveCurrentUiState();
+  }
+
+  function saveCurrentUiState() {
+    saveUiState(playerMode === "browser" ? { ...uiState, sessionToken: undefined } : uiState);
   }
 
   function currentPhoneRoute(): PhoneHistoryRoute {
@@ -1261,7 +1337,12 @@
     }
   }
 
+  function requestSearchAgentClose() {
+    searchAgentCloseRequestId += 1;
+  }
+
   function clearPhoneRoute() {
+    requestSearchAgentClose();
     activeAppId = null;
     focusedContentId = "";
     focusedTalkHistoryRepairId = "";
@@ -1285,6 +1366,7 @@
       return;
     }
 
+    requestSearchAgentClose();
     const navigationId = ++phoneHistoryNavigationId;
     void restorePhoneHistoryRoute(state.route, navigationId);
   }
@@ -1364,12 +1446,6 @@
     replaceCurrentPhoneRoute({ kind: "home" });
   }
 
-  function rememberAppOpened(appId: AppId) {
-    if (!uiState.openedAppIds.includes(appId)) {
-      persist({ openedAppIds: [...uiState.openedAppIds, appId] });
-    }
-  }
-
   function rememberAppContent(appId: AppId, contentId: string) {
     if (!contentId || uiState.lastContentByAppId[appId] === contentId) {
       return;
@@ -1392,10 +1468,13 @@
   }
 
   function pendingTalkReadCursorPayload(): TalkReadCursorPayload[] {
-    const messages = [...(playerState?.smsMessages ?? []), ...(playerState?.chatMessages ?? [])];
+    const messages = [
+      ...deviceState.messages.flatMap((thread) => thread.messages.map((message) => ({ ...message, talkId: thread.id }))),
+      ...deviceState.chatThreads.flatMap((thread) => thread.messages.map((message) => ({ ...message, talkId: thread.id })))
+    ];
     return Object.entries(uiState.pendingTalkReadCursors).flatMap(([talkId, messageId]) => {
       const message = messages.find((item) => item.talkId === talkId && item.id === messageId && item.sender === "other");
-      return message && typeof message.seq === "number" ? [{ talkId, messageId, messageSeq: message.seq }] : [];
+      return message ? [{ talkId, messageId }] : [];
     });
   }
 
@@ -1427,6 +1506,7 @@
   }
 
   function focusAppContent(appId: AppId, contentId: string, addHistory = true) {
+    requestSearchAgentClose();
     shadeOpen = false;
     focusedContentId = contentId;
     focusedTalkHistoryRepairId = "";
@@ -1435,7 +1515,6 @@
     suppressedContentOpenKeys = [];
     activeAppId = appId;
     trackEvent({ name: "app_open", appId });
-    rememberAppOpened(appId);
     if (addHistory) {
       pushCurrentPhoneRoute({ kind: "app", appId, ...(contentId ? { contentId } : {}) });
     }
@@ -1474,13 +1553,12 @@
 
   function clearLocalPlayerStateForReset() {
     clearPlayerStateCache();
-    clearSearchAgentLocalMessages();
+    if (playerMode === "server") clearTranscriptStorage();
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearStartConfirmationForReset();
     clearRuntimeState();
     persist({
       locked: initialDeviceLocked,
-      openedAppIds: [],
       lastContentByAppId: {},
       localTalkReadCursors: {},
       pendingTalkReadCursors: {}
@@ -1493,7 +1571,6 @@
     }
 
     clearPlayerStateCache();
-    clearTranscriptStorage();
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearRuntimeState();
     playerState = null;
@@ -1502,8 +1579,7 @@
     }
     persist({
       locked: initialDeviceLocked,
-      sessionToken: undefined,
-      serialCounter: undefined
+      sessionToken: undefined
     });
   }
 
@@ -1540,9 +1616,9 @@
 
   function clearRuntimeState() {
     stopRadioPlayback();
+    cancelPresentations();
     activeAppId = null;
     shadeOpen = false;
-    noiseVisible = false;
     pendingNotificationOpen = null;
     incomingCall = undefined;
     locallyCompletedIncomingCallIds = [];
@@ -1574,12 +1650,34 @@
     radioAutoplayRequestId = 0;
     pendingShareDraft = null;
     pendingPlayerPasscode = "";
-    window.clearTimeout(noiseTimer);
     window.clearTimeout(notificationToastTimer);
     window.clearTimeout(gameOverOverlayTimer);
     window.clearTimeout(allClearOverlayTimer);
     clearScenarioWakeTimer();
     resetPhoneHistoryBoundary();
+  }
+
+  function cancelPresentations() {
+    presentationGeneration += 1;
+    const resolveSequence = presentationSequenceResolve;
+    presentationSequenceResolve = null;
+    pendingPresentationSequenceCount = 0;
+    clearTransientPresentationEffects();
+    window.clearTimeout(gameOverOverlayTimer);
+    window.clearTimeout(allClearOverlayTimer);
+    gameOverOverlayTimer = undefined;
+    allClearOverlayTimer = undefined;
+    temporaryTalkMessages = [];
+    gameOverVisible = false;
+    gameOverReturning = false;
+    gameOverTalk = null;
+    gameOverReasonMessage = "";
+    allClearVisible = false;
+    allClearReturning = false;
+    allClearTarget = null;
+    allClearAutoplay = false;
+    resolveSequence?.();
+    presentationQueue = Promise.resolve();
   }
 
   async function resetPlayerForTesting() {
@@ -1595,21 +1693,6 @@
       }
 
       applyErrorPlayerState(result);
-      if (result.error === "unauthorized") {
-        clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
-        if (playerMode === "browser" && deviceLockMethod === "none") {
-          clearStartConfirmationForReset();
-        }
-        persist({
-          locked: initialDeviceLocked,
-          sessionToken: undefined,
-          serialCounter: undefined,
-          openedAppIds: [],
-          lastContentByAppId: {},
-          localTalkReadCursors: {},
-          pendingTalkReadCursors: {}
-        });
-      }
     } catch {
       return false;
     }
@@ -1626,10 +1709,17 @@
     clearResetPlayerStateUrl();
   }
 
-  function logoutPlayerFromUrl() {
-    clearLocalAuthenticationForLogout();
-    clearLogoutUrl();
-    trackEvent({ name: "logout", source: "url_suffix" });
+  async function logoutPlayerFromUrl() {
+    try {
+      await clearPlayerStorageForLogout();
+      clearLocalAuthenticationForLogout();
+      clearLogoutUrl();
+      trackEvent({ name: "logout", source: "url_suffix" });
+    } catch (error) {
+      if (!isBrowserPlayerStorageError(error)) {
+        showGlobalError(error, { supportCode: "AP-STATE" });
+      }
+    }
   }
 
   async function confirmStart() {
@@ -1645,32 +1735,17 @@
     return { ok: true };
   }
 
-  async function refreshPlayerState(sessionToken: string) {
+  async function refreshPlayerState(sessionToken: string, acceptResult: () => boolean = () => true) {
     lastPlayerStateRefreshRequestedAt = Date.now();
     const result = await loadPlayerState(sessionToken);
+    if (!result.ok && result.error === "unauthorized") {
+      applyErrorPlayerState(result);
+      return;
+    }
+    if (!acceptResult()) return;
 
     if (result.ok) {
       applyPlayerState(result.playerState);
-      return;
-    }
-
-    if (result.error === "unauthorized") {
-      clearPlayerStateCache();
-      clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
-      clearPhoneRoute();
-      if (playerMode === "browser" && deviceLockMethod === "none") {
-        clearStartConfirmationForReset();
-      }
-      persist({
-        locked: initialDeviceLocked,
-        sessionToken: undefined,
-        serialCounter: undefined,
-        openedAppIds: [],
-        lastContentByAppId: {},
-        localTalkReadCursors: {},
-        pendingTalkReadCursors: {}
-      });
-      resetPhoneHistoryBoundary();
       return;
     }
 
@@ -1681,16 +1756,23 @@
     throw new Error(`player_state_refresh_failed:${result.error}`);
   }
 
-  async function refreshPlayerStateWithRetry(sessionToken: string, supportCode: "AP-EVENT" | "AP-STATE") {
+  async function refreshPlayerStateWithRetry(
+    sessionToken: string,
+    supportCode: "AP-EVENT" | "AP-STATE",
+    acceptResult: () => boolean = () => true
+  ) {
     for (let attempt = 0; ; attempt += 1) {
-      if (uiState.sessionToken !== sessionToken || uiState.locked || outOfGameVisible) {
+      if (uiState.sessionToken !== sessionToken || uiState.locked || outOfGameVisible || !acceptResult()) {
         return false;
       }
 
       try {
-        await refreshPlayerState(sessionToken);
-        return true;
+        await refreshPlayerState(sessionToken, acceptResult);
+        return acceptResult();
       } catch (error) {
+        if (!acceptResult()) {
+          return false;
+        }
         if (attempt >= PROGRESSION_RETRY_DELAYS_MS.length) {
           showGlobalError(error, { supportCode });
           return false;
@@ -1702,6 +1784,7 @@
   }
 
   function clearScenarioWakeTimer() {
+    scenarioWakeGeneration += 1;
     window.clearTimeout(scenarioWakeTimer);
     scenarioWakeTimer = undefined;
     scenarioWakeTimerKey = "";
@@ -1725,20 +1808,38 @@
     }
 
     window.clearTimeout(scenarioWakeTimer);
+    scenarioWakeGeneration += 1;
+    const generation = scenarioWakeGeneration;
     scenarioWakeTimerKey = key;
     scenarioWakeTimer = window.setTimeout(() => {
-      if (scenarioWakeTimerKey !== key || !uiState.sessionToken || uiState.locked) {
+      if (scenarioWakeGeneration !== generation || scenarioWakeTimerKey !== key) {
+        return;
+      }
+      if (!uiState.sessionToken || uiState.locked || pendingPresentationSequenceCount > 0 || presentationSequenceResolve !== null || outOfGameVisible) {
         scenarioWakeTimer = undefined;
         return;
       }
 
       const sessionTokenAtWake = uiState.sessionToken;
-      void refreshPlayerStateWithRetry(sessionTokenAtWake, "AP-EVENT").then(() => {
-        if (scenarioWakeTimerKey !== key) {
+      const acceptWakeResult = () =>
+        scenarioWakeGeneration === generation &&
+        scenarioWakeTimerKey === key &&
+        uiState.sessionToken === sessionTokenAtWake &&
+        !uiState.locked &&
+        pendingPresentationSequenceCount === 0 &&
+        presentationSequenceResolve === null &&
+        !outOfGameVisible;
+      void refreshPlayerStateWithRetry(sessionTokenAtWake, "AP-EVENT", acceptWakeResult).then(() => {
+        if (scenarioWakeGeneration !== generation || scenarioWakeTimerKey !== key) {
           return;
         }
         scenarioWakeTimer = undefined;
-        syncScenarioWakeTimer(playerState?.nextScenarioWakeAt ?? null, uiState.sessionToken, uiState.locked, outOfGameVisible);
+        syncScenarioWakeTimer(
+          playerState?.nextScenarioWakeAt ?? null,
+          uiState.sessionToken,
+          uiState.locked,
+          outOfGameVisible || pendingPresentationSequenceCount > 0 || presentationSequenceResolve !== null
+        );
       });
     }, Math.max(0, Math.min(wakeTime - Date.now(), SCENARIO_WAKE_TIMER_MAX_MS)));
   }
@@ -1772,10 +1873,8 @@
     persist({
       locked: options.locked,
       sessionToken: result.sessionToken,
-      serialCounter: result.playerState.serialCounter,
       ...(sessionChanged
         ? {
-            openedAppIds: [],
             lastContentByAppId: {},
             localTalkReadCursors: {},
             pendingTalkReadCursors: {}
@@ -1787,6 +1886,8 @@
       locallySuppressedNotificationIds = [];
     }
     applyPlayerState(result.playerState, { force: sessionChanged });
+    enqueuePresentation(result.presentation);
+    if (result.presentation?.sequence) return;
     if (!options.locked && pendingNotificationOpen) {
       const pendingOpen = pendingNotificationOpen;
       const pendingApp = apps.find((app) => app.id === pendingOpen.appId);
@@ -1803,10 +1904,10 @@
 
   async function openBrowserSession() {
     try {
-      const existingBrowserToken = loadBrowserProgressToken();
-      const loaded = existingBrowserToken ? await loadPlayerState(existingBrowserToken) : null;
+      const existingBrowserMarker = loadBrowserPlayerMarker();
+      const loaded = existingBrowserMarker ? await loadPlayerState(existingBrowserMarker) : null;
       const result = loaded?.ok
-        ? { ...loaded, sessionToken: loaded.playerState.progressToken ?? existingBrowserToken ?? "" }
+        ? { ...loaded, sessionToken: existingBrowserMarker ?? "" }
         : loaded && loaded.error !== "unauthorized"
           ? loaded
           : await startSession("");
@@ -1817,7 +1918,7 @@
       }
       applyStartedSession(result, {
         locked: false,
-        resumedBrowserProgress: Boolean(existingBrowserToken && loaded?.ok)
+        resumedBrowserProgress: Boolean(existingBrowserMarker && loaded?.ok)
       });
       trackEvent({ name: "unlock_device" });
       return { ok: true };
@@ -1881,9 +1982,6 @@
       const loaded = await loadPlayerState(uiState.sessionToken);
       if (!loaded.ok) {
         applyErrorPlayerState(loaded);
-        if (loaded.error === "unauthorized") {
-          clearLocalAuthenticationForLogout();
-        }
         return { ok: false, error: entryError(loaded.error) };
       }
       applyStartedSession({ sessionToken: uiState.sessionToken, playerState: loaded.playerState }, { locked: false });
@@ -1919,6 +2017,76 @@
     noiseTimer = window.setTimeout(() => {
       noiseVisible = false;
     }, durationMs);
+  }
+
+  function clearTransientPresentationEffects() {
+    noiseVisible = false;
+    presentationEffectOverlay?.cancel();
+    presentationEffectActive = false;
+    window.clearTimeout(noiseTimer);
+  }
+
+  async function playPresentationEffect(effect: PresentationPayload["effects"][number], generation: number) {
+    if (effect.type === "noise") {
+      triggerNoise(effect.durationMs);
+    } else {
+      if (!presentationEffectOverlay) {
+        throw new Error("全画面演出の表示領域を初期化できませんでした。");
+      }
+      await presentationEffectOverlay.play(effect);
+    }
+    if (effect.type !== "noise") return;
+    await waitMs(effect.durationMs);
+    if (generation !== presentationGeneration) return;
+    noiseVisible = false;
+    window.clearTimeout(noiseTimer);
+  }
+
+  function enqueuePresentation(
+    presentation: PresentationPayload | undefined,
+    options: { kind: TalkKind; talkId: string; previousState: PlayerState | null; nextState: PlayerState } | null = null
+  ) {
+    if (!presentation || (!presentation.effects.length && !presentation.sequence)) return;
+    const generation = presentationGeneration;
+    const hasSequence = presentation.sequence !== undefined;
+    if (hasSequence) pendingPresentationSequenceCount += 1;
+    presentationQueue = presentationQueue.then(async () => {
+      try {
+        if (generation !== presentationGeneration || outOfGameVisible || activeIncomingCall) return;
+        for (const effect of presentation.effects) {
+          await playPresentationEffect(effect, generation);
+          if (generation !== presentationGeneration) return;
+        }
+        const sequence = presentation.sequence;
+        if (!sequence || generation !== presentationGeneration) return;
+        await new Promise<void>((resolve, reject) => {
+          presentationSequenceResolve = resolve;
+          try {
+            if (sequence.type === "game_over") {
+              showGameOver(sequence.talk
+                ? {
+                    talkId: sequence.talk.talkId,
+                    kind: sequence.talk.kind,
+                    messages: sequence.talk.messages,
+                    reasonMessage: sequence.reasonMessage
+                  }
+                : { kind: "generic", reasonMessage: sequence.reasonMessage }, options);
+            } else {
+              showAllClear({ target: sequence.target, autoplay: sequence.autoplay }, options);
+            }
+          } catch (error) {
+            if (presentationSequenceResolve === resolve) {
+              presentationSequenceResolve = null;
+            }
+            reject(error);
+          }
+        });
+      } finally {
+        if (hasSequence && generation === presentationGeneration) {
+          pendingPresentationSequenceCount = Math.max(0, pendingPresentationSequenceCount - 1);
+        }
+      }
+    }).catch((error) => showGlobalError(error, { supportCode: "AP-EFFECT" }));
   }
 
   function stopBackgroundMediaPlayback() {
@@ -1980,6 +2148,10 @@
 
       try {
         const result = await recordScenarioEvent(sessionToken, eventId, payload);
+        if (!result.ok && result.error === "unauthorized") {
+          applyErrorPlayerState(result);
+          return result;
+        }
         if (shouldStop()) {
           return null;
         }
@@ -2025,9 +2197,7 @@
       return { ok: false as const, error: result?.error ?? "event_unavailable" };
     }
     applyPlayerState(result.playerState);
-    if (result.allClear) {
-      showAllClear(result.allClear);
-    }
+    enqueuePresentation(result.presentation);
     return { ok: true as const };
   }
 
@@ -2043,6 +2213,7 @@
     void recordBackgroundScenarioEvent(uiState.sessionToken, "audio_playback_completed", detail).then((result) => {
       if (!globalErrorVisible && result?.ok) {
         applyPlayerState(result.playerState);
+        enqueuePresentation(result.presentation);
       }
     });
   }
@@ -2060,6 +2231,7 @@
     void recordBackgroundScenarioEvent(uiState.sessionToken, "audio_cue_reached", detail).then((result) => {
       if (!globalErrorVisible && result?.ok) {
         applyPlayerState(result.playerState);
+        enqueuePresentation(result.presentation);
       }
     });
   }
@@ -2196,9 +2368,7 @@
       void recordBackgroundScenarioEvent(uiState.sessionToken, "incoming_call_completed", { callId: call.id }).then((result) => {
         if (!globalErrorVisible && result?.ok) {
           applyPlayerState(result.playerState);
-          if (result.allClear) {
-            showAllClear(result.allClear);
-          }
+          enqueuePresentation(result.presentation);
         }
       });
     }
@@ -2230,9 +2400,9 @@
       return false;
     }
 
+    requestSearchAgentClose();
     activeAppId = app.id;
     trackEvent({ name: "app_open", appId: app.id });
-    rememberAppOpened(app.id);
     pushCurrentPhoneRoute({
       kind: "app",
       appId: app.id,
@@ -2260,10 +2430,7 @@
       return false;
     }
 
-    const opened = await handleContentOpen(app.id, contentId, {
-      ignoreSuppression: true,
-      rememberAfterAccepted: true
-    });
+    const opened = await openContentFromExplicitNavigation(app.id, contentId);
 
     if (opened) {
       focusOpenedContent(app.id, contentId);
@@ -2286,6 +2453,7 @@
       .then((result) => {
         if (result.ok) {
           applyPlayerState(result.playerState);
+          enqueuePresentation(result.presentation);
         } else {
           applyErrorPlayerState(result);
         }
@@ -2443,6 +2611,10 @@
             if (!applied && !acceptedOlderResponse) {
               return false;
             }
+            enqueuePresentation(result.presentation);
+            if (result.presentation?.sequence) {
+              return false;
+            }
             if (options.clearDisplayedTalkAfterApply) {
               displayedTalkTarget = null;
             }
@@ -2488,6 +2660,13 @@
     } finally {
       inFlightContentOpenKeys = inFlightContentOpenKeys.filter((item) => item !== key);
     }
+  }
+
+  function openContentFromExplicitNavigation(appId: AppId, contentId: string) {
+    return handleContentOpen(appId, contentId, {
+      ignoreSuppression: true,
+      rememberAfterAccepted: true
+    });
   }
 
   async function handleContentMediaObserved(appId: AppId, contentId: string | undefined, mediaContentIds: string[]) {
@@ -2586,6 +2765,7 @@
       return;
     }
 
+    requestSearchAgentClose();
     if (notificationToast?.id === notificationId) {
       notificationToast = null;
     }
@@ -2617,23 +2797,44 @@
     }
   }
 
-  async function handleSearchAgentSearch(query: string, requestId: string) {
-    if (!uiState.sessionToken) {
-      return { ok: false, matched: false, body: "検索できませんでした。", results: [] } satisfies SearchAgentSearchResponse;
+  async function handleSearchAgentSend(message: string) {
+    const talk = searchAgentTalkView;
+    if (!uiState.sessionToken || !talk || !talk.canPost) {
+      return { ok: false, error: "今は送信できません。" };
     }
-
-    const result = await searchAgentSearch(uiState.sessionToken, query, requestId);
-
+    const turnKey = currentTurnKey(talk.talkId);
+    if (!turnKey) {
+      return { ok: false, error: "送信状態を更新してください。" };
+    }
+    const recentMessages = talk.messages
+      .slice(-4)
+      .map((item) => item.kind === "message"
+        ? { speaker: item.sender === "owner" ? "player" : talk.label, body: item.body }
+        : {
+            speaker: talk.label,
+            body: item.results.length
+              ? `検索結果: ${item.results.map((result) => result.title || result.contentId).join("、")}`
+              : "検索結果: 該当なし"
+          });
+    let result: Awaited<ReturnType<typeof sendTalkMessage>>;
+    try {
+      result = await sendTalkMessage(uiState.sessionToken, talk.talkId, turnKey, message, [], recentMessages);
+    } catch {
+      return { ok: false, error: "送信に失敗しました。" };
+    }
     if (!result.ok) {
       applyErrorPlayerState(result);
-      return { ok: false, matched: false, body: "検索できませんでした。", results: [] } satisfies SearchAgentSearchResponse;
+      if (result.error === "llm_unavailable") {
+        showGlobalError(result.error, { supportCode: "AP-LLM" });
+      }
+      return { ok: false, error: "送信に失敗しました。" };
     }
-
-    if (result.playerState) {
-      applyPlayerState(result.playerState);
+    applyPlayerState(result.playerState);
+    if (result.stale) {
+      return { ok: false, error: "会話が更新されました。内容を確認してもう一度送信してください。" };
     }
-
-    return { ok: true, matched: result.matched, body: result.body, results: result.results } satisfies SearchAgentSearchResponse;
+    enqueuePresentation(result.presentation);
+    return { ok: true };
   }
 
   async function handleOpenSearchAgentResult(result: SearchAgentSearchResult) {
@@ -2641,7 +2842,7 @@
       return false;
     }
 
-    const shouldShowRepairMessage = result.repairable === true && !isSearchAgentResultAlreadyRepaired(result);
+    const shouldShowRepairMessage = result.repairable && !isSearchAgentResultAlreadyRepaired(result);
     const historyTalkId = result.targetKind === "talk_history" ? result.targetTalkId ?? "" : "";
     const opened = await handleContentOpen(result.appId, result.contentId, {
       ignoreSuppression: true,
@@ -2671,7 +2872,7 @@
   }
 
   function isSearchAgentResultAlreadyRepaired(result: SearchAgentSearchResult) {
-    if (result.targetKind === "app" || result.contentId === result.appId) {
+    if (result.targetKind === "app") {
       const app = apps.find((item) => item.id === result.appId);
       return Boolean(app?.available && app.corrupted !== true);
     }
@@ -2685,6 +2886,21 @@
 
   function currentTalk(talkId: string) {
     return playerState?.talks.find((talk) => talk.talkId === talkId) ?? null;
+  }
+
+  function searchAgentTalkViewFor(state: PlayerState | null): SearchAgentTalkView | null {
+    const talk = state?.talks.find((item) => item.kind === "search_agent");
+    if (!talk) return null;
+    return {
+      talkId: talk.talkId,
+      label: talk.label?.trim() || String(projectConstants["search_agent.name"] ?? "ナビ"),
+      messages: state?.searchAgentMessages ?? [],
+      canPost: talk.canPost,
+      inputVisible: talk.inputVisible,
+      inputVisibleAfterSeq: talk.inputVisibleAfterSeq,
+      inputEnabled: talk.inputEnabled,
+      inputEnabledAfterSeq: talk.inputEnabledAfterSeq
+    };
   }
 
   function currentTurnKey(talkId: string) {
@@ -2753,24 +2969,33 @@
     clearReplyDelayAnchor(talkId);
   }
 
-  function postEnabledMap(talkIds: readonly string[]) {
+  function inputStateMap(talkIds: readonly string[]) {
     const visibleTalkIds = new Set(talkIds);
     return Object.fromEntries(
       (playerState?.talks ?? [])
         .filter((talk) => visibleTalkIds.has(talk.talkId))
-        .map((talk) => [talk.talkId, talk.canPost])
-    );
+        .map((talk) => [talk.talkId, {
+          canPost: talk.canPost,
+          inputVisible: talk.inputVisible,
+          inputVisibleAfterSeq: talk.inputVisibleAfterSeq,
+          inputEnabled: talk.inputEnabled,
+          inputEnabledAfterSeq: talk.inputEnabledAfterSeq
+        } satisfies TalkInputState])
+    ) as Record<string, TalkInputState>;
   }
 
   function shareTargetsForTalks(
     messageThreads: MessageThread[],
     chatThreads: ChatAppThread[],
-    messagePostEnabled: Record<string, boolean>,
-    chatPostEnabled: Record<string, boolean>,
+    messageInputStates: Record<string, TalkInputState>,
+    chatInputStates: Record<string, TalkInputState>,
     chatAuthGate: DeviceState["chatAuthGate"]
   ): TalkShareTarget[] {
     const messageTargets = messageThreads
-      .filter((thread) => !thread.corrupted && messagePostEnabled[thread.id] === true)
+      .filter((thread) => {
+        const input = messageInputStates[thread.id];
+        return !thread.corrupted && input?.canPost && input.inputEnabled && input.inputVisible;
+      })
       .map((thread) => ({
         kind: "sms" as const,
         talkId: thread.id,
@@ -2780,7 +3005,10 @@
     const chatTargets = chatAuthGate
       ? []
       : chatThreads
-          .filter((thread) => !thread.corrupted && chatPostEnabled[thread.id] === true)
+          .filter((thread) => {
+            const input = chatInputStates[thread.id];
+            return !thread.corrupted && input?.canPost && input.inputEnabled && input.inputVisible;
+          })
           .map((thread) => ({
             kind: "chat" as const,
             talkId: thread.id,
@@ -2791,10 +3019,10 @@
     return [...messageTargets, ...chatTargets];
   }
 
-  $: messagePostEnabledByThread = postEnabledMap(deviceState.messages.map((thread) => thread.id));
-  $: chatPostEnabledByThread = postEnabledMap(deviceState.chatThreads.map((thread) => thread.id));
+  $: messageInputStateByThread = inputStateMap(deviceState.messages.map((thread) => thread.id));
+  $: chatInputStateByThread = inputStateMap(deviceState.chatThreads.map((thread) => thread.id));
   $: sendablePhotos = deviceState.photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
-  $: radioShareTargets = shareTargetsForTalks(deviceState.messages, deviceState.chatThreads, messagePostEnabledByThread, chatPostEnabledByThread, deviceState.chatAuthGate);
+  $: radioShareTargets = shareTargetsForTalks(deviceState.messages, deviceState.chatThreads, messageInputStateByThread, chatInputStateByThread, deviceState.chatAuthGate);
 
   function gameOverMessageDelayMs(message: { delayMs?: number }) {
     if (typeof message.delayMs === "number" && Number.isFinite(message.delayMs)) {
@@ -2826,11 +3054,14 @@
     });
   }
 
-  function showGameOver(payload: GameOverPayload) {
+  function showGameOver(
+    payload: GameOverPayload,
+    options: { kind: TalkKind; talkId: string; previousState: PlayerState | null; nextState: PlayerState } | null = null
+  ) {
     resetPhoneHistoryBoundary();
     gameOverReasonMessage = payload.reasonMessage ?? "";
 
-    if (payload.kind === "form") {
+    if (payload.kind === "generic") {
       temporaryTalkMessages = [];
       gameOverTalk = null;
       gameOverVisible = false;
@@ -2839,16 +3070,20 @@
       shadeOpen = false;
       notificationToast = null;
 
+      const messages = options
+        ? newOtherTalkMessages(options.kind, options.talkId, options.nextState, options.previousState)
+        : [];
       window.clearTimeout(gameOverOverlayTimer);
       gameOverOverlayTimer = window.setTimeout(() => {
         if (!gameOverTalk) {
           gameOverVisible = true;
         }
-      }, gameOverOverlayDelayMs([]));
+      }, gameOverOverlayDelayMs(messages));
       return;
     }
 
     const appId: AppId = payload.kind === "chat" ? "chat" : "messages";
+    requestSearchAgentClose();
     temporaryTalkMessages = payload.messages;
     gameOverTalk = { talkId: payload.talkId, kind: payload.kind };
     gameOverVisible = false;
@@ -2874,6 +3109,8 @@
       return;
     }
 
+    const resolveSequence = presentationSequenceResolve;
+    const generation = presentationGeneration;
     const source = gameOverTalk;
     gameOverReturning = true;
     window.clearTimeout(gameOverOverlayTimer);
@@ -2889,16 +3126,25 @@
 
     try {
       await Promise.all([
-        !qaMode && uiState.sessionToken ? refreshPlayerState(uiState.sessionToken).catch(() => undefined) : Promise.resolve(),
+        !qaMode && uiState.sessionToken
+          ? refreshPlayerState(
+              uiState.sessionToken,
+              () => presentationGeneration === generation && presentationSequenceResolve === resolveSequence
+            ).catch(() => undefined)
+          : Promise.resolve(),
         waitMs(GAME_OVER_RETURN_BLACKOUT_MIN_MS)
       ]);
     } finally {
-      temporaryTalkMessages = [];
-      gameOverVisible = false;
-      gameOverTalk = null;
-      gameOverReasonMessage = "";
-      gameOverReturning = false;
-      replaceCurrentPhoneRoute(currentPhoneRoute());
+      if (presentationSequenceResolve === resolveSequence) {
+        temporaryTalkMessages = [];
+        gameOverVisible = false;
+        gameOverTalk = null;
+        gameOverReasonMessage = "";
+        gameOverReturning = false;
+        replaceCurrentPhoneRoute(currentPhoneRoute());
+        presentationSequenceResolve = null;
+      }
+      resolveSequence?.();
     }
   }
 
@@ -2935,10 +3181,7 @@
     window.clearTimeout(noiseTimer);
 
     focusOpenedContent(target.appId, target.contentId);
-    void handleContentOpen(target.appId, target.contentId, {
-      ignoreSuppression: true,
-      rememberAfterAccepted: true
-    });
+    void openContentFromExplicitNavigation(target.appId, target.contentId);
 
     if (autoplay && target.appId === "radio") {
       radioAutoplayContentId = target.contentId;
@@ -2951,6 +3194,8 @@
       return;
     }
 
+    const resolveSequence = presentationSequenceResolve;
+    const generation = presentationGeneration;
     const target = allClearTarget;
     const autoplay = allClearAutoplay;
     allClearReturning = true;
@@ -2958,18 +3203,27 @@
 
     try {
       await Promise.all([
-        !qaMode && uiState.sessionToken ? refreshPlayerState(uiState.sessionToken).catch(() => undefined) : Promise.resolve(),
+        !qaMode && uiState.sessionToken
+          ? refreshPlayerState(
+              uiState.sessionToken,
+              () => presentationGeneration === generation && presentationSequenceResolve === resolveSequence
+            ).catch(() => undefined)
+          : Promise.resolve(),
         waitMs(ALL_CLEAR_RETURN_WHITEOUT_MIN_MS)
       ]);
 
-      if (target) {
+      if (presentationSequenceResolve === resolveSequence && target) {
         openAllClearTarget(target, autoplay);
       }
     } finally {
-      allClearVisible = false;
-      allClearTarget = null;
-      allClearAutoplay = false;
-      allClearReturning = false;
+      if (presentationSequenceResolve === resolveSequence) {
+        allClearVisible = false;
+        allClearTarget = null;
+        allClearAutoplay = false;
+        allClearReturning = false;
+        presentationSequenceResolve = null;
+      }
+      resolveSequence?.();
     }
   }
 
@@ -3045,19 +3299,14 @@
     if (result.stale) {
       return { ok: false, error: "会話が更新されました。内容を確認してもう一度送信してください。" };
     }
-    if (result.gameOver) {
-      showGameOver(result.gameOver);
-    }
+    enqueuePresentation(result.presentation, {
+      kind,
+      talkId,
+      previousState,
+      nextState: result.playerState
+    });
     if (applied) {
       queueAlbumMediaAddedAssistant(kind === "sms" ? "messages" : "chat", talkContentId(kind, talkId, result.playerState), previousState, result.playerState);
-    }
-    if (result.allClear) {
-      showAllClear(result.allClear, {
-        kind,
-        talkId,
-        previousState,
-        nextState: result.playerState
-      });
     }
     return { ok: true };
   }
@@ -3084,6 +3333,7 @@
     }
 
     applyPlayerState(result.playerState);
+    enqueuePresentation(result.presentation);
     return { ok: true };
   }
 
@@ -3105,6 +3355,7 @@
     }
 
     applyPlayerState(result.playerState);
+    enqueuePresentation(result.presentation);
     return { ok: true };
   }
 
@@ -3128,11 +3379,13 @@
     if (!applyPlayerState(result.playerState)) {
       return;
     }
+    enqueuePresentation(result.presentation);
+    if (result.presentation?.sequence) return;
     const targetAppId = result.target.appId;
     focusOpenedContent(targetAppId, result.target.contentId);
     showTalkBackLink(backLinkSource, targetAppId);
     notificationToast = null;
-    void handleContentOpen(targetAppId, result.target.contentId, { ignoreSuppression: true, rememberAfterAccepted: true });
+    void openContentFromExplicitNavigation(targetAppId, result.target.contentId);
   }
 
   async function handleChatSend(talkId: string, message: string) {
@@ -3141,6 +3394,7 @@
 
   function handleRadioShareContent(target: TalkShareTarget, content: { contentId: string; title: string }) {
     const appId: AppId = target.kind === "chat" ? "chat" : "messages";
+    requestSearchAgentClose();
     shareDraftRequestId += 1;
     pendingShareDraft = {
       requestId: shareDraftRequestId,
@@ -3159,7 +3413,6 @@
     notificationToast = null;
     transientAssistantMessage = undefined;
     trackEvent({ name: "app_open", appId });
-    rememberAppOpened(appId);
     pushCurrentPhoneRoute({ kind: "app", appId, contentId: target.talkId });
   }
 
@@ -3173,10 +3426,7 @@
     const backLinkSource = activeAppId === "messages" || activeAppId === "chat" ? activeAppId : null;
     focusOpenedContent(appId, contentId);
     showTalkBackLink(backLinkSource, appId);
-    void handleContentOpen(appId, contentId, {
-      ignoreSuppression: true,
-      rememberAfterAccepted: true
-    });
+    void openContentFromExplicitNavigation(appId, contentId);
   }
 
   function openRadioPlayback() {
@@ -3254,10 +3504,9 @@
     }
 
     applyPlayerState(result.playerState);
-    if (result.gameOver) {
-      showGameOver(result.gameOver);
-    }
-    return { ok: true, gameOver: Boolean(result.gameOver) };
+    enqueuePresentation(result.presentation);
+    const gameOver = result.presentation?.sequence?.type === "game_over";
+    return { ok: true, gameOver };
   }
 
 </script>
@@ -3284,6 +3533,7 @@
       <PhoneStage mode={presentation.mode} let:frameOnly>
         <PhoneFrame
           {deviceState}
+          {apps}
           {frameOnly}
           osName={String(projectConstants["device.os_name"] ?? "XStoryPhone")}
           searchAgentName={String(projectConstants["search_agent.name"] ?? "ナビ")}
@@ -3296,17 +3546,20 @@
           backLinkLabel={visibleTalkBackLink ? TALK_BACK_LINK_LABELS[visibleTalkBackLink.sourceAppId] : ""}
           radioPlaybackActive={!uiState.locked && radioPlayback.active}
           searchAgentPeeking={!uiState.locked}
-          searchAgentMessages={playerState?.searchAgentMessages ?? []}
+          searchAgentTalk={searchAgentTalkView}
+          searchAgentDelayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
+          {searchAgentCloseRequestId}
           contentStates={playerState?.contentStates ?? []}
           incomingCall={activeIncomingCall}
           wallpaperUrl={deviceState.wallpaperUrl ?? ""}
           wallpaperVisible={uiState.locked || activeAppId === null}
+          presentationEffectActive={presentationEffectActive || noiseVisible}
           onHome={closeApp}
           onBackLink={openTalkBackLink}
           onOpenRadioPlayback={openRadioPlayback}
           onToggleShade={() => (shadeOpen = !shadeOpen)}
           onCompleteCall={completeIncomingCall}
-          onSearchAgentSearch={handleSearchAgentSearch}
+          onSearchAgentSend={handleSearchAgentSend}
           onOpenSearchAgentResult={handleOpenSearchAgentResult}
         >
       {#key routeKey}
@@ -3314,6 +3567,7 @@
           {#if uiState.locked}
             <LockScreen
               {deviceState}
+              {apps}
               pinLength={lockScreenPinLength}
               unlockMethod={deviceLockMethod === "fixed-pin" ? "fixed-pin" : "player-passcode"}
               onUnlock={unlockDevice}
@@ -3338,7 +3592,7 @@
             delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialDateLabel={TALK_INITIAL_DATE_LABEL}
             initialShareDraft={pendingShareDraft?.kind === "sms" ? pendingShareDraft : null}
-            postEnabledByThread={messagePostEnabledByThread}
+            inputStateByThread={messageInputStateByThread}
             replyDelayAnchorsByThread={replyDelayAnchorsByThread}
             onSend={handleSmsSend}
             onInitialShareDraftConsumed={consumePendingShareDraft}
@@ -3425,7 +3679,7 @@
             focusHistoryRepairId={focusedTalkHistoryRepairId}
             delayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
             initialShareDraft={pendingShareDraft?.kind === "chat" ? pendingShareDraft : null}
-            postEnabledByThread={chatPostEnabledByThread}
+            inputStateByThread={chatInputStateByThread}
             replyDelayAnchorsByThread={replyDelayAnchorsByThread}
             onSend={handleChatSend}
             onInitialShareDraftConsumed={consumePendingShareDraft}
@@ -3453,6 +3707,17 @@
               onBlockedContentOpen={(contentId) => recordBlockedContentLink("browser", contentId)}
               onNoise={triggerNoise}
             />
+          {:else if activeApp && isProjectAppId(activeApp.id)}
+            <ProjectAppHost
+              appId={activeApp.id}
+              items={deviceState.projectApps?.[activeApp.id] ?? []}
+              context={projectStageContext}
+              focusContentId={focusedContentId}
+              focusContentRequestId={focusedContentRequestId}
+              onContentOpen={(contentId) => void handleContentOpen(activeApp.id, contentId)}
+              onBlockedContentOpen={(contentId) => recordBlockedContentLink(activeApp.id, contentId)}
+              onNoise={triggerNoise}
+            />
           {:else}
             <HomeScreen {apps} {deviceState} {unreadAppIds} onOpenApp={openApp} onOpenNotification={openNotification} />
           {/if}
@@ -3460,6 +3725,7 @@
       {/key}
 
       <NotificationShade
+        {apps}
         notifications={deviceState.notifications}
         batteryLevel={deviceState.batteryLevel}
         signalLabel={deviceState.signalLabel}
@@ -3470,9 +3736,13 @@
       />
       <svelte:fragment slot="overlay">
         {#if notificationToast}
-          <NotificationToast notification={notificationToast} onOpen={() => openNotification(notificationToast?.id ?? "")} />
+          <NotificationToast notification={notificationToast} {apps} onOpen={() => openNotification(notificationToast?.id ?? "")} />
         {/if}
         <NoiseOverlay visible={noiseVisible} />
+        <PresentationEffectOverlay
+          bind:this={presentationEffectOverlay}
+          onActiveChange={(active) => (presentationEffectActive = active)}
+        />
       </svelte:fragment>
         </PhoneFrame>
       </PhoneStage>

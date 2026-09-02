@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DynamoStore, dynamoDocument } from "../src/platform/aws/dynamoStore.ts";
+import { MAX_SEARCH_AGENT_DISPLAY_ITEMS, SEARCH_AGENT_STREAM_ID } from "../src/shared/searchAgent.ts";
+import { searchAgentPlayerMessageEvent } from "../src/worker/talkEvents.ts";
 import { createInitialPlayerState } from "../src/worker/scenario.ts";
 import {
   DYNAMO_PLAYER_STATE_WARNING_BYTES,
@@ -43,7 +45,6 @@ test("DynamoDB版も入力ログが明示的に有効な場合だけ冪等Putす
   const fake = fakeTransport();
   const store = new DynamoStore(fake.transport, "table");
   const event = {
-    eventType: "talk_send",
     playerId: "player-1",
     requestKey: "turn-1",
     appId: "messages",
@@ -65,6 +66,7 @@ test("DynamoDB版も入力ログが明示的に有効な場合だけ冪等Putす
   const saved = dynamoDocument.valueFromItem(fake.calls[0].input.Item);
   assert.equal(saved.PK, "PLAYER#player-1");
   assert.equal(saved.SK, "INPUT#talk_send#turn-1");
+  assert.equal(saved.eventType, undefined);
   assert.equal(saved.GSI1PK, "REVIEW_SOURCE");
   assert.match(saved.GSI1SK, /^INPUT#talk-1#from-1#/u);
   assert.equal(saved.GSI2PK, "INPUT_REVIEW");
@@ -73,23 +75,23 @@ test("DynamoDB版も入力ログが明示的に有効な場合だけ冪等Putす
 
 test("DynamoDBの入力ログ確認はGSI2を時系列降順でQueryする", async () => {
   const row = {
-    id: "input-1", eventType: "search", playerId: "player-1", occurredAt: "2026-08-17T00:00:00.000Z",
-    appId: "search-agent", talkId: null, fromId: null, userInput: "黄色い灯り", normalizedInput: "黄色い灯り",
+    id: "input-1", playerId: "player-1", occurredAt: "2026-08-17T00:00:00.000Z",
+    appId: null, talkId: "search_agent", fromId: "intro", userInput: "黄色い灯り", normalizedInput: "黄色い灯り",
     status: "completed", matched: true, ruleId: null, nextFromId: null, responseSnapshot: { resultCount: 1 }
   };
   const fake = fakeTransport(async (operation) => operation === "Query" ? { Items: [dynamoDocument.item(row)] } : {});
   const items = await new DynamoStore(fake.transport, "table").playerInputEvents({
-    eventType: "search",
     playerId: "player-1",
     query: "灯り",
     limit: 100
   });
   assert.equal(items[0].userInput, "黄色い灯り");
+  assert.equal(items[0].appId, null);
   assert.deepEqual(items[0].responseSnapshot, { resultCount: 1 });
   assert.equal(fake.calls[0].input.IndexName, "GSI2");
   assert.equal(fake.calls[0].input.ScanIndexForward, false);
   const values = dynamoDocument.valueFromItem(fake.calls[0].input.ExpressionAttributeValues);
-  assert.equal(values[":sk"], "INPUT#search#");
+  assert.equal(values[":sk"], "INPUT#talk_send#");
 });
 
 test("同じパスコードの初回作成競合は先に作られたプレイヤーへ収束する", async () => {
@@ -116,6 +118,55 @@ test("同じパスコードの初回作成競合は先に作られたプレイ�
   assert.equal(session.GSI1PK, "PLAYER#existing-player");
 });
 
+test("DynamoDB版は新規playerと初期scheduleを同じtransactionで作成する", async () => {
+  const fake = fakeTransport(async (operation) => operation === "GetItem" ? {} : operation === "Query" ? { Items: [] } : {});
+  const schedule = {
+    id: "initial-schedule",
+    eventId: "show_demo_call",
+    fields: { source: "initial" },
+    dueAt: "2099-01-01T00:00:00.000Z"
+  };
+  const created = await new DynamoStore(fake.transport, "table").createPasscodeSession(
+    "initial-schedule-code",
+    createInitialPlayerState(),
+    [schedule]
+  );
+  assert.equal(created.created, true);
+  const transaction = fake.calls.find((call) => call.operation === "TransactWriteItems").input.TransactItems;
+  assert.equal(transaction.length, 3);
+  const scheduleItem = dynamoDocument.valueFromItem(transaction[2].Put.Item);
+  assert.equal(scheduleItem.SK, `SCHEDULE#${schedule.id}`);
+  assert.equal(scheduleItem.eventId, schedule.eventId);
+  assert.deepEqual(scheduleItem.fields, schedule.fields);
+  assert.equal(scheduleItem.dueAt, schedule.dueAt);
+  assert.equal(scheduleItem.status, "queued");
+});
+
+test("DynamoDB版はlast-seen更新失敗でghost sessionを作らず取得済みplayerを返す", async () => {
+  let getCount = 0;
+  const fake = fakeTransport(async (operation) => {
+    if (operation === "GetItem") {
+      getCount += 1;
+      return getCount === 1
+        ? { Item: dynamoDocument.item({ playerId: "player-1" }) }
+        : { Item: dynamoDocument.item({ state: createInitialPlayerState(), stateVersion: 3 }) };
+    }
+    if (operation === "UpdateItem") throw new Error("last_seen_failed");
+    return {};
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const player = await new DynamoStore(fake.transport, "table").playerForSession("session-token");
+    assert.equal(player?.id, "player-1");
+    assert.equal(player?.stateVersion, 3);
+    const update = fake.calls.find((call) => call.operation === "UpdateItem");
+    assert.equal(update.input.ConditionExpression, "attribute_exists(PK)");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 test("DynamoDB版もアクセスコード失敗回数を同じテーブルの有界キーへ保存する", async () => {
   const at = "2026-08-17T00:00:00.000Z";
   const fake = fakeTransport(async (operation) => operation === "GetItem"
@@ -139,27 +190,53 @@ test("DynamoDB版もアクセスコード失敗回数を同じテーブルの有
   assert.equal(cleared.calls[0].operation, "DeleteItem");
 });
 
-test("DynamoDB版も検索履歴だけを直近200メッセージへ制限する", async () => {
+test("DynamoDB版search agent履歴もtalk単位itemで直近200表示eventへ制限する", async () => {
   const fake = fakeTransport();
   const store = new DynamoStore(fake.transport, "table");
   const state = createInitialPlayerState();
-  const messages = Array.from({ length: 202 }, (_, index) => ({
-    seq: index + 1,
+  const messages = Array.from({ length: 202 }, (_, index) => searchAgentPlayerMessageEvent({
     id: `search-${index + 1}`,
-    requestId: `request-${Math.floor(index / 2)}`,
-    role: index % 2 ? "assistant" : "user",
+    seq: index + 1,
     body: "検索",
-    sentAt: "2026-08-17T00:00:00.000Z"
+    deliveredAt: "2026-08-17T00:00:01.000Z"
   }));
   assert.equal(await store.savePlayer({ id: "player-1", state, stateVersion: 1 }, state, [{
-    streamId: "search",
-    transcriptKey: state.searchTranscriptKey,
+    streamId: SEARCH_AGENT_STREAM_ID,
+    transcriptKey: "search-agent-key",
     messages
   }]), true);
-  const transaction = fake.calls[0].input.TransactItems;
+  const transaction = fake.calls.find((call) => call.operation === "TransactWriteItems").input.TransactItems;
   const transcript = dynamoDocument.valueFromItem(transaction[1].Put.Item);
-  assert.equal(transcript.messages.length, 200);
+  assert.equal(transcript.streamId, SEARCH_AGENT_STREAM_ID);
+  assert.equal(transcript.messages.length, MAX_SEARCH_AGENT_DISPLAY_ITEMS);
   assert.equal(transcript.messages[0].seq, 3);
+  assert.equal(transcript.messages.at(-1).seq, 202);
+});
+
+test("DynamoDB版talk履歴も展開本文ではなく正本形式のeventを保存する", async () => {
+  const fake = fakeTransport();
+  const store = new DynamoStore(fake.transport, "table");
+  const state = createInitialPlayerState();
+  const events = [{
+    id: "sms_block_turn_1",
+    kind: "sms",
+    talk_id: "guide",
+    event_type: "message_block",
+    body: null,
+    block_id: "guide::message_reply",
+    format_env_json: JSON.stringify({ player_name: "田中" }),
+    delivered_at: "2026-08-20T00:00:01.000Z"
+  }];
+  assert.equal(await store.savePlayer({ id: "player-1", state, stateVersion: 1 }, state, [{
+    streamId: "talk:guide",
+    transcriptKey: "talk-key",
+    messages: events,
+    resolvedMessages: [{ body: "展開済み本文を保存してはいけない" }]
+  }]), true);
+  const transaction = fake.calls.find((call) => call.operation === "TransactWriteItems").input.TransactItems;
+  const transcript = dynamoDocument.valueFromItem(transaction[1].Put.Item);
+  assert.deepEqual(transcript.messages, events);
+  assert.equal(JSON.stringify(transcript).includes("展開済み本文を保存してはいけない"), false);
 });
 
 test("プレイヤー更新はstateVersionの条件付き更新にし、競合をfalseで返す", async () => {
@@ -183,6 +260,63 @@ test("予定イベントclaimはqueuedまたは期限切れleaseだけを獲得�
 
   const rejected = fakeTransport(async () => { throw conditionalError(); });
   assert.equal(await new DynamoStore(rejected.transport, "table").claimScheduledEvent("player-1", "schedule-1"), false);
+});
+
+test("DynamoDB版hook LLM cacheは同じplayer partitionとTTL属性を使う", async () => {
+  const fake = fakeTransport();
+  const store = new DynamoStore(fake.transport, "table");
+  const record = {
+    cacheKey: "cache-key",
+    taskId: "task",
+    kind: "match",
+    modelVersion: "fast:model:none",
+    inputHash: "input",
+    promptHash: "prompt",
+    schemaHash: "schema",
+    status: "fallback",
+    output: { value: "fallback" },
+    errorCode: "provider_error",
+    expiresAt: "2099-01-01T00:00:00.000Z"
+  };
+  assert.deepEqual(await store.saveHookLlmResultIfAbsent("player-1", record), record);
+  const put = fake.calls.find((call) => call.operation === "PutItem");
+  const item = dynamoDocument.valueFromItem(put.input.Item);
+  assert.equal(item.PK, "PLAYER#player-1");
+  assert.equal(item.SK, "HOOK_LLM_RESULT#cache-key");
+  assert.equal(item.expiresAtEpoch, Math.floor(Date.parse(record.expiresAt) / 1_000));
+  assert.equal(
+    put.input.ConditionExpression,
+    "attribute_not_exists(PK) OR attribute_not_exists(expiresAt) OR expiresAt <= :now"
+  );
+  const values = dynamoDocument.valueFromItem(put.input.ExpressionAttributeValues);
+  assert.match(values[":now"], /^\d{4}-\d{2}-\d{2}T/u);
+});
+
+test("DynamoDB版もscheduleと生成音声intentをstate CAS transactionへ含める", async () => {
+  const fake = fakeTransport();
+  const store = new DynamoStore(fake.transport, "table");
+  const state = createInitialPlayerState();
+  const audioJob = {
+    id: "audio-job",
+    audioId: "demo_voice",
+    provider: "static",
+    externalJobId: null,
+    inputHash: "hash",
+    inputText: "入力",
+    outputKey: null,
+    status: "queued",
+    errorCode: null,
+    createdAt: "2026-08-23T00:00:00.000Z",
+    completedAt: null
+  };
+  assert.equal(await store.savePlayer({ id: "player-1", state, stateVersion: 1 }, state, [], {
+    schedules: [{ type: "queue", id: "schedule", eventId: "show_demo_call", fields: {}, dueAt: "2099-01-01T00:00:00.000Z" }],
+    generatedAudioJobs: [audioJob]
+  }), true);
+  const transaction = fake.calls.find((call) => call.operation === "TransactWriteItems").input.TransactItems;
+  assert.equal(transaction.length, 3);
+  assert.equal(dynamoDocument.valueFromItem(transaction[1].Update.Key).SK, "SCHEDULE#schedule");
+  assert.equal(dynamoDocument.valueFromItem(transaction[2].Put.Item).inputText, "入力");
 });
 
 test("予定イベントのfieldsはDynamoDB式で属性名を明示する", async () => {
@@ -302,15 +436,17 @@ test("会話ストリームは状態と同じtransactionで保存し、DynamoDB�
   assert.ok(storedPlayerStateBytes(normalState) < DYNAMO_PLAYER_STATE_WARNING_BYTES);
 
   const warningTranscript = {
-    streamId: "search",
-    transcriptKey: "search-key",
+    streamId: "talk:large-test",
+    transcriptKey: "large-talk-key",
     messages: [{
-      seq: 1,
-    id: "large",
-    requestId: "large",
-    role: "user",
-    body: "あ".repeat(105_000),
-    sentAt: "2026-08-13T00:00:00.000Z"
+      id: "large",
+      kind: "sms",
+      talk_id: "large-test",
+      event_type: "player_message",
+      body: "あ".repeat(105_000),
+      block_id: null,
+      format_env_json: null,
+      delivered_at: "2026-08-13T00:00:00.000Z"
     }]
   };
   assert.ok(storedTranscriptBytes(warningTranscript) > DYNAMO_PLAYER_STATE_WARNING_BYTES);
@@ -326,9 +462,9 @@ test("会話ストリームは状態と同じtransactionで保存し、DynamoDB�
   } finally {
     console.warn = originalWarn;
   }
-  assert.equal(accepted.calls[0].operation, "TransactWriteItems");
-  assert.equal(accepted.calls[0].input.TransactItems.length, 2);
-  assert.equal(accepted.calls[0].input.TransactItems[0].Update.ConditionExpression, "stateVersion = :expectedVersion");
+  const acceptedTransaction = accepted.calls.find((call) => call.operation === "TransactWriteItems");
+  assert.equal(acceptedTransaction.input.TransactItems.length, 2);
+  assert.equal(acceptedTransaction.input.TransactItems[0].Update.ConditionExpression, "stateVersion = :expectedVersion");
 
   const oversized = {
     ...warningTranscript,

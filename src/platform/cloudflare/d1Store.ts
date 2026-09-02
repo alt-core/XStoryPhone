@@ -1,8 +1,11 @@
 import type {
   AppStore,
   GeneratedAudioJob,
+  HookLlmCacheRecord,
+  InitialScheduledEvent,
   InputEventRecord,
   PlayerInputReviewEvent,
+  PlayerCommitEffects,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
@@ -13,12 +16,15 @@ import type {
   ReviewTrialInput,
   ScheduledEvent,
   StoredPlayerState,
+  StoredTalkEvent,
   StoredTranscript,
-  TranscriptUpdate
+  TranscriptAppend
 } from "../../server/store.ts";
 import {
   MAX_SESSIONS_PER_PLAYER,
   limitedTranscript,
+  isSearchAgentTranscriptConflictError,
+  mergeTranscriptAppend,
   normalizeStoredState,
   nowIso,
   scheduledEventLeaseCutoff,
@@ -26,6 +32,7 @@ import {
   sha256
 } from "../../server/store.ts";
 import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
+import { SEARCH_AGENT_STREAM_ID } from "../../shared/searchAgent.ts";
 
 function stringArray(value: string) {
   try {
@@ -62,6 +69,7 @@ function generatedAudioJob(row: {
   provider: string;
   external_job_id: string | null;
   input_hash: string;
+  input_text: string | null;
   output_key: string | null;
   status: GeneratedAudioJob["status"];
   error_code: string | null;
@@ -74,6 +82,7 @@ function generatedAudioJob(row: {
     provider: row.provider,
     externalJobId: row.external_job_id,
     inputHash: row.input_hash,
+    inputText: row.input_text,
     outputKey: row.output_key,
     status: row.status,
     errorCode: row.error_code,
@@ -89,21 +98,36 @@ export class D1Store implements AppStore {
     this.db = db;
   }
 
-  async createPasscodeSession(accessCode: string, initialState: StoredPlayerState) {
+  async createPasscodeSession(
+    accessCode: string,
+    initialState: StoredPlayerState,
+    initialSchedules: readonly InitialScheduledEvent[] = []
+  ) {
     const accessCodeHash = await sha256(`xstoryphone:access-code:v1:${accessCode}`);
     let player = await this.db.prepare("SELECT id FROM players WHERE access_code_hash = ?")
       .bind(accessCodeHash)
       .first<{ id: string }>();
-    const playerBeforeInsert = player;
+    let created = false;
 
     if (!player) {
       const playerId = crypto.randomUUID();
       const now = nowIso();
       try {
-        await this.db.prepare(
-          "INSERT INTO players (id, access_code_hash, state_json, state_version, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)"
-        ).bind(playerId, accessCodeHash, JSON.stringify(initialState), now, now).run();
+        await this.db.batch([
+          this.db.prepare(
+            "INSERT INTO players (id, access_code_hash, state_json, state_version, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)"
+          ).bind(playerId, accessCodeHash, JSON.stringify(initialState), now, now),
+          ...initialSchedules.map((schedule) => this.db.prepare(
+            `INSERT INTO scheduled_events
+             (id, player_id, schedule_id, event_id, payload_json, due_at, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`
+          ).bind(
+            crypto.randomUUID(), playerId, schedule.id, schedule.eventId,
+            JSON.stringify(schedule.fields), schedule.dueAt, now, now
+          ))
+        ]);
         player = { id: playerId };
+        created = true;
       } catch (error) {
         // 同じコードの初回作成が競合した場合は、先に作成されたプレイヤーを使う。
         player = await this.db.prepare("SELECT id FROM players WHERE access_code_hash = ?")
@@ -121,7 +145,7 @@ export class D1Store implements AppStore {
       .run();
     await this.prunePlayerSessions(player.id, tokenHash)
       .catch((error) => console.error("[sessions:prune]", error));
-    return { playerId: player.id, sessionToken, created: !playerBeforeInsert };
+    return { playerId: player.id, sessionToken, created };
   }
 
   async isAccessCodeLocked(counter: string, at: string) {
@@ -176,7 +200,8 @@ export class D1Store implements AppStore {
        WHERE sessions.token_hash = ?`
     ).bind(tokenHash).first<{ id: string; state_json: string; state_version: number }>();
     if (!row) return null;
-    await this.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?").bind(nowIso(), tokenHash).run();
+    await this.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?").bind(nowIso(), tokenHash).run()
+      .catch((error) => console.error("[sessions:last_seen]", error instanceof Error ? error.name : "unknown"));
     return {
       id: row.id,
       state: normalizeStoredState(JSON.parse(row.state_json) as StoredPlayerState),
@@ -185,23 +210,46 @@ export class D1Store implements AppStore {
   }
 
   async loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript> {
+    if (streamId.startsWith("talk:") && streamId !== SEARCH_AGENT_STREAM_ID) {
+      const talkId = streamId.slice("talk:".length);
+      const rows = await this.db.prepare(
+        `SELECT id, kind, talk_id, event_type, body, block_id, format_env_json, delivered_at
+         FROM talk_events
+         WHERE player_id = ? AND talk_id = ? AND transcript_key = ?
+         ORDER BY delivered_at ASC, id ASC`
+      ).bind(playerId, talkId, transcriptKey).all<StoredTalkEvent>();
+      return { streamId, transcriptKey, messages: (rows.results ?? []).map((row) => ({ ...row })) };
+    }
     const row = await this.db.prepare(
       "SELECT transcript_key, messages_json FROM player_transcripts WHERE player_id = ? AND stream_id = ?"
     ).bind(playerId, streamId).first<{ transcript_key: string; messages_json: string }>();
     if (!row || row.transcript_key !== transcriptKey) {
       return { streamId, transcriptKey, messages: [] };
     }
+    let messages: unknown;
     try {
-      const messages = JSON.parse(row.messages_json) as unknown;
-      return limitedTranscript({ streamId, transcriptKey, messages: Array.isArray(messages) ? messages : [] });
+      messages = JSON.parse(row.messages_json) as unknown;
     } catch {
       return { streamId, transcriptKey, messages: [] };
     }
+    return limitedTranscript({ streamId, transcriptKey, messages: Array.isArray(messages) ? messages : [] });
   }
 
-  async savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts: TranscriptUpdate[] = []) {
+  async savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts: TranscriptAppend[] = [], effects: PlayerCommitEffects = {}) {
+    let completedSearchAgentTranscripts: StoredTranscript[];
+    try {
+      completedSearchAgentTranscripts = await Promise.all(transcripts
+        .filter((transcript) => transcript.streamId === SEARCH_AGENT_STREAM_ID)
+        .map(async (append) => mergeTranscriptAppend(
+          await this.loadTranscript(player.id, append.streamId, append.transcriptKey),
+          append
+        )));
+    } catch (error) {
+      if (isSearchAgentTranscriptConflictError(error)) return false;
+      throw error;
+    }
     const now = nowIso();
-    if (!transcripts.length) {
+    if (!transcripts.length && !(effects.schedules?.length) && !(effects.generatedAudioJobs?.length)) {
       const result = await this.db.prepare(
         `UPDATE players SET state_json = ?, state_version = state_version + 1, updated_at = ?
          WHERE id = ? AND state_version = ?`
@@ -214,7 +262,9 @@ export class D1Store implements AppStore {
       `UPDATE players SET state_json = ?, state_version = state_version + 1, updated_at = ?, last_mutation_id = ?
        WHERE id = ? AND state_version = ?`
     ).bind(JSON.stringify(nextState), now, mutationId, player.id, player.stateVersion);
-    const updateTranscripts = transcripts.map(limitedTranscript).map((transcript) => this.db.prepare(
+    const updateTranscripts = completedSearchAgentTranscripts
+      .map(limitedTranscript)
+      .map((transcript) => this.db.prepare(
       `INSERT INTO player_transcripts (player_id, stream_id, transcript_key, messages_json, updated_at)
        SELECT ?, ?, ?, ?, ?
        WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)
@@ -231,15 +281,128 @@ export class D1Store implements AppStore {
       player.id,
       mutationId
     ));
-    const results = await this.db.batch([updatePlayer, ...updateTranscripts]);
+    const insertTalkEvents = transcripts
+      .filter((transcript) => transcript.streamId.startsWith("talk:") && transcript.streamId !== SEARCH_AGENT_STREAM_ID)
+      .flatMap((transcript) => transcript.messages.flatMap((message) => {
+        if (message.kind === "search_agent") return [];
+        return [this.db.prepare(
+          `INSERT OR IGNORE INTO talk_events
+             (id, player_id, transcript_key, kind, talk_id, event_type, body, block_id, format_env_json, delivered_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)`
+        ).bind(
+          message.id,
+          player.id,
+          transcript.transcriptKey,
+          message.kind,
+          message.talk_id,
+          message.event_type,
+          message.body,
+          message.block_id,
+          message.format_env_json,
+          message.delivered_at,
+          player.id,
+          mutationId
+        )];
+      }));
+    const scheduleStatements = (effects.schedules ?? []).map((effect) => effect.type === "cancel"
+      ? this.db.prepare(
+          `UPDATE scheduled_events SET status = 'canceled', updated_at = ?
+           WHERE player_id = ? AND schedule_id = ? AND status IN ('queued', 'running')
+             AND EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)`
+        ).bind(now, player.id, effect.id, player.id, mutationId)
+      : this.db.prepare(
+          `INSERT INTO scheduled_events (id, player_id, schedule_id, event_id, payload_json, due_at, status, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, 'queued', ?, ?
+           WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)
+           ON CONFLICT(player_id, schedule_id) DO UPDATE SET
+             event_id = excluded.event_id, payload_json = excluded.payload_json, due_at = excluded.due_at,
+             status = 'queued', updated_at = excluded.updated_at
+           WHERE scheduled_events.status != 'completed'`
+        ).bind(crypto.randomUUID(), player.id, effect.id, effect.eventId, JSON.stringify(effect.fields), effect.dueAt, now, now, player.id, mutationId));
+    const audioStatements = (effects.generatedAudioJobs ?? []).map((job) => this.db.prepare(
+      `INSERT INTO generated_audio_jobs
+       (id, player_id, audio_id, provider, external_job_id, input_hash, input_text, output_key,
+        status, error_code, created_at, updated_at, completed_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)
+       ON CONFLICT(player_id, audio_id) DO UPDATE SET
+         provider = excluded.provider, external_job_id = excluded.external_job_id,
+         input_hash = excluded.input_hash, input_text = excluded.input_text, output_key = excluded.output_key,
+         status = excluded.status, error_code = excluded.error_code, updated_at = excluded.updated_at,
+         completed_at = excluded.completed_at`
+    ).bind(
+      job.id, player.id, job.audioId, job.provider, job.externalJobId, job.inputHash, job.inputText,
+      job.outputKey, job.status, job.errorCode, job.createdAt, now, job.completedAt, player.id, mutationId
+    ));
+    const results = await this.db.batch([updatePlayer, ...updateTranscripts, ...insertTalkEvents, ...scheduleStatements, ...audioStatements]);
     return (results[0]?.meta.changes ?? 0) === 1;
   }
 
   async clearPlayerRuntimeJobs(playerId: string) {
     await this.db.batch([
       this.db.prepare("DELETE FROM scheduled_events WHERE player_id = ?").bind(playerId),
-      this.db.prepare("DELETE FROM generated_audio_jobs WHERE player_id = ?").bind(playerId)
+      this.db.prepare("DELETE FROM generated_audio_jobs WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM talk_events WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM player_transcripts WHERE player_id = ?").bind(playerId),
+      this.db.prepare("DELETE FROM hook_llm_results WHERE player_id = ?").bind(playerId)
     ]);
+  }
+
+  async loadHookLlmResult(playerId: string, cacheKey: string, at: string) {
+    const row = await this.db.prepare(
+      `SELECT cache_key, task_id, kind, model_version, input_hash, prompt_hash, schema_hash,
+              status, output_json, error_code, expires_at
+       FROM hook_llm_results WHERE player_id = ? AND cache_key = ? AND expires_at > ?`
+    ).bind(playerId, cacheKey, at).first<{
+      cache_key: string; task_id: string; kind: string; model_version: string; input_hash: string;
+      prompt_hash: string; schema_hash: string; status: "ready" | "fallback"; output_json: string;
+      error_code: string | null; expires_at: string;
+    }>();
+    if (!row) return null;
+    try {
+      const output = JSON.parse(row.output_json) as HookLlmCacheRecord["output"];
+      return {
+        cacheKey: row.cache_key, taskId: row.task_id, kind: row.kind, modelVersion: row.model_version,
+        inputHash: row.input_hash, promptHash: row.prompt_hash, schemaHash: row.schema_hash,
+        status: row.status, output, errorCode: row.error_code, expiresAt: row.expires_at
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async saveHookLlmResultIfAbsent(playerId: string, record: HookLlmCacheRecord) {
+    const now = nowIso();
+    await this.db.prepare(
+      `INSERT INTO hook_llm_results
+       (id, player_id, cache_key, task_id, kind, model_version, input_hash, prompt_hash, schema_hash,
+        status, output_json, error_code, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(player_id, cache_key) DO UPDATE SET
+         id = excluded.id, task_id = excluded.task_id, kind = excluded.kind,
+         model_version = excluded.model_version, input_hash = excluded.input_hash,
+         prompt_hash = excluded.prompt_hash, schema_hash = excluded.schema_hash,
+         status = excluded.status, output_json = excluded.output_json,
+         error_code = excluded.error_code, expires_at = excluded.expires_at,
+         created_at = excluded.created_at, updated_at = excluded.updated_at
+       WHERE hook_llm_results.expires_at <= ?`
+    ).bind(
+      crypto.randomUUID(), playerId, record.cacheKey, record.taskId, record.kind, record.modelVersion,
+      record.inputHash, record.promptHash, record.schemaHash, record.status, JSON.stringify(record.output),
+      record.errorCode, record.expiresAt, now, now, now
+    ).run();
+    return await this.loadHookLlmResult(playerId, record.cacheKey, now) ?? record;
+  }
+
+  async clearHookLlmResults(playerId: string) {
+    await this.db.prepare("DELETE FROM hook_llm_results WHERE player_id = ?").bind(playerId).run();
+  }
+
+  async cleanupExpiredHookLlmResults(at: string, limit: number) {
+    await this.db.prepare(
+      "DELETE FROM hook_llm_results WHERE id IN (SELECT id FROM hook_llm_results WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)"
+    ).bind(at, Math.max(1, Math.min(500, limit))).run();
   }
 
   async queueScheduledEvent(playerId: string, scheduleId: string, eventId: string, fields: Record<string, string>, dueAt: string) {
@@ -322,11 +485,11 @@ export class D1Store implements AppStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       crypto.randomUUID(),
-      event.eventType,
+      "talk_send",
       event.playerId,
       event.requestKey,
       nowIso(),
-      event.appId,
+      event.appId ?? null,
       event.talkId ?? null,
       event.fromId ?? null,
       event.userInput,
@@ -340,18 +503,13 @@ export class D1Store implements AppStore {
   }
 
   async playerInputEvents(filters: {
-    eventType?: "search" | "talk_send";
     playerId?: string;
     talkId?: string;
     query?: string;
     limit: number;
   }): Promise<PlayerInputReviewEvent[]> {
-    const clauses = ["1 = 1"];
+    const clauses = ["event_type = 'talk_send'"];
     const values: unknown[] = [];
-    if (filters.eventType) {
-      clauses.push("event_type = ?");
-      values.push(filters.eventType);
-    }
     if (filters.playerId) {
       clauses.push("player_id = ?");
       values.push(filters.playerId);
@@ -366,17 +524,16 @@ export class D1Store implements AppStore {
     }
     values.push(filters.limit);
     const result = await this.db.prepare(
-      `SELECT id, event_type, player_id, occurred_at, app_id, talk_id, from_id, user_input,
+      `SELECT id, player_id, occurred_at, app_id, talk_id, from_id, user_input,
               status, matched, rule_id, next_from_id, response_snapshot_json
        FROM player_input_events
        WHERE ${clauses.join(" AND ")}
        ORDER BY occurred_at DESC, id DESC LIMIT ?`
     ).bind(...values).all<{
       id: string;
-      event_type: "search" | "talk_send";
       player_id: string;
       occurred_at: string;
-      app_id: string;
+      app_id: string | null;
       talk_id: string | null;
       from_id: string | null;
       user_input: string;
@@ -388,7 +545,6 @@ export class D1Store implements AppStore {
     }>();
     return (result.results ?? []).map((row) => ({
       id: row.id,
-      eventType: row.event_type,
       playerId: row.player_id,
       occurredAt: row.occurred_at,
       appId: row.app_id,
@@ -404,7 +560,7 @@ export class D1Store implements AppStore {
   }
 
   private generatedAudioSelect() {
-    return `SELECT id, audio_id, provider, external_job_id, input_hash, output_key,
+    return `SELECT id, audio_id, provider, external_job_id, input_hash, input_text, output_key,
                    status, error_code, created_at, completed_at
             FROM generated_audio_jobs`;
   }
@@ -419,28 +575,23 @@ export class D1Store implements AppStore {
     const now = nowIso();
     await this.db.prepare(
       `INSERT INTO generated_audio_jobs
-       (id, player_id, audio_id, provider, external_job_id, input_hash, output_key,
+       (id, player_id, audio_id, provider, external_job_id, input_hash, input_text, output_key,
         status, error_code, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(player_id, audio_id) DO UPDATE SET
          provider = excluded.provider,
          external_job_id = excluded.external_job_id,
          input_hash = excluded.input_hash,
+         input_text = excluded.input_text,
          output_key = excluded.output_key,
          status = excluded.status,
          error_code = excluded.error_code,
          updated_at = excluded.updated_at,
          completed_at = excluded.completed_at`
     ).bind(
-      job.id, playerId, job.audioId, job.provider, job.externalJobId, job.inputHash, job.outputKey,
+      job.id, playerId, job.audioId, job.provider, job.externalJobId, job.inputHash, job.inputText, job.outputKey,
       job.status, job.errorCode, job.createdAt, now, job.completedAt
     ).run();
-  }
-
-  async pendingGeneratedAudioJobs(playerId: string) {
-    const rows = await this.db.prepare(`${this.generatedAudioSelect()} WHERE player_id = ? AND status IN ('queued', 'running')`)
-      .bind(playerId).all<Parameters<typeof generatedAudioJob>[0]>();
-    return (rows.results ?? []).map(generatedAudioJob);
   }
 
   async generatedAudioJobs(playerId: string) {
@@ -511,16 +662,17 @@ export class D1Store implements AppStore {
 
   async reviewInputEvents(talkId: string, fromId: string): Promise<ReviewInputEvent[]> {
     const result = await this.db.prepare(
-      `SELECT id, rule_id, user_input, normalized_input
+      `SELECT id, rule_id, user_input, normalized_input, response_snapshot_json
        FROM player_input_events
        WHERE event_type = 'talk_send' AND talk_id = ? AND from_id = ? AND rule_id IS NOT NULL
        ORDER BY occurred_at DESC LIMIT 1000`
-    ).bind(talkId, fromId).all<{ id: string; rule_id: string; user_input: string; normalized_input: string }>();
+    ).bind(talkId, fromId).all<{ id: string; rule_id: string; user_input: string; normalized_input: string; response_snapshot_json: string }>();
     return (result.results ?? []).map((row) => ({
       id: row.id,
       ruleId: row.rule_id,
       userInput: row.user_input,
-      normalizedInput: row.normalized_input
+      normalizedInput: row.normalized_input,
+      responseSnapshot: jsonRecord(row.response_snapshot_json)
     }));
   }
 

@@ -13,7 +13,7 @@ test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ�
   const state = createInitialPlayerState();
   state.stateValues = { image_color_reported: true };
   const player = { id: "browser-player", state, stateVersion: 3 };
-  const token = await encodeBrowserProgress("test-secret", "project-a", "revision-a", player);
+  const token = await encodeBrowserProgress("test-secret", "project-a", player);
   assert.equal(token.split(".").length, 2);
 
   const decoded = await decodeBrowserProgress("test-secret", "project-a", token);
@@ -28,8 +28,8 @@ test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ�
   assert.equal((await decodeBrowserProgress("test-secret", "project-a", token))?.stateVersion, 3);
   assert.equal(await decodeBrowserProgress("test-secret", "project-b", token), null);
 
-  const nextRevisionToken = await encodeBrowserProgress("test-secret", "project-a", "revision-b", player);
-  assert.notEqual(nextRevisionToken, token);
+  const nextRevisionToken = await encodeBrowserProgress("test-secret", "project-a", player);
+  assert.equal(nextRevisionToken, token);
   assert.equal((await decodeBrowserProgress("test-secret", "project-a", nextRevisionToken))?.stateVersion, 3);
 });
 
@@ -37,7 +37,7 @@ test("ブラウザー進行トークンはアプリの安全上限を超えた�
   const state = createInitialPlayerState();
   state.discoveredTargetKeys = Array.from({ length: 3_000 }, () => `notes:${crypto.randomUUID()}`);
   await assert.rejects(
-    () => encodeBrowserProgress("test-secret", "project-a", "revision-a", { id: "browser-player", state, stateVersion: 1 }),
+    () => encodeBrowserProgress("test-secret", "project-a", { id: "browser-player", state, stateVersion: 1 }),
     /browser_progress_too_large/u
   );
 });
@@ -45,28 +45,32 @@ test("ブラウザー進行トークンはアプリの安全上限を超えた�
 test("デモを終盤まで進めてもbrowser進行トークンへ十分な余白を残す", async () => {
   let state = createInitialPlayerState();
   for (const [id, initial] of Object.entries(workerScenario.stateVariables)) {
-    if (typeof initial === "boolean" && !id.endsWith("_received")) state.stateValues[id] = true;
+    if (typeof initial === "boolean" && !id.endsWith("_received") && !id.endsWith("_pending")) state.stateValues[id] = true;
   }
   state.repairedAppIds.push("chat");
-  state.repairedContentIds = workerScenario.contents.filter((item) => item.initialState !== "normal").map((item) => item.id);
+  state.repairedContentIds = [
+    ...workerScenario.contents.filter((item) => item.initialState !== "normal").map((item) => item.id),
+    ...workerScenario.talks.filter((item) => item.initialState !== "normal").map((item) => item.id)
+  ];
   state.unlockedContentIds = ["sealed_note"];
   state.discoveredTargetKeys = [
     ...workerScenario.apps.map((item) => `${item.id}:${item.id}`),
-    ...workerScenario.contents.map((item) => `${item.appId}:${item.publicId}`)
+    ...workerScenario.contents.map((item) => `${item.appId}:${item.publicId}`),
+    ...workerScenario.talks.map((item) => `${item.appId}:${item.publicId}`)
   ];
   state.clearedNotificationIds = workerScenario.notifications.map((item) => item.id);
   state.revealedAttachmentContentIds = ["rainy_window", "sealed_note", "demo_received_image"];
   state = (await reconcileScenarioState(state, "browser-player")).state;
   for (const [target, playerInput] of [
-    ["guide", "メッセージ連携"],
-    ["guide", "画像受信テスト"],
+    ["guide", "別ルームへ送る"],
+    ["search_agent", "画像受信テスト"],
     ["guide", "チャットへ送る"],
     ["lobby", "チャット連携"],
     ["lobby", "メッセージへ送る"]
   ]) {
-    state = (await runScenarioHooks(state, { event: "talk_sent", target, playerInput })).state;
+    state = (await runScenarioHooks(state, { eventId: "talk_turn_completed", talkId: target, playerInput })).state;
   }
-  const token = await encodeBrowserProgress("test-secret", "demo", "revision", {
+  const token = await encodeBrowserProgress("test-secret", "demo", {
     id: "browser-player",
     state,
     stateVersion: 10

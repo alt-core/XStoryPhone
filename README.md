@@ -1,16 +1,17 @@
 # XStoryPhone
 
-XStoryPhoneは、仮想スマートフォンを舞台に物語を作るための完成テンプレートです。リポジトリをcloneし、デモシナリオを書き換えて制作を始めます。
+XStoryPhoneは、仮想スマートフォンを舞台に物語を作るための完成テンプレートです。デモを残したまま、作品用のシナリオディレクトリを追加して制作を始められます。
 
 端末内には、ノイズに覆われて開けないアプリやコンテンツがあります。プレイヤーは画面右下の検索AIへ語句を入力し、検索結果から対象を開くことでデータを修復します。検索AIは独立したアプリではなく、どの画面からも呼び出せるオーバーレイです。
 
 ## 主な機能
 
-- 電話、メッセージ、メモ、アルバム、スケジュール、ラジオ、チャット、ブラウザの各UI
+- 電話、メッセージ、メール、メモ、アルバム、スケジュール、ラジオ、チャット、ブラウザの各UI
 - 検索AIオーバーレイと、検索結果を開いた時だけ行うデータ修復
 - JSONとTSVによるシナリオ作成
-- 状態条件によるアプリ、コンテンツ、会話、通知、検索応答の出し分け
+- 状態条件によるアプリ、コンテンツ、会話、通知、検索AIの台本の出し分け
 - 正規表現だけでも運用できる会話分岐と、任意のLLM provider
+- 全talk共通の入力欄制御とQuick Reply
 - 状態変数、ToDo、通知、シナリオhook
 - 実プレイ入力の確認、分岐試行、監修指示、レポート出力を行う運営レビュー画面
 - 認証・DB保存型と、無料公開向けのブラウザー保存型
@@ -36,14 +37,25 @@ npm run dev
 
 ## 最初に編集する場所
 
-1. `scenario/demo/scenario.json` で、作品名、OS名、アプリ、コンテンツ、通知、hookを編集します。
-2. `scenario/demo/authoring/talk_blocks.tsv` で会話本文、添付、表示間隔を編集します。
-3. `scenario/demo/authoring/talk_flow.tsv` で会話分岐を編集します。
-4. `src/project/hooks.ts` に作品固有の状態変化を書きます。
-5. 端末外の画面が必要な作品では、`src/project/ProjectStage.svelte` に作品固有Stageを追加します。
-6. `public/demo/` のデモ素材を作品の素材へ置き換えます。
-7. `index.html`、`public/manifest.webmanifest`、`public/icons/` のPWA名とアイコンを作品に合わせます。
-8. `public/privacy-policy.html` を実際の運用内容へ書き換えます。
+1. `scenario/demo/` を `scenario/my-story/` などの作品用ディレクトリへ複製します。
+2. 作品用の `scenario.json` で、作品名、OS名、アプリ、コンテンツ、通知、hookを編集します。
+3. `authoring/talk_blocks.tsv` で会話本文、添付、表示間隔を編集します。
+4. `authoring/talk_flow.tsv` で会話分岐を編集します。
+5. `src/project/hooks.ts` に作品固有の状態変化を書きます。
+6. 端末外の画面が必要な作品では、`src/project/ProjectStage.svelte` に作品固有Stageを追加します。
+7. 作品固有アプリが必要なら、`src/project/apps.ts`へ1エントリ追加し、規約pathへcomponentを置きます。
+8. `public/demo/` のデモ素材を作品の素材へ置き換えます。
+9. `index.html`、`public/manifest.webmanifest`、`public/icons/` のPWA名とアイコンを作品に合わせます。
+10. `public/privacy-policy.html` を実際の運用内容へ書き換えます。
+
+作品用シナリオを選ぶコマンドでは、環境変数を明示します。省略時だけ `scenario/demo` を使います。
+
+```sh
+XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
+XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run check
+```
+
+`npm test` はエンジンの動作確認用に、温存したデモシナリオを明示して実行します。
 
 編集後は次を実行します。
 

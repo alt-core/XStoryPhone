@@ -2,17 +2,34 @@ import type {
   AppId,
   AssistantMessage,
   SearchAgentMessage,
-  SearchAgentSearchResult,
   DeviceState,
   MessageAttachment,
   MessageSegment,
   ScenarioTime,
   TodoItem
 } from "../scenario-runtime/types";
-import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated";
-import { safeLocalStorage } from "./browserStorage";
-import { browserPlayerRequestInit } from "./playerTransport";
-import { limitedSearchMessages } from "./transcriptLimit.ts";
+import type {
+  PublicPresentationEffect,
+  PublicPresentationPayload,
+  PublicPresentationResponse,
+  PublicPresentationSequence,
+  PublicPresentationTalkMessage
+} from "../../shared/presentation.ts";
+import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated.ts";
+import {
+  BROWSER_PLAYER_CLEARED_EVENT,
+  BROWSER_PLAYER_MARKER,
+  BROWSER_PLAYER_STORAGE_ERROR_EVENT,
+  BrowserPlayerStorageError,
+  clearBrowserPlayerStorage,
+  commitBrowserPlayerResponse,
+  isBrowserPlayerStorageError,
+  prepareBrowserPlayerRequest
+} from "./browserPlayerStorage.ts";
+import { safeLocalStorage } from "./browserStorage.ts";
+import { browserPlayerRequestInit } from "./playerTransport.ts";
+import { limitedSearchAgentItems } from "./transcriptLimit.ts";
+import { transcriptCacheCompatible, transcriptCacheVersion } from "./transcriptCachePolicy.ts";
 
 type StoredTalkMessageBase = {
   seq?: number;
@@ -26,6 +43,7 @@ type StoredTalkMessageBase = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment: MessageAttachment | null;
+  quickReplies?: string[];
   sentAt: string;
 };
 
@@ -35,10 +53,7 @@ export type StoredChatMessage = StoredTalkMessageBase & {
   senderName: string | null;
 };
 
-export type GameOverTalkMessage = StoredTalkMessageBase & {
-  kind: "sms" | "chat";
-  senderName: string | null;
-};
+export type GameOverTalkMessage = PublicPresentationTalkMessage;
 
 export type GameOverTalkPayload = {
   talkId: string;
@@ -47,15 +62,14 @@ export type GameOverTalkPayload = {
   messages: GameOverTalkMessage[];
 };
 
-export type FormGameOverPayload = {
-  kind: "form";
+export type GenericGameOverPayload = {
+  kind: "generic";
   reasonMessage?: string;
 };
 
-export type GameOverPayload = GameOverTalkPayload | FormGameOverPayload;
+export type GameOverPayload = GameOverTalkPayload | GenericGameOverPayload;
 
 export type AllClearPayload = {
-  kind: "all_clear";
   target: {
     appId: AppId;
     contentId: string;
@@ -63,11 +77,16 @@ export type AllClearPayload = {
   autoplay: boolean;
 };
 
+export type PresentationEffect = PublicPresentationEffect;
+export type PresentationSequence = PublicPresentationSequence;
+export type PresentationPayload = PublicPresentationPayload;
+export type PresentationResponse = PublicPresentationResponse;
+
 export type PublicPlayerState = {
   clientRevision: string;
+  transcriptRevision: string;
   revision: string;
   stateVersion: number;
-  serialCounter: string;
   nextScenarioWakeAt: string | null;
   scenarioTime: ScenarioTime;
   projectState: Readonly<Record<string, string | number | boolean>>;
@@ -87,18 +106,34 @@ export type PublicPlayerState = {
     imageUrl?: string;
   }>;
   talks: Array<{
+    transcriptKey: string;
     talkId: string;
     kind: "sms" | "chat";
     canPost: boolean;
     turnKey: string;
-    transcriptKey: string;
     lastMessageSeq: number;
     historyRevision: number;
-  }>;
-  searchTranscript: {
+    inputVisible: boolean;
+    inputVisibleAfterSeq: number;
+    inputEnabled: boolean;
+    inputEnabledAfterSeq: number;
+  } | {
     transcriptKey: string;
+    talkId: string;
+    kind: "search_agent";
+    label: string;
+    canPost: boolean;
+    turnKey: string;
     lastMessageSeq: number;
-  };
+    historyRevision: 0;
+    inputVisible: boolean;
+    inputVisibleAfterSeq: number;
+    inputEnabled: boolean;
+    inputEnabledAfterSeq: number;
+  }>;
+};
+
+export type PlayerStateResponse = PublicPlayerState & {
   transcriptDeltas: TranscriptDelta[];
   progressToken?: string;
 };
@@ -111,7 +146,8 @@ export type TranscriptDelta =
       messages: Array<StoredSmsMessage | StoredChatMessage>;
     }
   | {
-      kind: "search";
+      kind: "search_agent";
+      talkId: string;
       transcriptKey: string;
       messages: SearchAgentMessage[];
     };
@@ -124,7 +160,7 @@ export type PlayerState = PublicPlayerState & {
 
 type ApiFailure = { ok: false; error: string; playerState?: PlayerState; retryable?: boolean };
 type ApiResult<T extends { ok: true }> = T | ApiFailure;
-export type TalkReadCursorPayload = { talkId: string; messageId: string; messageSeq: number };
+export type TalkReadCursorPayload = { talkId: string; messageId: string };
 
 type TranscriptCache = {
   talk: Record<string, {
@@ -132,58 +168,103 @@ type TranscriptCache = {
     transcriptKey: string;
     historyRevision?: number;
     messages: Array<StoredSmsMessage | StoredChatMessage>;
+  } | {
+    kind: "search_agent";
+    transcriptKey: string;
+    historyRevision?: number;
+    messages: SearchAgentMessage[];
   }>;
-  search: { transcriptKey: string; messages: SearchAgentMessage[] };
 };
 
-const TRANSCRIPT_CACHE_VERSION = 1;
-const SERVER_TRANSCRIPT_CACHE_KEY = "xstoryphone.transcripts.v1";
-const BROWSER_SAVE_KEY = "xstoryphone.browser-save.v1";
+export type TranscriptFetchPlan = {
+  stream: string;
+  after: number;
+};
+
+type StoredTranscriptCache = {
+  version?: unknown;
+  credential?: unknown;
+  clientRevision?: unknown;
+  transcriptRevision?: unknown;
+  transcripts?: TranscriptCache;
+};
+
+const SERVER_TRANSCRIPT_CACHE_KEY = "xstoryphone.transcripts.v2";
 export const playerMode = String(projectConstants["player.mode"] ?? "server") === "browser" ? "browser" : "server";
-let latestBrowserProgressToken: string | undefined;
 
 function emptyTranscriptCache(): TranscriptCache {
-  return { talk: {}, search: { transcriptKey: "", messages: [] } };
+  return { talk: {} };
 }
 
-function loadTranscriptCache(credential: string) {
-  const key = playerMode === "browser" ? BROWSER_SAVE_KEY : SERVER_TRANSCRIPT_CACHE_KEY;
-  const raw = safeLocalStorage.getItem(key);
+function loadTranscriptCache(credential: string, transcriptRevision: string) {
+  const raw = safeLocalStorage.getItem(SERVER_TRANSCRIPT_CACHE_KEY);
   if (!raw) return emptyTranscriptCache();
   try {
-    const parsed = JSON.parse(raw) as {
-      version?: unknown;
-      credential?: unknown;
-      progressToken?: unknown;
-      transcripts?: TranscriptCache;
-    };
-    if (parsed.version !== TRANSCRIPT_CACHE_VERSION || !parsed.transcripts) return emptyTranscriptCache();
-    if (playerMode === "server" && parsed.credential !== credential) return emptyTranscriptCache();
-    return parsed.transcripts;
+    const parsed = JSON.parse(raw) as StoredTranscriptCache;
+    if (!transcriptCacheCompatible(parsed, credential, transcriptRevision)) return emptyTranscriptCache();
+    return parsed.transcripts ?? emptyTranscriptCache();
   } catch {
     return emptyTranscriptCache();
   }
 }
 
-function saveTranscriptCache(credential: string, state: PublicPlayerState, transcripts: TranscriptCache) {
-  if (playerMode === "browser") {
-    latestBrowserProgressToken = state.progressToken ?? credential;
-    safeLocalStorage.setItem(BROWSER_SAVE_KEY, JSON.stringify({
-      version: TRANSCRIPT_CACHE_VERSION,
-      progressToken: latestBrowserProgressToken,
-      transcripts
-    }));
-    return;
-  }
+function saveTranscriptCache(credential: string, state: PlayerStateResponse, transcripts: TranscriptCache) {
   safeLocalStorage.setItem(SERVER_TRANSCRIPT_CACHE_KEY, JSON.stringify({
-    version: TRANSCRIPT_CACHE_VERSION,
+    version: transcriptCacheVersion,
     credential,
+    clientRevision: state.clientRevision,
+    transcriptRevision: state.transcriptRevision,
     transcripts
   }));
 }
 
 function messageSeq(message: { seq?: number }, fallback: number) {
   return typeof message.seq === "number" && Number.isInteger(message.seq) && message.seq > 0 ? message.seq : fallback;
+}
+
+function lastMessageSeq(messages: readonly { seq?: number }[]) {
+  return messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0);
+}
+
+function missingTranscriptAfter(
+  current: { transcriptKey: string; historyRevision?: number; messages: readonly { seq?: number }[] } | undefined,
+  expected: { transcriptKey: string; lastMessageSeq: number; historyRevision?: number },
+  incoming: readonly { seq?: number }[]
+) {
+  if (current?.transcriptKey !== expected.transcriptKey) return 0;
+  if (
+    typeof expected.historyRevision === "number"
+    && (current.historyRevision ?? 0) !== expected.historyRevision
+  ) {
+    return 0;
+  }
+
+  const currentLastSeq = lastMessageSeq(current.messages);
+  if (currentLastSeq === expected.lastMessageSeq) return null;
+  if (currentLastSeq > expected.lastMessageSeq) return 0;
+  const incomingSeqs = new Set(incoming.flatMap((message) => (
+    typeof message.seq === "number" && Number.isInteger(message.seq) && message.seq > 0 ? [message.seq] : []
+  )));
+  for (let seq = currentLastSeq + 1; seq <= expected.lastMessageSeq; seq += 1) {
+    if (!incomingSeqs.has(seq)) return currentLastSeq;
+  }
+  return null;
+}
+
+export function serverTranscriptFetchPlans(
+  publicState: Pick<PlayerStateResponse, "talks" | "transcriptDeltas">,
+  cache: TranscriptCache
+): TranscriptFetchPlan[] {
+  const plans = publicState.talks.flatMap((talk) => {
+    const incoming: Array<{ seq?: number }> = publicState.transcriptDeltas.flatMap((delta) => (
+      delta.talkId === talk.talkId && delta.transcriptKey === talk.transcriptKey
+        ? delta.messages.map((message) => ({ seq: message.seq }))
+        : []
+    ));
+    const after = missingTranscriptAfter(cache.talk[talk.talkId], talk, incoming);
+    return after === null ? [] : [{ stream: talk.talkId, after }];
+  });
+  return plans;
 }
 
 function mergeMessages<T extends { seq?: number }>(current: T[], incoming: T[]) {
@@ -197,17 +278,22 @@ function mergeMessages<T extends { seq?: number }>(current: T[], incoming: T[]) 
 }
 
 function applyTranscriptDelta(cache: TranscriptCache, delta: TranscriptDelta) {
-  if (delta.kind === "search") {
-    const next = delta.transcriptKey === cache.search.transcriptKey
-      ? { ...cache.search, messages: mergeMessages(cache.search.messages, delta.messages) }
-      : { transcriptKey: delta.transcriptKey, messages: mergeMessages([], delta.messages) };
-    cache.search = { ...next, messages: limitedSearchMessages(next.messages) };
+  const current = cache.talk[delta.talkId];
+  if (delta.kind === "search_agent") {
+    const messages = current?.kind === "search_agent" && current.transcriptKey === delta.transcriptKey
+      ? mergeMessages(current.messages, delta.messages)
+      : mergeMessages<SearchAgentMessage>([], delta.messages);
+    cache.talk[delta.talkId] = {
+      kind: "search_agent",
+      transcriptKey: delta.transcriptKey,
+      messages: limitedSearchAgentItems(messages)
+    };
     return;
   }
-  const current = cache.talk[delta.talkId];
-  cache.talk[delta.talkId] = current?.transcriptKey === delta.transcriptKey
-    ? { ...current, kind: delta.kind, messages: mergeMessages(current.messages, delta.messages) }
-    : { kind: delta.kind, transcriptKey: delta.transcriptKey, messages: mergeMessages([], delta.messages) };
+  const messages = current?.kind === delta.kind && current.transcriptKey === delta.transcriptKey
+    ? mergeMessages(current.messages, delta.messages)
+    : mergeMessages<StoredSmsMessage | StoredChatMessage>([], delta.messages);
+  cache.talk[delta.talkId] = { kind: delta.kind, transcriptKey: delta.transcriptKey, messages };
 }
 
 function serverAuthHeaders(sessionToken: string): Record<string, string> {
@@ -232,42 +318,14 @@ async function fetchTranscriptDelta(credential: string, stream: string, after: n
   throw lastError;
 }
 
-async function hydratePlayerState(publicState: PublicPlayerState, credential: string): Promise<PlayerState> {
-  const cache = loadTranscriptCache(credential);
-  cache.search.messages = limitedSearchMessages(cache.search.messages);
+async function hydratePlayerState(publicState: PlayerStateResponse, credential: string): Promise<PlayerState> {
+  const cache = loadTranscriptCache(credential, publicState.transcriptRevision);
+  const serverFetchPlans = serverTranscriptFetchPlans(publicState, cache);
   for (const delta of publicState.transcriptDeltas ?? []) applyTranscriptDelta(cache, delta);
 
-  if (playerMode === "server") {
-    const missing = publicState.talks.filter((talk) => {
-      const cached = cache.talk[talk.talkId];
-      const lastSeq = cached?.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0) ?? 0;
-      const historyChanged = cached?.transcriptKey === talk.transcriptKey
-        && (cached.historyRevision ?? 0) !== talk.historyRevision;
-      return cached?.transcriptKey !== talk.transcriptKey || historyChanged || lastSeq < talk.lastMessageSeq;
-    });
-    const searchLastSeq = cache.search.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0);
-    const requests: Array<Promise<TranscriptDelta | null>> = missing.map((talk) => {
-      const cached = cache.talk[talk.talkId];
-      const historyChanged = cached?.transcriptKey === talk.transcriptKey
-        && (cached.historyRevision ?? 0) !== talk.historyRevision;
-      const after = cached?.transcriptKey === talk.transcriptKey && !historyChanged
-        ? cached.messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0)
-        : 0;
-      return fetchTranscriptDelta(credential, talk.talkId, after);
-    });
-    if (
-      cache.search.transcriptKey !== publicState.searchTranscript.transcriptKey
-      || searchLastSeq < publicState.searchTranscript.lastMessageSeq
-    ) {
-      requests.push(fetchTranscriptDelta(
-        credential,
-        "search",
-        cache.search.transcriptKey === publicState.searchTranscript.transcriptKey ? searchLastSeq : 0
-      ));
-    }
-    for (const delta of await Promise.all(requests)) {
-      if (delta) applyTranscriptDelta(cache, delta);
-    }
+  const requests = serverFetchPlans.map((plan) => fetchTranscriptDelta(credential, plan.stream, plan.after));
+  for (const delta of await Promise.all(requests)) {
+    if (delta) applyTranscriptDelta(cache, delta);
   }
 
   for (const talk of publicState.talks) {
@@ -282,49 +340,101 @@ async function hydratePlayerState(publicState: PublicPlayerState, credential: st
   const visibleTranscripts = Object.entries(cache.talk).filter(([talkId, transcript]) =>
     visibleTalks.get(talkId)?.transcriptKey === transcript.transcriptKey
   );
+  const searchAgentTranscript = visibleTranscripts.find(([, transcript]) => transcript.kind === "search_agent")?.[1];
   return {
-    ...publicState,
+    ...publicStateWithoutTransportFields(publicState),
     smsMessages: visibleTranscripts
       .filter(([, transcript]) => transcript.kind === "sms")
       .flatMap(([, transcript]) => transcript.messages as StoredSmsMessage[]),
     chatMessages: visibleTranscripts
       .filter(([, transcript]) => transcript.kind === "chat")
       .flatMap(([, transcript]) => transcript.messages as StoredChatMessage[]),
-    searchAgentMessages: cache.search.transcriptKey === publicState.searchTranscript.transcriptKey ? cache.search.messages : []
+    searchAgentMessages: searchAgentTranscript?.kind === "search_agent"
+      ? searchAgentTranscript.messages
+      : []
   };
 }
 
-export function loadBrowserProgressToken() {
-  if (playerMode !== "browser") return undefined;
-  if (latestBrowserProgressToken) return latestBrowserProgressToken;
-  try {
-    const parsed = JSON.parse(safeLocalStorage.getItem(BROWSER_SAVE_KEY) ?? "null") as { version?: unknown; progressToken?: unknown } | null;
-    latestBrowserProgressToken = parsed?.version === TRANSCRIPT_CACHE_VERSION && typeof parsed.progressToken === "string"
-      ? parsed.progressToken
-      : undefined;
-    return latestBrowserProgressToken;
-  } catch {
-    return undefined;
-  }
+function publicStateWithoutTransportFields(state: PlayerStateResponse): PublicPlayerState {
+  const { transcriptDeltas: _transcriptDeltas, progressToken: _progressToken, ...publicState } = state;
+  return publicState;
 }
 
 export function clearTranscriptStorage() {
-  latestBrowserProgressToken = undefined;
-  safeLocalStorage.removeItem(playerMode === "browser" ? BROWSER_SAVE_KEY : SERVER_TRANSCRIPT_CACHE_KEY);
+  safeLocalStorage.removeItem(SERVER_TRANSCRIPT_CACHE_KEY);
 }
 
 let browserRequestQueue: Promise<unknown> = Promise.resolve();
+let browserStorageFailure: BrowserPlayerStorageError | null = null;
 
-async function readJson<T extends { ok: true }>(response: Response, credential = ""): Promise<ApiResult<T>> {
+type ReadJsonOptions = {
+  credential?: string;
+  browserParentToken?: string | null;
+  replaceBrowserStreamsOnSuccess?: boolean;
+};
+
+function queueBrowserPlayerOperation<T>(operation: () => Promise<T>) {
+  const result = browserRequestQueue.then(operation, operation);
+  browserRequestQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function notifyBrowserPlayerStorageError(error: unknown) {
+  if (isBrowserPlayerStorageError(error) && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(BROWSER_PLAYER_STORAGE_ERROR_EVENT, { detail: error }));
+  }
+}
+
+function notifyBrowserPlayerCleared() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(BROWSER_PLAYER_CLEARED_EVENT));
+  }
+}
+
+async function runBrowserPlayerOperation<T>(operation: () => Promise<T>) {
+  if (browserStorageFailure) throw browserStorageFailure;
+  try {
+    return await operation();
+  } catch (error) {
+    if (isBrowserPlayerStorageError(error)) browserStorageFailure = error;
+    notifyBrowserPlayerStorageError(error);
+    throw error;
+  }
+}
+
+async function readJson<T extends { ok: true }>(response: Response, options: ReadJsonOptions = {}): Promise<ApiResult<T>> {
   if (response.status === 429) {
     return { ok: false, error: "rate_limited", retryable: true };
   }
 
   const payload = (await response.json().catch(() => ({ ok: false, error: "invalid_response" }))) as ApiResult<T>;
-  const mutable = payload as ApiResult<T> & { playerState?: PublicPlayerState; sessionToken?: string };
-  if (mutable.playerState) {
-    const hydrationCredential = mutable.playerState.progressToken ?? mutable.sessionToken ?? credential;
-    mutable.playerState = await hydratePlayerState(mutable.playerState, hydrationCredential);
+  const mutable = payload as ApiResult<T> & { playerState?: PlayerStateResponse | PlayerState; sessionToken?: string };
+  if (
+    playerMode === "browser"
+    && !payload.ok
+    && payload.error === "unauthorized"
+    && Object.prototype.hasOwnProperty.call(options, "browserParentToken")
+  ) {
+    await clearBrowserPlayerStorage({ expectedProgressToken: options.browserParentToken ?? null });
+    delete mutable.playerState;
+    notifyBrowserPlayerCleared();
+  } else if (playerMode === "browser" && !payload.ok && options.browserParentToken === null) {
+    delete mutable.playerState;
+  } else if (mutable.playerState) {
+    const responseState = mutable.playerState as PlayerStateResponse;
+    if (playerMode === "browser") {
+      mutable.playerState = await commitBrowserPlayerResponse(
+        options.browserParentToken ?? null,
+        responseState,
+        { replaceStreams: payload.ok && options.replaceBrowserStreamsOnSuccess === true }
+      );
+    } else {
+      const hydrationCredential = mutable.sessionToken ?? options.credential ?? "";
+      mutable.playerState = await hydratePlayerState(responseState, hydrationCredential);
+    }
+  }
+  if (playerMode === "browser" && payload.ok && typeof mutable.sessionToken === "string") {
+    mutable.sessionToken = BROWSER_PLAYER_MARKER;
   }
   if (
     !payload.ok
@@ -338,32 +448,60 @@ async function readJson<T extends { ok: true }>(response: Response, credential =
 async function playerRequest<T extends { ok: true }>(
   url: string,
   sessionToken: string,
-  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {}
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
+  options: { replaceBrowserStreamsOnSuccess?: boolean } = {}
 ): Promise<ApiResult<T>> {
   const execute = async () => {
-    const credential = playerMode === "browser" ? loadBrowserProgressToken() ?? sessionToken : sessionToken;
-    const requestInit = playerMode === "browser"
-      ? browserPlayerRequestInit(init, credential)
-      : { ...init, headers: { ...init.headers, ...serverAuthHeaders(credential) } };
+    if (playerMode === "browser") {
+      const parentToken = await prepareBrowserPlayerRequest();
+      if (!parentToken) {
+        notifyBrowserPlayerCleared();
+        return { ok: false as const, error: "unauthorized" };
+      }
+      const response = await fetch(url, browserPlayerRequestInit(init, parentToken));
+      return readJson<T>(response, {
+        browserParentToken: parentToken,
+        replaceBrowserStreamsOnSuccess: options.replaceBrowserStreamsOnSuccess
+      });
+    }
+    const requestInit = { ...init, headers: { ...init.headers, ...serverAuthHeaders(sessionToken) } };
     const response = await fetch(url, requestInit);
-    return readJson<T>(response, credential);
+    return readJson<T>(response, { credential: sessionToken });
   };
   if (playerMode !== "browser") return execute();
-  const result = browserRequestQueue.then(execute, execute);
-  browserRequestQueue = result.then(() => undefined, () => undefined);
-  return result;
+  return queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute));
 }
 
 export async function startSession(serialCode: string) {
-  const response = await fetch("/api/session/start", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ serialCode })
-  });
+  const execute = async () => {
+    if (playerMode === "browser" && await prepareBrowserPlayerRequest()) {
+      throw new BrowserPlayerStorageError("conflict", "開始済みのbrowser playerがあります。");
+    }
+    const response = await fetch("/api/session/start", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ serialCode })
+    });
 
-  return readJson<{ ok: true; sessionToken: string; playerState: PlayerState }>(response);
+    return readJson<{ ok: true; sessionToken: string; playerState: PlayerState } & PresentationResponse>(response, {
+      ...(playerMode === "browser"
+        ? { browserParentToken: null, replaceBrowserStreamsOnSuccess: true }
+        : {})
+    });
+  };
+  return playerMode === "browser"
+    ? queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute))
+    : execute();
+}
+
+export function clearPlayerStorageForLogout() {
+  if (playerMode !== "browser") {
+    clearTranscriptStorage();
+    return Promise.resolve();
+  }
+  return queueBrowserPlayerOperation(() => runBrowserPlayerOperation(() => clearBrowserPlayerStorage()));
 }
 
 export async function verifyDevicePin(pin: string) {
@@ -383,9 +521,9 @@ export async function loadPlayerState(sessionToken: string) {
 }
 
 export async function resetPlayerState(sessionToken: string) {
-  return playerRequest<{ ok: true; playerState: PlayerState }>("/api/reset-for-testing", sessionToken, {
+  return playerRequest<{ ok: true; playerState: PlayerState } & PresentationResponse>("/api/reset-for-testing", sessionToken, {
     method: "POST"
-  });
+  }, { replaceBrowserStreamsOnSuccess: true });
 }
 
 export async function recordContentOpened(
@@ -397,7 +535,7 @@ export async function recordContentOpened(
   },
   talkReadCursors: TalkReadCursorPayload[] = []
 ) {
-  return playerRequest<{ ok: true; playerState: PlayerState }>("/api/content/opened", sessionToken, {
+  return playerRequest<{ ok: true; playerState: PlayerState } & PresentationResponse>("/api/content/opened", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -427,7 +565,7 @@ export async function recordContentMediaObserved(
 }
 
 export async function unlockContent(sessionToken: string, contentId: string, password: string) {
-  return playerRequest<{ ok: true; state: "unlocked"; playerState: PlayerState }>("/api/content/unlock", sessionToken, {
+  return playerRequest<{ ok: true; state: "unlocked"; playerState: PlayerState } & PresentationResponse>("/api/content/unlock", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -436,24 +574,8 @@ export async function unlockContent(sessionToken: string, contentId: string, pas
   });
 }
 
-export async function searchAgentSearch(sessionToken: string, query: string, requestId: string) {
-  return playerRequest<{
-    ok: true;
-    matched: boolean;
-    body: string;
-    results: SearchAgentSearchResult[];
-    playerState?: PlayerState;
-  }>("/api/search-agent/search", sessionToken, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ query, requestId })
-  });
-}
-
 export async function recordScenarioEvent(sessionToken: string, eventId: string, payload: Record<string, unknown> = {}) {
-  return playerRequest<{ ok: true; playerState: PlayerState; allClear?: AllClearPayload }>("/api/scenario/event", sessionToken, {
+  return playerRequest<{ ok: true; playerState: PlayerState } & PresentationResponse>("/api/scenario/event", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -477,7 +599,7 @@ export async function openMessageLink(
       appId: AppId;
       contentId: string;
     };
-  }>("/api/message-link/open", sessionToken, {
+  } & PresentationResponse>("/api/message-link/open", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -494,7 +616,7 @@ export async function sendTalkMessage(
   talkReadCursors: TalkReadCursorPayload[] = [],
   recentMessages: readonly { speaker: string; body: string }[] = []
 ) {
-  return playerRequest<{ ok: true; playerState: PlayerState; stale?: boolean; gameOver?: GameOverTalkPayload; allClear?: AllClearPayload }>("/api/talk/send", sessionToken, {
+  return playerRequest<{ ok: true; playerState: PlayerState; stale?: boolean } & PresentationResponse>("/api/talk/send", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -510,7 +632,7 @@ export async function sendTalkMessage(
 }
 
 export async function submitRadioForm(sessionToken: string, formId: string, fields: Record<string, string>) {
-  return playerRequest<{ ok: true; playerState: PlayerState; gameOver?: FormGameOverPayload }>("/api/form/submit", sessionToken, {
+  return playerRequest<{ ok: true; playerState: PlayerState } & PresentationResponse>("/api/form/submit", sessionToken, {
     method: "POST",
     headers: {
       "content-type": "application/json"

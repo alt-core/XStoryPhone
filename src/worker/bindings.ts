@@ -8,4 +8,5 @@ export type Bindings = LlmProviderEnv & {
   ACCESS_CODE_SECRET?: string;
   APP_ENV?: string;
   PLAYER_INPUT_LOGGING?: string;
+  LLM_RESULT_RETENTION_DAYS?: string;
 };

@@ -3,6 +3,7 @@ import test from "node:test";
 import { projectGeneratedAudioProviders } from "../src/project/generatedAudioProviders.ts";
 import { workerScenario } from "../src/worker/scenario.ts";
 import { publicGeneratedAudioStates } from "../src/worker/services/generatedAudio.ts";
+import { reconcileGeneratedAudio } from "../src/worker/services/generatedAudio.ts";
 import { createStructuredOutputProvider } from "../src/worker/providers/structuredOutput.ts";
 
 test("生成音声providerの照会失敗は保存済み状態を保ち、PlayerState生成を止めない", async () => {
@@ -28,6 +29,7 @@ test("生成音声providerの照会失敗は保存済み状態を保ち、Player
     provider: definition.provider,
     externalJobId: "external-1",
     inputHash: "hash",
+    inputText: null,
     outputKey: null,
     status: "running",
     errorCode: null,
@@ -35,9 +37,9 @@ test("生成音声providerの照会失敗は保存済み状態を保ち、Player
     completedAt: null
   };
   const saved = [];
+  let reads = 0;
   const store = {
-    async pendingGeneratedAudioJobs() { return [job]; },
-    async generatedAudioJobs() { return [job]; },
+    async generatedAudioJobs() { reads += 1; return [job]; },
     async saveGeneratedAudioJob(_playerId, next) { saved.push(next); }
   };
 
@@ -49,10 +51,56 @@ test("生成音声providerの照会失敗は保存済み状態を保ち、Player
     const states = await publicGeneratedAudioStates(store, "player-1");
     assert.equal(states.find((item) => item.id === definition.publicId)?.status, "running");
     assert.deepEqual(saved, []);
+    assert.equal(reads, 1);
   } finally {
     console.error = originalConsoleError;
     projectGeneratedAudioProviders.splice(projectGeneratedAudioProviders.indexOf(provider), 1);
     workerScenario.generatedAudio.splice(workerScenario.generatedAudio.indexOf(definition), 1);
+  }
+});
+
+test("commit後に未dispatchの生成音声intentが残っても次のreconcileでenqueueする", async () => {
+  const definition = { id: "intent_audio", publicId: "intent-public", title: "intent", provider: "intent-provider", staticUrl: "" };
+  let enqueued = 0;
+  const provider = {
+    id: definition.provider,
+    async enqueue() { enqueued += 1; return { status: "running", externalJobId: "external" }; },
+    async reconcile() { throw new Error("intentはenqueueされるべきです"); }
+  };
+  const job = {
+    id: "intent-job", audioId: definition.id, provider: provider.id, externalJobId: null,
+    inputHash: "hash", inputText: "復旧入力", outputKey: null, status: "queued", errorCode: null,
+    createdAt: "2026-08-23T00:00:00.000Z", completedAt: null
+  };
+  let saved = null;
+  const store = {
+    async generatedAudioJobs() { return [job]; },
+    async saveGeneratedAudioJob(_playerId, next) { saved = next; }
+  };
+  workerScenario.generatedAudio.push(definition);
+  projectGeneratedAudioProviders.push(provider);
+  try {
+    await reconcileGeneratedAudio(store, "player-1");
+    assert.equal(enqueued, 1);
+    assert.equal(saved.externalJobId, "external");
+    assert.equal(saved.inputText, null);
+  } finally {
+    projectGeneratedAudioProviders.splice(projectGeneratedAudioProviders.indexOf(provider), 1);
+    workerScenario.generatedAudio.splice(workerScenario.generatedAudio.indexOf(definition), 1);
+  }
+});
+
+test("生成音声定義がない作品ではjobを読み込まない", async () => {
+  const definitions = workerScenario.generatedAudio.splice(0);
+  let reads = 0;
+  try {
+    const states = await publicGeneratedAudioStates({
+      async generatedAudioJobs() { reads += 1; return []; }
+    }, "player-1");
+    assert.deepEqual(states, []);
+    assert.equal(reads, 0);
+  } finally {
+    workerScenario.generatedAudio.push(...definitions);
   }
 });
 
@@ -164,13 +212,141 @@ test("LLM providerは会話エンジンのtemperatureと任意の推論強度を
       instructions: "JSONで返してください。",
       input: {},
       temperature: 0,
+      model: "profile-model",
+      reasoningEffort: "medium",
+      timeoutMs: 60_000,
       schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
     });
     assert.equal(result.ok, true);
     assert.equal(requestBody.temperature, 0);
-    assert.equal(requestBody.reasoning_effort, "low");
-    assert.equal(requestBody.max_completion_tokens, 1_024);
+    assert.equal(requestBody.model, "profile-model");
+    assert.equal(requestBody.reasoning_effort, "medium");
+    assert.equal(requestBody.max_completion_tokens, 2_048);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM providerはGemini系だけ安全な既定推論強度を補う", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, init) => {
+    requestBodies.push(JSON.parse(String(init.body)));
+    return Response.json({ choices: [{ message: { content: '{"selected":"ok"}' } }] });
+  };
+  try {
+    for (const model of ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "other-model"]) {
+      const provider = createStructuredOutputProvider({ LLM_API_KEY: "test-key", LLM_MODEL: model });
+      const result = await provider.completeJson({
+        taskId: "gemini_default_reasoning_test",
+        instructions: "JSONで返してください。",
+        input: {},
+        maxTokens: 512,
+        schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
+      });
+      assert.equal(result.ok, true);
+    }
+    const configured = createStructuredOutputProvider({
+      LLM_API_KEY: "test-key",
+      LLM_MODEL: "gemini-3-flash",
+      LLM_REASONING_EFFORT: "low"
+    });
+    const configuredResult = await configured.completeJson({
+      taskId: "gemini_configured_reasoning_test",
+      instructions: "JSONで返してください。",
+      input: {},
+      maxTokens: 512,
+      schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
+    });
+    assert.equal(configuredResult.ok, true);
+    assert.deepEqual(requestBodies.map((body) => [body.model, body.reasoning_effort, body.max_completion_tokens]), [
+      ["gemini-2.5-flash", "none", 512],
+      ["gemini-3-flash", "minimal", 1_024],
+      ["gemini-3.1-flash-lite", "none", 512],
+      ["other-model", undefined, 512],
+      ["gemini-3-flash", "low", 1_024]
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("match抽出は作者task IDに依存せず推論token下限を確保する", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, init) => {
+    requestBodies.push(JSON.parse(String(init.body)));
+    return Response.json({ choices: [{ message: { content: '{"selected":"ok"}' } }] });
+  };
+  try {
+    const provider = createStructuredOutputProvider({ LLM_API_KEY: "test-key", LLM_MODEL: "default-model" });
+    for (const [model, reasoningEffort] of [
+      ["super-model", "medium"],
+      ["ultra-model", "medium"],
+      ["super-model", "high"],
+      ["ultra-model", "high"]
+    ]) {
+      const result = await provider.completeJson({
+        taskId: `作者が決めた_${model}`,
+        operation: "match_extraction",
+        instructions: "JSONで返してください。",
+        input: {},
+        model,
+        reasoningEffort,
+        maxTokens: 512,
+        schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
+      });
+      assert.equal(result.ok, true);
+    }
+    assert.deepEqual(requestBodies.map((body) => [body.model, body.max_completion_tokens]), [
+      ["super-model", 4_096],
+      ["ultra-model", 4_096],
+      ["super-model", 8_192],
+      ["ultra-model", 8_192]
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("LLM観測は通常logへ本文を出さずdebug時にもsecretを出さない", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const logs = [];
+  globalThis.fetch = async () => Response.json({
+    choices: [{ message: { content: '{"selected":"ok"}' } }],
+    usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, prompt_tokens_details: { cached_tokens: 3 } }
+  });
+  console.log = (value) => logs.push(String(value));
+  const request = {
+    taskId: "analytics_test",
+    instructions: "秘密の指示",
+    input: { message: "秘密本文" },
+    schema: { type: "object", properties: { selected: { type: "string" } }, required: ["selected"], additionalProperties: false }
+  };
+  try {
+    const usageProvider = createStructuredOutputProvider({
+      LLM_API_KEY: "super-secret-key",
+      LLM_MODEL: "test-model",
+      LLM_ANALYTICS_ENABLED: "true"
+    });
+    await usageProvider.completeJson(request);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /"event":"llm_usage"/u);
+    assert.doesNotMatch(logs[0], /秘密本文|秘密の指示|super-secret-key/u);
+    assert.match(logs[0], /"cachedTokens":3/u);
+
+    logs.length = 0;
+    const debugProvider = createStructuredOutputProvider({
+      LLM_API_KEY: "super-secret-key",
+      LLM_MODEL: "test-model",
+      LLM_DEBUG_LOGS: "true"
+    });
+    await debugProvider.completeJson(request);
+    assert.match(logs.join("\n"), /秘密本文/u);
+    assert.doesNotMatch(logs.join("\n"), /super-secret-key/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
   }
 });

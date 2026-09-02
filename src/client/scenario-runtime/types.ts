@@ -1,27 +1,11 @@
-export type AppId =
-  | "phone"
-  | "messages"
-  | "photos"
-  | "chat"
-  | "notes"
-  | "mail"
-  | "calendar"
-  | "radio"
-  | "browser";
+import type { AppId } from "../../shared/appRegistry.ts";
+import type { ProjectAppId } from "../../generated/projectAppIds.generated";
+import type { ProjectAppContent } from "../system/projectAppTypes";
+export type { AppId } from "../../shared/appRegistry.ts";
 
 export type ContentInitialState = "normal" | "repairable" | "hidden";
 export type ContentStateValue = "repaired" | "unlocked";
-export type AssistantMessageSurface =
-  | "home"
-  | "phone"
-  | "messages"
-  | "photos"
-  | "chat"
-  | "notes"
-  | "mail"
-  | "calendar"
-  | "radio"
-  | "browser";
+export type AssistantMessageSurface = "home" | AppId;
 export type SearchAgentAction = "idle" | "hi";
 
 export type AssistantMessage = {
@@ -38,6 +22,7 @@ export type AppCatalogEntry = {
   icon: string;
   accent: string;
   available: boolean;
+  badge?: boolean;
   initialState?: ContentInitialState;
   corrupted?: boolean;
   repairLabel?: string;
@@ -126,6 +111,7 @@ export type Message = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment?: MessageAttachment;
+  quickReplies?: string[];
 };
 
 export type BrokenTalkHistoryRange = {
@@ -202,7 +188,7 @@ export type RadioAudioSegment =
 export type CallLogItem = {
   id: string;
   name: string;
-  kind: "incoming" | "missed" | "outgoing";
+  kind: "incoming" | "missed" | "outgoing" | "voicemail";
   at: string;
   durationLabel: string;
   audioUrl?: string;
@@ -265,6 +251,7 @@ export type ChatAppMessage = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment?: MessageAttachment;
+  quickReplies?: string[];
 };
 
 export type ChatAppThread = {
@@ -302,28 +289,47 @@ export type ScenarioTime = {
 export type SearchAgentSearchResult = {
   contentId: string;
   appId: AppId;
-  targetKind?: "app" | "content" | "talk_history";
+  targetKind: "app" | "content" | "talk_history";
   targetTalkId?: string;
   title?: string;
   thumbnailUrl?: string;
-  repairable?: boolean;
+  repairable: boolean;
 };
 
-export type SearchAgentMessage = {
-  seq?: number;
+type SearchAgentItemBase = {
+  seq: number;
   id: string;
-  requestId?: string;
-  role: "user" | "assistant";
-  body: string;
-  results?: SearchAgentSearchResult[];
+  talkId: string;
+  sender: MessageSender;
   sentAt: string;
+  delayMs?: number;
+  delayOnFirstDisplay?: boolean;
 };
 
-export type SearchAgentSearchResponse = {
-  ok: boolean;
-  matched: boolean;
-  body: string;
-  results: SearchAgentSearchResult[];
+export type SearchAgentMessage =
+  | SearchAgentItemBase & {
+      kind: "message";
+      body: string;
+      quickReplies?: string[];
+    }
+  | SearchAgentItemBase & {
+      kind: "search_results";
+      sender: "other";
+      results: SearchAgentSearchResult[];
+    };
+
+export type TalkInputState = {
+  canPost: boolean;
+  inputVisible: boolean;
+  inputVisibleAfterSeq: number;
+  inputEnabled: boolean;
+  inputEnabledAfterSeq: number;
+};
+
+export type SearchAgentTalkView = TalkInputState & {
+  talkId: string;
+  label: string;
+  messages: SearchAgentMessage[];
 };
 
 export type DeviceState = {
@@ -344,6 +350,7 @@ export type DeviceState = {
   incomingCall?: IncomingCallItem;
   radioItems: RadioEpisodeItem[];
   chatThreads: ChatAppThread[];
+  projectApps?: Partial<Record<ProjectAppId, ProjectAppContent[]>>;
   chatAuthGate?: ChatAuthGate;
   notifications: NotificationItem[];
   todos: TodoItem[];

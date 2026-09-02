@@ -2,7 +2,7 @@
 import type { DeviceState } from "../scenario-runtime/types";
 
 export const demoDeviceStateGenerated: DeviceState = {
-  "revision": "0b05d677351862db",
+  "revision": "client_5e64ba7afece00b4",
   "batteryLevel": 72,
   "signalLabel": "4G",
   "currentDate": "2026-08-12",
@@ -75,14 +75,6 @@ export const demoDeviceStateGenerated: DeviceState = {
   "browserTabs": [],
   "radioItems": [],
   "chatThreads": [],
-  "notifications": [
-    {
-      "id": "notification_5dd2fa869822",
-      "appId": "messages",
-      "targetContentId": "t_17f5f84e4690",
-      "title": "デモ進行係",
-      "body": "ナビ検索とコンテンツ修復を試してみよう。"
-    }
-  ],
+  "notifications": [],
   "todos": []
 };

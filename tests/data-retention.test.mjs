@@ -26,10 +26,11 @@ function fakeD1() {
 }
 
 const sampleInputEvent = {
-  eventType: "search",
   playerId: "player-1",
   requestKey: "request-1",
-  appId: "search-agent",
+  appId: "messages",
+  talkId: "guide",
+  fromId: "intro",
   userInput: "古いメモ",
   status: "completed",
   matched: true

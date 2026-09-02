@@ -139,6 +139,14 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       messages: [],
       brokenHistoryRanges: [{ beforeSeq: 40 }],
       unread: true
+    }, {
+      id: "qa-corrupted-talk",
+      contentId: "qa-corrupted-talk",
+      contactName: "受▚▐▀箱",
+      messages: [],
+      initialState: "repairable",
+      repairLabel: "受▚▐▀箱",
+      corrupted: true
     }, ...extraSmsThreads],
     chatThreads: [{
       id: qaChatId,
@@ -146,6 +154,14 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
       roomName: "テストルーム",
       messages: [],
       brokenHistoryRanges: [{ beforeSeq: 40 }]
+    }, {
+      id: "qa-corrupted-chat",
+      contentId: "qa-corrupted-chat",
+      roomName: "未▚▐▀室",
+      messages: [],
+      initialState: "repairable",
+      repairLabel: "未▚▐▀室",
+      corrupted: true
     }, ...extraChatThreads],
     photos: [{
       id: "qa-photo",
@@ -238,6 +254,20 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
         }))
       ],
       initialState: "normal"
+    }, {
+      id: "qa-voicemail",
+      contentId: "qa-voicemail",
+      name: "案内係",
+      kind: "voicemail",
+      at: "19:48",
+      durationLabel: "6秒",
+      audioUrl: "/system/call-caption-sample.wav",
+      transcript: [
+        { atMs: 0, text: "留守番電話の表示確認です。" },
+        { atMs: 2_000, text: "時刻を付けず、テキストだけを表示します。" },
+        { atMs: 4_000, text: "音声再生機能は着信履歴と共通です。" }
+      ],
+      initialState: "normal"
     }, ...extraCallLogs],
     browserTabs: [{
       id: "qa-browser-tab",
@@ -291,6 +321,11 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
 export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerState {
   const visibleDeviceState = createQaDeviceState(options);
   const stressContent = options.stressContent === true;
+  const quickReplies = stressContent
+    ? Array.from({ length: 14 }, (_item, index) => index === 0
+        ? "二十文字を超える長い返信候補も横へスクロールして確認できます"
+        : `返信候補 ${index + 1}`)
+    : ["確認する", "あとで"];
   const smsMessages = stressContent
     ? Array.from({ length: 32 }, (_, index) => ({
         seq: index + 1,
@@ -300,12 +335,14 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
         body: index === 30
           ? "長いメッセージ本文が複数行に折り返されても、入力欄を隠さず履歴を最後までスクロールできることを確認します。"
           : `メッセージ履歴の表示確認 ${index + 1}`,
+        ...(index === 31 ? { quickReplies } : {}),
         attachment: null,
         sentAt: `2026-08-12T${String(8 + Math.floor(index / 6)).padStart(2, "0")}:${String((index * 7) % 60).padStart(2, "0")}:00.000Z`
       }))
     : [
         { seq: 1, id: "qa-sms-1", talkId: qaSmsId, sender: "other" as const, body: "端末の表示を確認してください。", attachment: null, sentAt: new Date().toISOString() },
-        { seq: 2, id: "qa-sms-2", talkId: qaSmsId, sender: "owner" as const, body: "確認します。", attachment: null, sentAt: new Date().toISOString() }
+        { seq: 2, id: "qa-sms-2", talkId: qaSmsId, sender: "owner" as const, body: "確認します。", attachment: null, sentAt: new Date().toISOString() },
+        { seq: 3, id: "qa-sms-3", talkId: qaSmsId, sender: "other" as const, body: "返信候補の表示確認です。", quickReplies, attachment: null, sentAt: new Date().toISOString() }
       ];
   const chatMessages = stressContent
     ? Array.from({ length: 28 }, (_, index) => ({
@@ -317,6 +354,7 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
         body: index === 26
           ? "複数人の長いチャット本文が折り返されても、送信操作と履歴スクロールが両立することを確認します。"
           : `チャット履歴の表示確認 ${index + 1}`,
+        ...(index === 27 ? { quickReplies } : {}),
         attachment: null,
         sentAt: `2026-08-12T${String(12 + Math.floor(index / 7)).padStart(2, "0")}:${String((index * 5) % 60).padStart(2, "0")}:00.000Z`
       }))
@@ -327,6 +365,7 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
         sender: "other" as const,
         senderName: "参加者",
         body: "チャットUIの表示確認です。",
+        quickReplies,
         attachment: null,
         sentAt: new Date().toISOString()
       }];
@@ -339,7 +378,11 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
           turnKey: `${thread.id}-turn`,
           transcriptKey: `${thread.id}-key`,
           lastMessageSeq: 0,
-          historyRevision: 0
+          historyRevision: 0,
+          inputVisible: true,
+          inputVisibleAfterSeq: 0,
+          inputEnabled: true,
+          inputEnabledAfterSeq: 0
         })),
         ...visibleDeviceState.chatThreads.slice(1).map((thread) => ({
           talkId: thread.id,
@@ -348,15 +391,19 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
           turnKey: `${thread.id}-turn`,
           transcriptKey: `${thread.id}-key`,
           lastMessageSeq: 0,
-          historyRevision: 0
+          historyRevision: 0,
+          inputVisible: true,
+          inputVisibleAfterSeq: 0,
+          inputEnabled: true,
+          inputEnabledAfterSeq: 0
         }))
       ]
     : [];
   return {
     clientRevision: "",
+    transcriptRevision: "",
     revision: deviceState.revision,
     stateVersion: 1,
-    serialCounter: "qa",
     nextScenarioWakeAt: null,
     scenarioTime: {
       date: deviceState.currentDate,
@@ -379,22 +426,35 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
       body: "添付内容の表示確認です。"
     }],
     talks: [
-      { talkId: qaSmsId, kind: "sms", canPost: true, turnKey: "qa-sms-turn", transcriptKey: "qa-sms-key", lastMessageSeq: smsMessages.length, historyRevision: 0 },
-      { talkId: qaChatId, kind: "chat", canPost: true, turnKey: "qa-chat-turn", transcriptKey: "qa-chat-key", lastMessageSeq: chatMessages.length, historyRevision: 0 },
+      { talkId: qaSmsId, kind: "sms", canPost: true, turnKey: "qa-sms-turn", transcriptKey: "qa-sms-key", lastMessageSeq: smsMessages.length, historyRevision: 0, inputVisible: true, inputVisibleAfterSeq: 0, inputEnabled: true, inputEnabledAfterSeq: 0 },
+      { talkId: qaChatId, kind: "chat", canPost: true, turnKey: "qa-chat-turn", transcriptKey: "qa-chat-key", lastMessageSeq: chatMessages.length, historyRevision: 0, inputVisible: true, inputVisibleAfterSeq: 0, inputEnabled: true, inputEnabledAfterSeq: 0 },
+      {
+        talkId: "search_agent",
+        kind: "search_agent",
+        label: "ナビ",
+        canPost: true,
+        turnKey: "qa-search-turn",
+        transcriptKey: "qa-search-key",
+        lastMessageSeq: 1,
+        historyRevision: 0,
+        inputVisible: true,
+        inputVisibleAfterSeq: 0,
+        inputEnabled: true,
+        inputEnabledAfterSeq: 0
+      },
       ...extraTalks
     ],
-    searchTranscript: { transcriptKey: "qa-search", lastMessageSeq: 1 },
-    transcriptDeltas: [],
     smsMessages,
     chatMessages,
     searchAgentMessages: [{
+      kind: "message",
       seq: 1,
       id: "qa-search-1",
-      requestId: "qa-search",
-      role: "assistant",
+      talkId: "search_agent",
+      sender: "other",
       body: "検索結果の表示確認です。",
-      sentAt: new Date().toISOString(),
-      results: []
+      quickReplies,
+      sentAt: new Date().toISOString()
     }]
   };
 }

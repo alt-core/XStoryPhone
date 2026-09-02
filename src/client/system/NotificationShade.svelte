@@ -1,9 +1,11 @@
 <script lang="ts">
   import { BatteryMedium, Moon, Radio, RotateCcw, ShieldCheck, Signal } from "@lucide/svelte";
   import type { NotificationItem } from "../scenario-runtime/types";
+  import { appCatalog, type AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
 
   export let notifications: NotificationItem[] = [];
+  export let apps: AppCatalogItem[] = appCatalog;
   export let batteryLevel = 0;
   export let signalLabel = "";
   export let open = false;
@@ -56,7 +58,7 @@
     </div>
     <div class="notification-list">
       {#each notifications as notification}
-        <NotificationCard {notification} variant="shade" onSelect={() => onOpenNotification(notification.id)} />
+        <NotificationCard {notification} {apps} variant="shade" onSelect={() => onOpenNotification(notification.id)} />
       {/each}
     </div>
     <nav class="shade-utility-links" aria-label="システム情報">

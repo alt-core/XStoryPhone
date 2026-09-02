@@ -1,19 +1,17 @@
 import type { AppId } from "../scenario-runtime/types";
-import { safeLocalStorage } from "./browserStorage";
+import { isAppId } from "../../shared/appRegistry.ts";
+import { safeLocalStorage } from "./browserStorage.ts";
 
 const STORAGE_KEY = "xstoryphone.ui";
 const START_CONFIRMATION_STORAGE_KEY = "xstoryphone.start-confirmation";
 const currentVersion = 5;
 const startConfirmationVersion = 3;
-const appIds = new Set<string>(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
 
 export type PersistedUiState = {
   version: 5;
   locked: boolean;
   lockMethod?: "player-passcode" | "fixed-pin" | "none";
   sessionToken?: string;
-  serialCounter?: string;
-  openedAppIds: AppId[];
   lastContentByAppId: Partial<Record<AppId, string>>;
   localTalkReadCursors: Record<string, string>;
   pendingTalkReadCursors: Record<string, string>;
@@ -24,8 +22,6 @@ type StoredUiState = {
   locked?: unknown;
   lockMethod?: unknown;
   sessionToken?: unknown;
-  serialCounter?: unknown;
-  openedAppIds?: unknown;
   lastContentByAppId?: unknown;
   localTalkReadCursors?: unknown;
   pendingTalkReadCursors?: unknown;
@@ -39,15 +35,10 @@ type StoredStartConfirmation = {
 export const defaultUiState: PersistedUiState = {
   version: currentVersion,
   locked: true,
-  openedAppIds: [],
   lastContentByAppId: {},
   localTalkReadCursors: {},
   pendingTalkReadCursors: {}
 };
-
-function openedAppIdsFrom(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is AppId => typeof item === "string" && appIds.has(item)) : [];
-}
 
 function lastContentByAppIdFrom(value: unknown): Partial<Record<AppId, string>> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -56,7 +47,7 @@ function lastContentByAppIdFrom(value: unknown): Partial<Record<AppId, string>> 
 
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([appId, contentId]) => appIds.has(appId) && typeof contentId === "string" && contentId.trim())
+      .filter(([appId, contentId]) => isAppId(appId) && typeof contentId === "string" && contentId.trim())
       .map(([appId, contentId]) => [appId, contentId])
   ) as Partial<Record<AppId, string>>;
 }
@@ -95,8 +86,6 @@ export function loadUiState(): PersistedUiState {
         ? parsed.lockMethod as PersistedUiState["lockMethod"]
         : undefined,
       sessionToken: typeof parsed.sessionToken === "string" ? parsed.sessionToken : undefined,
-      serialCounter: typeof parsed.serialCounter === "string" ? parsed.serialCounter : undefined,
-      openedAppIds: openedAppIdsFrom(parsed.openedAppIds),
       lastContentByAppId: lastContentByAppIdFrom(parsed.lastContentByAppId),
       localTalkReadCursors: talkReadCursorsFrom(parsed.localTalkReadCursors),
       pendingTalkReadCursors: talkReadCursorsFrom(parsed.pendingTalkReadCursors)

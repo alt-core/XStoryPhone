@@ -1,15 +1,31 @@
 import { workerScenario } from "../generated/workerScenario.generated.ts";
+import { projectApps } from "../project/apps.ts";
 import { evaluateCondition, renderTemplate } from "../shared/condition.ts";
 import type {
   PublicGeneratedAudioState,
   ScenarioContent,
+  ScenarioDeviceTalk,
   ScenarioMessageAttachment,
   ScenarioMessageSegment,
+  ScenarioSearchAgentTalk,
   ScenarioTalk,
+  TalkOutputStep,
   StoredTalkMessage
 } from "../shared/scenario.ts";
-import type { StoredPlayerState, TranscriptUpdate } from "../server/store.ts";
+import { SEARCH_AGENT_STREAM_ID, SEARCH_AGENT_TALK_ID } from "../shared/searchAgent.ts";
+import type { StoredPlayerState, StoredSearchAgentEvent, StoredTalkEvent, TranscriptAppend } from "../server/store.ts";
 import { compactStateValues, effectiveStateValues } from "./stateValues.ts";
+import {
+  formatEnvForMessageBlockFromState,
+  renderedQuickReplies,
+  resolveSearchAgentEvents,
+  resolveSingleTalkEvent,
+  resolveTalkEvents,
+  searchAgentBlockEvents,
+  searchAgentResultEvent
+} from "./talkEvents.ts";
+import { normalizeQuery, searchResponseTermsMatch } from "./product/search.ts";
+import { evaluateTalkOutputSteps, type ResolvedTalkOutputStep } from "./services/talkOutput.ts";
 
 export { workerScenario };
 
@@ -20,19 +36,29 @@ function unique<T>(items: readonly T[]) {
 const peopleById = new Map(workerScenario.talkPeople.map((person) => [person.id, person]));
 const blocksById = new Map(workerScenario.talkBlocks.map((block) => [block.id, block]));
 const attachmentsById = new Map(workerScenario.attachments.map((attachment) => [attachment.id, attachment]));
+const projectAppById = new Map<string, (typeof projectApps)[number]>(projectApps.map((app) => [app.id, app]));
 const attachmentIdByPublicId = new Map(Object.entries(workerScenario.publicIds.attachment).map(([id, publicId]) => [publicId, id]));
 const incomingCallIdByPublicId = new Map(Object.entries(workerScenario.publicIds.incomingCall).map(([id, publicId]) => [publicId, id]));
 const talkHistoryRepairs = workerScenario.contents.flatMap((content) => {
   if (content.appId !== "messages" && content.appId !== "chat") return [];
   const talkId = typeof content.record.talk === "string" ? content.record.talk : "";
   const blockId = typeof content.record.block === "string" ? content.record.block : "";
-  const talk = workerScenario.talks.find((item) => item.id === talkId);
+  const talk = workerScenario.talks.find((item): item is ScenarioDeviceTalk => item.id === talkId && item.kind !== "search_agent");
   return talk && blockId
     ? [{ content, talk, blockId }]
     : [];
 });
+
+export function isSearchAgentTalk(talk: ScenarioTalk): talk is ScenarioSearchAgentTalk {
+  return talk.kind === "search_agent";
+}
+
+export function isDeviceTalk(talk: ScenarioTalk): talk is ScenarioDeviceTalk {
+  return talk.kind !== "search_agent";
+}
 const talkHistoryRepairByBlockId = new Map(talkHistoryRepairs.map((repair) => [repair.blockId, repair]));
 const talkHistoryRepairByContentId = new Map(talkHistoryRepairs.map((repair) => [repair.content.id, repair]));
+const talkHistoryRepairByPublicContentId = new Map(talkHistoryRepairs.map((repair) => [repair.content.publicId, repair]));
 const albumPhotoIdsByAttachmentId = new Map<string, string[]>();
 const albumAttachmentIdsByPhotoId = new Map<string, string[]>();
 for (const link of workerScenario.albumMediaAttachmentLinks) {
@@ -71,7 +97,7 @@ export function resolveTalkAttachment(attachmentId: string): ScenarioMessageAtta
       kind: "image",
       attachmentId,
       ...(attachment.content ? { contentId: attachment.content } : {}),
-      imageUrl: attachment.asset
+      imageUrl: attachment.asset ?? ""
     };
   }
   const poster = attachment.poster ? attachmentsById.get(attachment.poster) : null;
@@ -81,7 +107,7 @@ export function resolveTalkAttachment(attachmentId: string): ScenarioMessageAtta
       attachmentId,
       ...(attachment.content ? { contentId: attachment.content } : {}),
       ...(poster?.type === "image" ? { imageUrl: poster.asset } : {}),
-      audioUrl: attachment.asset
+      audioUrl: attachment.asset ?? ""
     };
   }
   return {
@@ -89,7 +115,7 @@ export function resolveTalkAttachment(attachmentId: string): ScenarioMessageAtta
     attachmentId,
     ...(attachment.content ? { contentId: attachment.content } : {}),
     ...(poster?.type === "image" ? { imageUrl: poster.asset } : {}),
-    videoUrl: attachment.asset
+    videoUrl: attachment.asset ?? ""
   };
 }
 
@@ -131,19 +157,15 @@ function renderedSegments(
       : segment);
 }
 
-export function messagesForTalkBlocks(input: {
-  talk: ScenarioTalk;
+function messagesForInitialTalkBlocks(input: {
+  talk: ScenarioDeviceTalk;
   blockIds: readonly string[];
-  previousCounts: Record<string, number>;
   formatEnv: Record<string, unknown>;
-  baseSentAt: string;
   idPrefix: string;
-  startSeq?: number;
-  useRepeat?: boolean;
-  singleBlockMessageIds?: boolean;
   includeScenarioBlockId?: boolean;
+  startSeq?: number;
+  blockIndexOffset?: number;
 }) {
-  const blockDisplayCounts = { ...input.previousCounts };
   const messages: StoredTalkMessage[] = [];
   const templateEnv: Record<string, string> = Object.fromEntries(
     Object.entries(input.formatEnv)
@@ -152,14 +174,11 @@ export function messagesForTalkBlocks(input: {
   );
   let seq = input.startSeq ?? 0;
   for (const [blockIndex, blockId] of input.blockIds.entries()) {
-    const previousCount = blockDisplayCounts[blockId] ?? 0;
-    const displayBlockId = input.useRepeat === false ? blockId : talkBlockIdForRepeatDisplay(blockId, previousCount);
-    if (input.useRepeat !== false) blockDisplayCounts[blockId] = previousCount + 1;
-    for (const [messageIndex, template] of messageTemplatesForBlock(displayBlockId).entries()) {
-      const sentAt = template.sentAt || new Date(Date.parse(input.baseSentAt) + (blockIndex + messageIndex) * 1_000).toISOString();
-      const messageId = input.singleBlockMessageIds
-        ? `${input.idPrefix}:${messageIndex + 1}`
-        : `${input.idPrefix}:${blockIndex + 1}:${messageIndex + 1}`;
+    const effectiveBlockIndex = (input.blockIndexOffset ?? 0) + blockIndex;
+    for (const [messageIndex, template] of messageTemplatesForBlock(blockId).entries()) {
+      const sentAt = template.sentAt;
+      const messageId = `${input.idPrefix}:${effectiveBlockIndex + 1}:${messageIndex + 1}`;
+      const quickReplies = renderedQuickReplies(template.quickReplies, templateEnv);
       seq += 1;
       messages.push({
         seq,
@@ -170,6 +189,7 @@ export function messagesForTalkBlocks(input: {
         ...(input.talk.kind === "chat" ? { senderName: template.senderName } : {}),
         ...(template.avatarUrl ? { avatarUrl: template.avatarUrl } : {}),
         ...(template.segments ? { segments: renderedSegments(template.segments, templateEnv, messageId) } : {}),
+        ...(quickReplies.length ? { quickReplies } : {}),
         ...(typeof template.delayMs === "number" ? { delayMs: template.delayMs } : {}),
         ...(template.senderRole !== "owner" && typeof template.delayMs === "number" && template.delayMs > 0
           ? { delayOnFirstDisplay: true }
@@ -180,7 +200,137 @@ export function messagesForTalkBlocks(input: {
       });
     }
   }
-  return { messages, blockDisplayCounts, lastMessageSeq: seq };
+  return { messages, lastMessageSeq: seq };
+}
+
+export function messagesForTalkBlocks(input: {
+  talk: ScenarioDeviceTalk;
+  blockIds: readonly string[];
+  previousCounts: Record<string, number>;
+  formatEnv: Record<string, unknown>;
+  baseSentAt: string;
+  idPrefix: string;
+  startSeq?: number;
+  useRepeat?: boolean;
+  singleBlockMessageIds?: boolean;
+  includeScenarioBlockId?: boolean;
+  blockIndexOffset?: number;
+}) {
+  const blockDisplayCounts = { ...input.previousCounts };
+  const messages: StoredTalkMessage[] = [];
+  const events: StoredTalkEvent[] = [];
+  const blockLastMessageSeqs: number[] = [];
+  let seq = input.startSeq ?? 0;
+  for (const [blockIndex, blockId] of input.blockIds.entries()) {
+    const effectiveBlockIndex = (input.blockIndexOffset ?? 0) + blockIndex;
+    const previousCount = blockDisplayCounts[blockId] ?? 0;
+    const displayBlockId = input.useRepeat === false ? blockId : talkBlockIdForRepeatDisplay(blockId, previousCount);
+    if (input.useRepeat !== false) blockDisplayCounts[blockId] = previousCount + 1;
+    const formatEnv = formatEnvForMessageBlockFromState(displayBlockId, input.formatEnv);
+    const event: StoredTalkEvent = {
+      id: input.singleBlockMessageIds ? input.idPrefix : `${input.idPrefix}_${effectiveBlockIndex + 1}`,
+      kind: input.talk.kind,
+      talk_id: input.talk.id,
+      event_type: "message_block",
+      body: null,
+      block_id: blockId,
+      format_env_json: formatEnv ? JSON.stringify(formatEnv) : null,
+      delivered_at: new Date(Date.parse(input.baseSentAt) + effectiveBlockIndex * 1_000).toISOString()
+    };
+    events.push(event);
+    const resolved = resolveSingleTalkEvent(event, displayBlockId);
+    for (const [messageIndex, message] of resolved.entries()) {
+      seq += 1;
+      messages.push({
+        ...message,
+        seq,
+        talkId: input.talk.publicId,
+        ...(message.segments ? { segments: identifiedSegments(message.segments, message.id) } : {}),
+        ...(input.includeScenarioBlockId ? { scenarioBlockId: blockId } : {})
+      });
+    }
+    blockLastMessageSeqs.push(seq);
+  }
+  return { messages, events, blockDisplayCounts, blockLastMessageSeqs, lastMessageSeq: seq };
+}
+
+type TalkInputAction = Extract<TalkOutputStep, { kind: "input" }>["action"];
+type TalkInputState = {
+  inputVisible: boolean;
+  inputVisibleAfterSeq: number;
+  inputEnabled: boolean;
+  inputEnabledAfterSeq: number;
+};
+
+export function applyTalkInputAction(state: TalkInputState, action: TalkInputAction, latestDisplaySeq: number) {
+  if (action === "show") {
+    if (!state.inputVisible) {
+      state.inputVisible = true;
+      state.inputVisibleAfterSeq = latestDisplaySeq;
+    }
+  } else if (action === "hide") {
+    state.inputVisible = false;
+  } else if (action === "enable") {
+    if (!state.inputEnabled) {
+      state.inputEnabled = true;
+      state.inputEnabledAfterSeq = latestDisplaySeq;
+    }
+  } else if (action === "disable") {
+    state.inputEnabled = false;
+  } else {
+    const unsupported: never = action;
+    throw new Error(`未対応のtalk input actionです: ${String(unsupported)}`);
+  }
+}
+
+export function messagesForTalkOutputSteps(input: {
+  talk: ScenarioDeviceTalk;
+  steps: readonly TalkOutputStep[];
+  previousCounts: Record<string, number>;
+  formatEnv: Record<string, unknown>;
+  baseSentAt: string;
+  idPrefix: string;
+  startSeq: number;
+  inputVisible: boolean;
+  inputVisibleAfterSeq: number;
+  inputEnabled: boolean;
+  inputEnabledAfterSeq: number;
+  useRepeat?: boolean;
+}) {
+  const blockIds = input.steps.flatMap((step) => step.kind === "block" ? [step.blockId] : []);
+  const rendered = messagesForTalkBlocks({
+    talk: input.talk,
+    blockIds,
+    previousCounts: input.previousCounts,
+    formatEnv: input.formatEnv,
+    baseSentAt: input.baseSentAt,
+    idPrefix: input.idPrefix,
+    startSeq: input.startSeq,
+    useRepeat: input.useRepeat
+  });
+  const inputState: TalkInputState = {
+    inputVisible: input.inputVisible,
+    inputVisibleAfterSeq: input.inputVisibleAfterSeq,
+    inputEnabled: input.inputEnabled,
+    inputEnabledAfterSeq: input.inputEnabledAfterSeq
+  };
+  let latestDisplaySeq = input.startSeq;
+  let blockIndex = 0;
+  for (const step of input.steps) {
+    if (step.kind === "block") {
+      latestDisplaySeq = rendered.blockLastMessageSeqs[blockIndex] ?? latestDisplaySeq;
+      blockIndex += 1;
+    } else if (step.kind === "input") {
+      applyTalkInputAction(inputState, step.action, latestDisplaySeq);
+    }
+  }
+  return {
+    ...rendered,
+    inputVisible: inputState.inputVisible,
+    inputVisibleAfterSeq: inputState.inputVisibleAfterSeq,
+    inputEnabled: inputState.inputEnabled,
+    inputEnabledAfterSeq: inputState.inputEnabledAfterSeq
+  };
 }
 
 export async function initialTalkTurnKey(playerId: string, talkId: string, fromId: string) {
@@ -191,11 +341,135 @@ export async function nextTalkTurnKey(playerId: string, talkId: string, currentT
   return `turn_${(await sha256Hex(`turn:v1:${playerId}:${talkId}:${currentTurnKey}:${nextFromId}`)).slice(0, 24)}`;
 }
 
+export function searchAgentTimelineForOutputs(input: {
+  outputs: readonly ResolvedTalkOutputStep<ReturnType<typeof searchScenario>[number]>[];
+  previousCounts: Record<string, number>;
+  formatEnv: Record<string, unknown>;
+  startSeq: number;
+  inputVisible: boolean;
+  inputVisibleAfterSeq: number;
+  inputEnabled: boolean;
+  inputEnabledAfterSeq: number;
+  baseSentAt: string;
+  idPrefix: string;
+}) {
+  const events: StoredSearchAgentEvent[] = [];
+  const blockDisplayCounts = { ...input.previousCounts };
+  let seq = input.startSeq;
+  const inputState: TalkInputState = {
+    inputVisible: input.inputVisible,
+    inputVisibleAfterSeq: input.inputVisibleAfterSeq,
+    inputEnabled: input.inputEnabled,
+    inputEnabledAfterSeq: input.inputEnabledAfterSeq
+  };
+  let latestDisplaySeq = input.startSeq;
+  let displayOutputIndex = 0;
+  for (const [outputIndex, output] of input.outputs.entries()) {
+    if (output.kind === "input") {
+      applyTalkInputAction(inputState, output.action, latestDisplaySeq);
+      continue;
+    }
+    const deliveredAt = new Date(Date.parse(input.baseSentAt) + displayOutputIndex * 1_000).toISOString();
+    displayOutputIndex += 1;
+    if (output.kind === "block") {
+      const previousCount = blockDisplayCounts[output.blockId] ?? 0;
+      const displayBlockId = talkBlockIdForRepeatDisplay(output.blockId, previousCount);
+      blockDisplayCounts[output.blockId] = previousCount + 1;
+      const rendered = searchAgentBlockEvents({
+        baseBlockId: output.blockId,
+        displayBlockId,
+        formatEnv: input.formatEnv,
+        startSeq: seq,
+        baseSentAt: deliveredAt,
+        idPrefix: `${input.idPrefix}:${outputIndex + 1}`
+      });
+      events.push(...rendered.events);
+      seq = rendered.lastSeq;
+      if (rendered.events.length) latestDisplaySeq = rendered.lastSeq;
+      continue;
+    }
+    if (output.kind === "search") {
+      seq += 1;
+      events.push(searchAgentResultEvent({
+        id: `${input.idPrefix}:${outputIndex + 1}`,
+        seq,
+        query: output.query,
+        results: output.results,
+        deliveredAt
+      }));
+      latestDisplaySeq = seq;
+      continue;
+    }
+  }
+  return {
+    events,
+    messages: resolveSearchAgentEvents(events),
+    blockDisplayCounts,
+    lastSeq: seq,
+    inputVisible: inputState.inputVisible,
+    inputVisibleAfterSeq: inputState.inputVisibleAfterSeq,
+    inputEnabled: inputState.inputEnabled,
+    inputEnabledAfterSeq: inputState.inputEnabledAfterSeq
+  };
+}
+
+export async function initializeSearchAgentTalkState(
+  talk: ScenarioSearchAgentTalk,
+  playerId: string,
+  state: StoredPlayerState,
+  at = new Date().toISOString()
+) {
+  const turnKey = await initialTalkTurnKey(playerId, talk.id, talk.initialFrom);
+  const initialId = (await sha256Hex(`search-agent-initial:${playerId}`)).slice(0, 32);
+  const env = effectiveStateValues(workerScenario.stateVariables, state.stateValues);
+  const evaluated = evaluateTalkOutputSteps({
+    steps: talk.startSteps,
+    env,
+    search: (query) => searchScenario(query, state)
+  });
+  const rendered = searchAgentTimelineForOutputs({
+    outputs: evaluated.outputs,
+    previousCounts: {},
+    formatEnv: evaluated.env,
+    startSeq: 0,
+    inputVisible: talk.inputVisible,
+    inputVisibleAfterSeq: 0,
+    inputEnabled: talk.inputEnabled,
+    inputEnabledAfterSeq: 0,
+    baseSentAt: at,
+    idPrefix: `search_agent_initial_${initialId}`
+  });
+  return {
+    state: {
+      from: talk.initialFrom,
+      turnKey,
+      blockDisplayCounts: rendered.blockDisplayCounts,
+      transcriptKey: crypto.randomUUID(),
+      lastMessageSeq: rendered.lastSeq,
+      lastOtherMessageId: "",
+      historySlots: [],
+      initialHistoryLastSeq: 0,
+      initialVisibleLastSeq: 0,
+      initialFormatEnv: {},
+      inputVisible: rendered.inputVisible,
+      inputVisibleAfterSeq: rendered.inputVisibleAfterSeq,
+      inputEnabled: rendered.inputEnabled,
+      inputEnabledAfterSeq: rendered.inputEnabledAfterSeq
+    },
+    events: rendered.events,
+    messages: rendered.messages
+  };
+}
+
+export async function talkTurnHash(playerId: string, kind: "sms" | "chat", talkId: string, turnKey: string) {
+  return (await sha256Hex(`${playerId}:${kind}:${talkId}:${turnKey}`)).slice(0, 32);
+}
+
 export async function scenarioMessageBlockId(playerId: string, kind: "sms" | "chat", talkId: string, blockId: string) {
   return `${kind}_block_${(await sha256Hex(`${playerId}:${kind}:${talkId}:${blockId}`)).slice(0, 32)}`;
 }
 
-function initialTalkBlockSpans(talk: ScenarioTalk) {
+function initialTalkBlockSpans(talk: ScenarioDeviceTalk) {
   let lastSeq = 0;
   return talk.startBlocks.map((blockId) => {
     const startSeq = lastSeq + 1;
@@ -204,58 +478,112 @@ function initialTalkBlockSpans(talk: ScenarioTalk) {
   });
 }
 
-function talkHistoryRevision(talk: ScenarioTalk, state: StoredPlayerState) {
-  return talkHistoryRepairs.filter((repair) => (
-    repair.talk.id === talk.id && state.repairedContentIds.includes(repair.content.id)
+function initialTalkHistorySlots(talk: ScenarioDeviceTalk) {
+  return initialTalkBlockSpans(talk).flatMap((span, blockIndex) => {
+    const repair = talkHistoryRepairByBlockId.get(span.blockId);
+    return repair
+      ? [{
+          repairId: repair.content.publicId,
+          startSeq: span.startSeq,
+          messageCount: span.endSeq - span.startSeq + 1,
+          blockIndex
+        }]
+      : [];
+  });
+}
+
+function historySlotsForTalk(talk: ScenarioDeviceTalk, state: StoredPlayerState) {
+  return (state.talks[talk.id]?.historySlots ?? []).filter((slot) => (
+    talkHistoryRepairByPublicContentId.get(slot.repairId)?.talk.id === talk.id
+  ));
+}
+
+function talkHistoryRevision(talk: ScenarioDeviceTalk, state: StoredPlayerState) {
+  return historySlotsForTalk(talk, state).filter((slot) => (
+    state.repairedContentIds.includes(talkHistoryRepairByPublicContentId.get(slot.repairId)?.content.id ?? "")
   )).length;
 }
 
-function brokenTalkHistoryRanges(talk: ScenarioTalk, state: StoredPlayerState) {
-  const spans = initialTalkBlockSpans(talk);
+function brokenTalkHistoryRanges(talk: ScenarioDeviceTalk, state: StoredPlayerState) {
+  const slots = historySlotsForTalk(talk, state).sort((left, right) => left.blockIndex - right.blockIndex);
   const ranges: Array<{ beforeSeq: number }> = [];
-  let broken = false;
-  for (const span of spans) {
-    const repair = talkHistoryRepairByBlockId.get(span.blockId);
-    const currentBroken = Boolean(repair && !state.repairedContentIds.includes(repair.content.id));
-    if (currentBroken) {
-      broken = true;
+  let previousBrokenBlockIndex = -2;
+  for (const slot of slots) {
+    const repair = talkHistoryRepairByPublicContentId.get(slot.repairId);
+    if (!repair || state.repairedContentIds.includes(repair.content.id)) {
+      previousBrokenBlockIndex = -2;
       continue;
     }
-    if (broken) {
-      ranges.push({ beforeSeq: span.startSeq });
-      broken = false;
+    if (previousBrokenBlockIndex === slot.blockIndex - 1 && ranges.length) {
+      ranges[ranges.length - 1].beforeSeq = slot.startSeq + slot.messageCount;
+    } else {
+      ranges.push({ beforeSeq: slot.startSeq + slot.messageCount });
     }
+    previousBrokenBlockIndex = slot.blockIndex;
   }
-  if (broken) ranges.push({ beforeSeq: (spans[spans.length - 1]?.endSeq ?? 0) + 1 });
   return ranges;
 }
 
-function publicTalkLastMessageSeq(talk: ScenarioTalk, state: StoredPlayerState) {
+function publicTalkLastMessageSeq(talk: ScenarioDeviceTalk, state: StoredPlayerState) {
   const stored = state.talks[talk.id];
   if (!stored) return 0;
-  const spans = initialTalkBlockSpans(talk);
-  const initialLastSeq = spans[spans.length - 1]?.endSeq ?? 0;
-  if (stored.lastMessageSeq > initialLastSeq) return stored.lastMessageSeq;
-  return spans.reduce((lastSeq, span) => {
-    const repair = talkHistoryRepairByBlockId.get(span.blockId);
-    return !repair || state.repairedContentIds.includes(repair.content.id)
-      ? Math.max(lastSeq, span.endSeq)
+  if (!stored.historySlots.length) return stored.lastMessageSeq;
+  if (stored.lastMessageSeq > stored.initialHistoryLastSeq) return stored.lastMessageSeq;
+  return historySlotsForTalk(talk, state).reduce((lastSeq, slot) => {
+    const repair = talkHistoryRepairByPublicContentId.get(slot.repairId);
+    return repair && state.repairedContentIds.includes(repair.content.id)
+      ? Math.max(lastSeq, slot.startSeq + slot.messageCount - 1)
       : lastSeq;
-  }, 0);
+  }, stored.initialVisibleLastSeq);
+}
+
+export function talkInputBoundarySeq(talk: ScenarioTalk, state: StoredPlayerState) {
+  return isSearchAgentTalk(talk)
+    ? state.talks[talk.id]?.lastMessageSeq ?? 0
+    : publicTalkLastMessageSeq(talk, state);
 }
 
 export function initializeTalkState(
-  talk: ScenarioTalk,
+  talk: ScenarioDeviceTalk,
   turnKey: string,
   formatEnv = workerScenario.stateVariables,
   repairedContentIds: readonly string[] = []
 ) {
-  const rendered = messagesForTalkBlocks({
+  const initialFormatEnv = Object.assign({}, ...talk.startBlocks.map((blockId) => (
+    formatEnvForMessageBlockFromState(blockId, formatEnv) ?? {}
+  )));
+  const { rendered, visibleMessages } = initialTalkMessagesForState(talk, initialFormatEnv, repairedContentIds);
+  const historySlots = initialTalkHistorySlots(talk);
+  return {
+    state: {
+      from: talk.initialFrom,
+      turnKey,
+      blockDisplayCounts: {},
+      transcriptKey: crypto.randomUUID(),
+      lastMessageSeq: rendered.lastMessageSeq,
+      lastOtherMessageId: [...visibleMessages].reverse().find((message) => message.sender === "other")?.id ?? "",
+      historySlots,
+      initialHistoryLastSeq: rendered.lastMessageSeq,
+      initialVisibleLastSeq: Math.max(0, ...visibleMessages.map((message) => message.seq)),
+      initialFormatEnv,
+      inputVisible: talk.inputVisible,
+      inputVisibleAfterSeq: 0,
+      inputEnabled: talk.inputEnabled,
+      inputEnabledAfterSeq: 0
+    },
+    messages: visibleMessages
+  };
+}
+
+function initialTalkMessagesForState(
+  talk: ScenarioDeviceTalk,
+  formatEnv: Record<string, unknown>,
+  repairedContentIds: readonly string[]
+) {
+  const rendered = messagesForInitialTalkBlocks({
     talk,
     blockIds: talk.startBlocks,
-    previousCounts: {},
     formatEnv,
-    baseSentAt: new Date().toISOString(),
     idPrefix: `${talk.publicId}_initial`,
     includeScenarioBlockId: true
   });
@@ -265,38 +593,51 @@ export function initializeTalkState(
     const { scenarioBlockId: _scenarioBlockId, ...plainMessage } = message;
     return [plainMessage];
   });
-  return {
-    state: {
-      from: talk.initialFrom,
-      turnKey,
-      blockDisplayCounts: rendered.blockDisplayCounts,
-      transcriptKey: crypto.randomUUID(),
-      lastMessageSeq: rendered.lastMessageSeq,
-      lastOtherMessageSeq: Math.max(0, ...visibleMessages.filter((message) => message.sender === "other").map((message) => message.seq)),
-      lastReadMessageSeq: 0
-    },
-    messages: visibleMessages
-  };
+  return { rendered, visibleMessages };
 }
 
 export function restoredTalkHistoryMessages(state: StoredPlayerState, contentId: string) {
   const repair = talkHistoryRepairByContentId.get(contentId);
   const stored = repair ? state.talks[repair.talk.id] : undefined;
-  if (!repair || !stored) return null;
-  const rendered = messagesForTalkBlocks({
+  if (!repair) return null;
+  if (!stored) return { ok: true as const, talk: repair.talk, messages: [] };
+  const slot = stored.historySlots.find((item) => item.repairId === repair.content.publicId);
+  if (!slot) return { ok: false as const, error: "history_not_initialized" as const };
+  const rendered = messagesForInitialTalkBlocks({
     talk: repair.talk,
-    blockIds: repair.talk.startBlocks,
-    previousCounts: {},
-    formatEnv: effectiveStateValues(workerScenario.stateVariables, state.stateValues),
-    baseSentAt: new Date().toISOString(),
+    blockIds: [repair.blockId],
+    formatEnv: stored.initialFormatEnv,
     idPrefix: `${repair.talk.publicId}_initial`,
-    useRepeat: false,
-    includeScenarioBlockId: true
+    startSeq: slot.startSeq - 1,
+    includeScenarioBlockId: true,
+    blockIndexOffset: slot.blockIndex
   });
+  if (rendered.messages.length !== slot.messageCount) {
+    return { ok: false as const, error: "history_layout_changed" as const };
+  }
   const messages = rendered.messages
-    .filter((message) => message.scenarioBlockId === repair.blockId)
     .map(({ delayOnFirstDisplay: _delayOnFirstDisplay, ...message }) => message);
-  return { talk: repair.talk, messages };
+  return { ok: true as const, talk: repair.talk, messages };
+}
+
+export function synchronizeInitialTalkLastOtherMessageId(state: StoredPlayerState, talkId: string) {
+  const talk = talkByInternalId(talkId);
+  const stored = state.talks[talkId];
+  if (!talk || !isDeviceTalk(talk) || !stored || stored.lastMessageSeq > stored.initialHistoryLastSeq) return state;
+  const latestOther = [...initialTalkMessagesForState(
+    talk,
+    stored.initialFormatEnv,
+    state.repairedContentIds
+  ).visibleMessages].reverse().find((message) => message.sender === "other");
+  if (latestOther) stored.lastOtherMessageId = latestOther.id;
+  return state;
+}
+
+export function talkHistoryRepairAvailable(state: StoredPlayerState, contentId: string) {
+  const repair = talkHistoryRepairByContentId.get(contentId);
+  if (!repair) return true;
+  const stored = state.talks[repair.talk.id];
+  return Boolean(stored?.historySlots.some((slot) => slot.repairId === repair.content.publicId));
 }
 
 export function createInitialPlayerState(): StoredPlayerState {
@@ -311,9 +652,9 @@ export function createInitialPlayerState(): StoredPlayerState {
     revealedMessageLinks: [],
     stateValues: {},
     talks: {},
-    searchTranscriptKey: crypto.randomUUID(),
-    searchLastMessageSeq: 0,
+    talkReadCursors: {},
     incomingCallId: null,
+    completedIncomingCallIds: [],
     browserScheduledEvents: []
   };
 }
@@ -346,10 +687,29 @@ export function revealTalkMessages(state: StoredPlayerState, talkId: string, mes
 export async function reconcileScenarioState(state: StoredPlayerState, playerId: string) {
   const stateValues = compactStateValues(workerScenario.stateVariables, state.stateValues);
   const talks = { ...state.talks };
-  const transcriptAppends: TranscriptUpdate[] = [];
-  let nextState = { ...state, stateValues, talks };
+  const transcriptAppends: TranscriptAppend[] = [];
+  const incomingIds = new Set(workerScenario.incomingCalls.map((call) => call.id));
+  let nextState = {
+    ...state,
+    stateValues,
+    talks,
+    incomingCallId: state.incomingCallId && incomingIds.has(state.incomingCallId) ? state.incomingCallId : null,
+    completedIncomingCallIds: state.completedIncomingCallIds.filter((id) => incomingIds.has(id))
+  };
   for (const talk of workerScenario.talks) {
     if (talks[talk.id] || !talkAvailable(talk, nextState)) continue;
+    if (isSearchAgentTalk(talk)) {
+      const initial = await initializeSearchAgentTalkState(talk, playerId, nextState);
+      talks[talk.id] = initial.state;
+      if (initial.events.length) {
+        transcriptAppends.push({
+          streamId: SEARCH_AGENT_STREAM_ID,
+          transcriptKey: initial.state.transcriptKey,
+          messages: initial.events
+        });
+      }
+      continue;
+    }
     const initial = initializeTalkState(
       talk,
       await initialTalkTurnKey(playerId, talk.id, talk.initialFrom),
@@ -358,11 +718,6 @@ export async function reconcileScenarioState(state: StoredPlayerState, playerId:
     );
     talks[talk.id] = initial.state;
     nextState = revealTalkMessages(nextState, talk.id, initial.messages);
-    transcriptAppends.push({
-      streamId: `talk:${talk.id}`,
-      transcriptKey: initial.state.transcriptKey,
-      messages: initial.messages
-    });
   }
   return { state: nextState, transcriptAppends };
 }
@@ -387,8 +742,18 @@ export function contentAvailable(content: ScenarioContent, state: StoredPlayerSt
     );
 }
 
-export function talkAvailable(talk: ScenarioTalk, state: StoredPlayerState) {
+function talkDefinitionAvailable(talk: ScenarioTalk, state: StoredPlayerState) {
+  if (isSearchAgentTalk(talk)) return true;
   return conditionMet(talk.cond, state) && appAvailable(talk.appId, state);
+}
+
+function talkRepaired(talk: ScenarioTalk, state: StoredPlayerState) {
+  if (isSearchAgentTalk(talk)) return true;
+  return talk.initialState === "normal" || state.repairedContentIds.includes(talk.id);
+}
+
+export function talkAvailable(talk: ScenarioTalk, state: StoredPlayerState) {
+  return talkDefinitionAvailable(talk, state) && talkRepaired(talk, state);
 }
 
 export function chatAuthGateActive(state: StoredPlayerState) {
@@ -401,6 +766,7 @@ export function chatAuthGateActive(state: StoredPlayerState) {
 
 export function talkCanPost(talk: ScenarioTalk, state: StoredPlayerState) {
   if (!talkAvailable(talk, state) || (talk.kind === "chat" && chatAuthGateActive(state))) return false;
+  if (state.talks[talk.id]?.inputEnabled === false) return false;
   const currentFrom = state.talks[talk.id]?.from;
   return Boolean(currentFrom && talk.rules.some((rule) => rule.from === currentFrom && conditionMet(rule.cond, state)));
 }
@@ -423,18 +789,60 @@ function publicNotification(notificationId: string, state: StoredPlayerState) {
 function publicIncomingCall(internalId: string) {
   const call = workerScenario.incomingCalls.find((item) => item.id === internalId);
   if (!call) return undefined;
-  const { id: _id, publicId, ...publicCall } = call;
+  const { id: _id, publicId, cond: _cond, ...publicCall } = call;
   return { ...publicCall, id: publicId };
 }
 
-function publicTalkThread(talk: ScenarioTalk, state: StoredPlayerState) {
+export function visibleIncomingCallId(state: StoredPlayerState) {
+  const id = state.incomingCallId;
+  if (!id || state.completedIncomingCallIds.includes(id)) return null;
+  const call = workerScenario.incomingCalls.find((item) => item.id === id);
+  return call && conditionMet(call.cond, state) ? id : null;
+}
+
+function publicTalkThread(talk: ScenarioDeviceTalk, state: StoredPlayerState) {
+  const repaired = talkRepaired(talk, state);
+  const fallbackRepairLabel = talk.kind === "sms" ? "SMS" : "□□□□□□";
+  const repairLabel = talk.repairLabel ?? fallbackRepairLabel;
+  const initialState = talk.initialState === "normal"
+    ? {}
+    : {
+        initialState: talk.initialState,
+        ...(talk.initialState === "repairable" ? { repairLabel } : {})
+      };
+  if (!repaired) {
+    return talk.kind === "sms"
+      ? {
+          id: talk.publicId,
+          contentId: talk.publicId,
+          contactName: repairLabel,
+          messages: [],
+          corrupted: true,
+          ...initialState
+        }
+      : {
+          id: talk.publicId,
+          contentId: talk.publicId,
+          roomName: repairLabel,
+          messages: [],
+          corrupted: true,
+          ...initialState
+        };
+  }
   const stored = state.talks[talk.id];
-  const unread = Boolean(stored && stored.lastOtherMessageSeq > stored.lastReadMessageSeq);
+  const unread = Boolean(stored?.lastOtherMessageId && state.talkReadCursors[talk.id] !== stored.lastOtherMessageId);
   const brokenHistoryRanges = brokenTalkHistoryRanges(talk, state);
+  const messages = initialTalkMessagesForState(
+    talk,
+    stored?.initialFormatEnv ?? {},
+    state.repairedContentIds
+  ).visibleMessages.map(publicTalkMessage);
   const shared = {
     id: talk.publicId,
     contentId: talk.publicId,
-    messages: [],
+    messages,
+    ...(talk.avatarUrl ? { avatarUrl: talk.avatarUrl } : {}),
+    ...initialState,
     ...(brokenHistoryRanges.length ? { brokenHistoryRanges } : {}),
     ...(unread ? { unread: true } : {})
   };
@@ -461,6 +869,7 @@ function visibleApps(state: StoredPlayerState) {
         icon: app.icon,
         accent: app.accent,
         available,
+        ...(app.badgeCond.trim() && conditionMet(app.badgeCond, state) ? { badge: true } : {}),
         initialState: app.initialState,
         corrupted: !available,
         ...(app.repairLabel ? { repairLabel: app.repairLabel } : {})
@@ -476,8 +885,10 @@ function publicContentRecord(content: ScenarioContent) {
     formDisabledCond: _formDisabledCond,
     ...sourceRecord
   } = content.record;
+  const projectApp = projectAppById.get(content.appId);
+  const projectedRecord = projectApp ? projectApp.publicRecord(sourceRecord) : sourceRecord;
   const record: Record<string, unknown> = {
-    ...sourceRecord,
+    ...projectedRecord,
     id: content.publicId,
     contentId: content.publicId,
     initialState: content.initialState,
@@ -665,13 +1076,8 @@ async function sha256Hex(value: string) {
 }
 
 export async function playerStateRevision(state: StoredPlayerState) {
-  const {
-    searchTranscriptKey: _searchTranscriptKey,
-    searchLastMessageSeq: _searchLastMessageSeq,
-    ...progressState
-  } = state;
   return `player:${(await sha256Hex(JSON.stringify({
-    ...progressState,
+    ...state,
     stateValues: effectiveStateValues(workerScenario.stateVariables, state.stateValues)
   }))).slice(0, 24)}`;
 }
@@ -712,36 +1118,132 @@ export function publicTalkMessage(message: StoredTalkMessage): StoredTalkMessage
   };
 }
 
+export function publicSearchAgentTimelineItems(events: readonly StoredSearchAgentEvent[], talkId: string) {
+  return resolveSearchAgentEvents(events).map((item) => item.type === "message"
+    ? {
+        kind: "message" as const,
+        seq: item.seq,
+        id: item.id,
+        talkId,
+        sender: item.role === "user" ? "owner" as const : "other" as const,
+        body: item.body,
+        sentAt: item.sentAt,
+        ...(item.quickReplies?.length ? { quickReplies: item.quickReplies } : {}),
+        ...(typeof item.delayMs === "number" ? { delayMs: item.delayMs } : {}),
+        ...(item.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {})
+      }
+    : {
+        kind: "search_results" as const,
+        seq: item.seq,
+        id: item.id,
+        talkId,
+        sender: "other" as const,
+        results: item.results,
+        sentAt: item.sentAt
+      });
+}
+
+function identifiedSegments(segments: readonly ScenarioMessageSegment[] | undefined, messageId: string) {
+  return segments?.map((segment, segmentIndex) => segment.kind === "link" && "contentId" in segment
+    ? { ...segment, linkId: `${messageId}:link:${segmentIndex + 1}` }
+    : segment);
+}
+
+export function materializedTalkMessagesForEvents(talk: ScenarioDeviceTalk, events: readonly StoredTalkEvent[]) {
+  const ordered = [...events].sort((left, right) => (
+    left.delivered_at.localeCompare(right.delivered_at) || left.id.localeCompare(right.id)
+  ));
+  const initialSpans = initialTalkBlockSpans(talk);
+  const initialMessageCount = initialSpans[initialSpans.length - 1]?.endSeq ?? 0;
+  return resolveTalkEvents(ordered).map((message, index): StoredTalkMessage => ({
+    seq: initialMessageCount + index + 1,
+    id: message.id,
+    talkId: talk.publicId,
+    sender: message.sender,
+    body: message.body,
+    ...(talk.kind === "chat" ? { senderName: message.senderName } : {}),
+    ...(message.avatarUrl ? { avatarUrl: message.avatarUrl } : {}),
+    ...(message.segments ? { segments: identifiedSegments(message.segments, message.id) } : {}),
+    ...(message.quickReplies?.length ? { quickReplies: message.quickReplies } : {}),
+    ...(typeof message.delayMs === "number" ? { delayMs: message.delayMs } : {}),
+    ...(message.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
+    attachment: message.attachment,
+    sentAt: message.sentAt
+  }));
+}
+
+export function visibleTalkMessagesForState(
+  talk: ScenarioDeviceTalk,
+  state: StoredPlayerState,
+  events: readonly StoredTalkEvent[] = []
+) {
+  const initial = initialTalkMessagesForState(
+    talk,
+    state.talks[talk.id]?.initialFormatEnv ?? {},
+    state.repairedContentIds
+  ).visibleMessages;
+  return [...initial, ...materializedTalkMessagesForEvents(talk, events)];
+}
+
 export async function publicPlayerState(
   state: StoredPlayerState,
   stateVersion: number,
   generatedAudio: PublicGeneratedAudioState[] = [],
   nextScenarioWakeAt: string | null = null,
-  transcriptDeltas: readonly TranscriptUpdate[] = []
+  transcriptDeltas: readonly TranscriptAppend[] = []
 ) {
   const now = new Date().toISOString();
   const stateValues = effectiveStateValues(workerScenario.stateVariables, state.stateValues);
   const repairedContents = new Set(state.repairedContentIds);
   const unlockedContents = new Set(state.unlockedContentIds);
-  const contentStates = unique([...state.repairedContentIds, ...state.unlockedContentIds]).map((internalId) => {
+  const contentStates = unique([...state.repairedContentIds, ...state.unlockedContentIds]).flatMap((internalId) => {
     const content = workerScenario.contents.find((item) => item.id === internalId);
-    return {
-      contentId: content?.publicId ?? internalId,
-      state: unlockedContents.has(internalId) ? "unlocked" : "repaired",
-      appId: content?.appId ?? null,
+    const talk = workerScenario.talks.find((item): item is ScenarioDeviceTalk => item.id === internalId && isDeviceTalk(item));
+    const definition = content ?? talk;
+    if (!definition) return [];
+    return [{
+      contentId: definition.publicId,
+      state: content && unlockedContents.has(internalId) ? "unlocked" : "repaired",
+      appId: definition.appId,
       updatedAt: now
-    };
+    }];
   });
   const visibleTalks = workerScenario.talks.filter((talk) => talkAvailable(talk, state));
-  const talks = visibleTalks.map((talk) => ({
-    talkId: talk.publicId,
-    kind: talk.kind,
-    canPost: talkCanPost(talk, state),
-    turnKey: state.talks[talk.id]?.turnKey ?? "",
-    transcriptKey: state.talks[talk.id]?.transcriptKey ?? "",
-    lastMessageSeq: publicTalkLastMessageSeq(talk, state),
-    historyRevision: talkHistoryRevision(talk, state)
-  }));
+  const listedTalks = workerScenario.talks.filter((talk): talk is ScenarioDeviceTalk => isDeviceTalk(talk) && (
+    talkDefinitionAvailable(talk, state)
+    && (talk.initialState !== "hidden" || talkRepaired(talk, state))
+  ));
+  const talks = visibleTalks.map((talk) => {
+    const stored = state.talks[talk.id];
+    return isSearchAgentTalk(talk)
+      ? {
+          talkId: talk.publicId,
+          kind: "search_agent" as const,
+          label: talk.label,
+          canPost: talkCanPost(talk, state),
+          turnKey: stored?.turnKey ?? "",
+          transcriptKey: stored?.transcriptKey ?? "",
+          lastMessageSeq: stored?.lastMessageSeq ?? 0,
+          historyRevision: 0 as const,
+          inputVisible: stored?.inputVisible ?? talk.inputVisible,
+          inputVisibleAfterSeq: stored?.inputVisibleAfterSeq ?? 0,
+          inputEnabled: stored?.inputEnabled ?? talk.inputEnabled,
+          inputEnabledAfterSeq: stored?.inputEnabledAfterSeq ?? 0
+        }
+      : {
+          talkId: talk.publicId,
+          kind: talk.kind,
+          canPost: talkCanPost(talk, state),
+          turnKey: stored?.turnKey ?? "",
+          transcriptKey: stored?.transcriptKey ?? "",
+          lastMessageSeq: publicTalkLastMessageSeq(talk, state),
+          historyRevision: talkHistoryRevision(talk, state),
+          inputVisible: stored?.inputVisible ?? talk.inputVisible,
+          inputVisibleAfterSeq: stored?.inputVisibleAfterSeq ?? 0,
+          inputEnabled: stored?.inputEnabled ?? talk.inputEnabled,
+          inputEnabledAfterSeq: stored?.inputEnabledAfterSeq ?? 0
+        };
+  });
   const clearedNotificationIds = new Set(state.clearedNotificationIds);
   const notifications = workerScenario.notifications
     .filter((notification) => !clearedNotificationIds.has(notification.id))
@@ -754,36 +1256,50 @@ export async function publicPlayerState(
         }
       : undefined;
   const publicTranscriptDeltas: Array<
-    | { kind: "search"; transcriptKey: string; messages: import("../server/store.ts").StoredSearchAgentMessage[] }
+    | { kind: "search_agent"; talkId: string; transcriptKey: string; messages: Array<Record<string, unknown>> }
     | { kind: "sms" | "chat"; talkId: string; transcriptKey: string; messages: StoredTalkMessage[] }
   > = [];
   for (const transcript of transcriptDeltas) {
-    if (transcript.streamId === "search") {
+    if (transcript.streamId === SEARCH_AGENT_STREAM_ID) {
+      const talk = talkByInternalId(SEARCH_AGENT_TALK_ID);
+      if (!talk || !isSearchAgentTalk(talk)) continue;
       publicTranscriptDeltas.push({
-        kind: "search",
+        kind: "search_agent",
+        talkId: talk.publicId,
         transcriptKey: transcript.transcriptKey,
-        messages: transcript.messages.filter((message) => "role" in message)
+        messages: publicSearchAgentTimelineItems(
+          transcript.messages.filter((message): message is StoredSearchAgentEvent => message.kind === "search_agent"),
+          talk.publicId
+        )
       });
       continue;
     }
     if (!transcript.streamId.startsWith("talk:")) continue;
     const talk = talkByInternalId(transcript.streamId.slice("talk:".length));
     if (!talk || !talkAvailable(talk, state)) continue;
+    if (!isDeviceTalk(talk)) continue;
+    const resolvedMessages = transcript.resolvedMessages
+      ?? materializedTalkMessagesForEvents(
+        talk,
+        transcript.messages.filter((message): message is StoredTalkEvent => "event_type" in message)
+      );
     publicTranscriptDeltas.push({
       kind: talk.kind,
       talkId: talk.publicId,
       transcriptKey: transcript.transcriptKey,
-      messages: transcript.messages
-        .filter((message): message is StoredTalkMessage => "sender" in message)
-        .map(publicTalkMessage)
+      messages: resolvedMessages.map(publicTalkMessage)
     });
   }
+  const projectAppRecords = Object.fromEntries(workerScenario.projectAppIds.flatMap((appId) => {
+    if (!workerScenario.apps.some((app) => app.id === appId)) return [];
+    return [[appId, visibleContentRecords(appId, state)]];
+  }));
 
   return {
-    clientRevision: workerScenario.revision,
+    clientRevision: workerScenario.clientRevision,
+    transcriptRevision: workerScenario.transcriptRevision,
     revision: await playerStateRevision(state),
     stateVersion,
-    serialCounter: "anonymous",
     nextScenarioWakeAt,
     scenarioTime: {
       date: String(stateValues.os_date),
@@ -802,11 +1318,12 @@ export async function publicPlayerState(
       callLogs: visibleContentRecords("phone", state, generatedAudio),
       browserTabs: visibleContentRecords("browser", state),
       radioItems: visibleRadioItems(generatedAudio, state),
-      messages: visibleTalks.filter((talk) => talk.kind === "sms").map((talk) => publicTalkThread(talk, state)),
-      chatThreads: visibleTalks.filter((talk) => talk.kind === "chat").map((talk) => publicTalkThread(talk, state)),
+      messages: listedTalks.filter((talk) => talk.kind === "sms").map((talk) => publicTalkThread(talk, state)),
+      chatThreads: listedTalks.filter((talk) => talk.kind === "chat").map((talk) => publicTalkThread(talk, state)),
+      ...(Object.keys(projectAppRecords).length ? { projectApps: projectAppRecords } : {}),
       ...(chatAuthGate ? { chatAuthGate } : {}),
-      ...(state.incomingCallId
-        ? { incomingCall: publicIncomingCall(state.incomingCallId) }
+      ...(visibleIncomingCallId(state)
+        ? { incomingCall: publicIncomingCall(visibleIncomingCallId(state) ?? "") }
         : {})
     },
     todos: workerScenario.todos.filter((todo) => state.activeTodoIds.includes(todo.id) && conditionMet(todo.cond, state)),
@@ -824,10 +1341,6 @@ export async function publicPlayerState(
         ...(attachment.type === "image" ? { imageUrl: attachment.asset } : {})
       })),
     talks,
-    searchTranscript: {
-      transcriptKey: state.searchTranscriptKey,
-      lastMessageSeq: state.searchLastMessageSeq
-    },
     transcriptDeltas: publicTranscriptDeltas,
     repairedContentCount: repairedContents.size
   };
@@ -882,19 +1395,15 @@ export function appById(appId: string) {
   return workerScenario.apps.find((app) => app.id === appId) ?? null;
 }
 
-function normalized(value: string) {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("ja");
-}
-
 function termsMatch(terms: readonly (string | readonly string[])[], query: string) {
-  return terms.some((termOrGroup) => {
-    const group = typeof termOrGroup === "string" ? [termOrGroup] : termOrGroup;
-    return group.length > 0 && group.every((term) => query.includes(normalized(term)));
-  });
+  const groups = terms.map((termOrGroup) => typeof termOrGroup === "string" ? [termOrGroup] : termOrGroup);
+  return searchResponseTermsMatch(groups, query);
 }
 
 function contentTitle(content: ScenarioContent) {
   const record = content.record;
+  const projectTitle = projectAppById.get(content.appId)?.searchTitle?.(record);
+  if (projectTitle?.trim()) return projectTitle;
   for (const key of ["title", "subject", "programTitle", "name"]) {
     if (typeof record[key] === "string" && record[key].trim()) return record[key];
   }
@@ -902,10 +1411,10 @@ function contentTitle(content: ScenarioContent) {
 }
 
 export function searchScenario(query: string, state: StoredPlayerState) {
-  const value = normalized(query);
+  const value = normalizeQuery(query);
   if (!value) return [];
   const appResults = workerScenario.apps
-    .filter((app) => conditionMet(app.cond, state) && termsMatch(app.search, value))
+    .filter((app) => app.search.length > 0 && conditionMet(app.cond, state) && termsMatch(app.search, value))
     .map((app) => ({
       contentId: app.id,
       appId: app.id,
@@ -914,7 +1423,12 @@ export function searchScenario(query: string, state: StoredPlayerState) {
       repairable: app.initialState !== "normal" && !state.repairedAppIds.includes(app.id)
     }));
   const contentResults = workerScenario.contents
-    .filter((content) => conditionMet(content.cond, state) && termsMatch(content.search, value))
+    .filter((content) => (
+      conditionMet(content.cond, state)
+      && content.search.length > 0
+      && termsMatch(content.search, value)
+      && talkHistoryRepairAvailable(state, content.id)
+    ))
     .map((content) => {
       const historyRepair = talkHistoryRepairByContentId.get(content.id);
       return {
@@ -927,31 +1441,19 @@ export function searchScenario(query: string, state: StoredPlayerState) {
         repairable: content.initialState !== "normal" && !state.repairedContentIds.includes(content.id)
       };
     });
-  return [...appResults, ...contentResults];
-}
-
-export function searchResponseFor<T>(query: string, results: T[], state: StoredPlayerState) {
-  const value = normalized(query);
-  const found = results.length > 0;
-  const response = workerScenario.searchResponses.find((item) => {
-    if (item.when === "found" && !found) return false;
-    if (item.when === "not_found" && found) return false;
-    if (item.search.length && !termsMatch(item.search, value)) return false;
-    return conditionMet(item.cond, state);
-  });
-  return response
-    ? {
-        body: response.body,
-        results: response.suppressResults ? [] : results,
-        responseId: response.id,
-        suppressed: response.suppressResults
-      }
-    : {
-        body: found ? `${results.length}件見つかりました。` : "該当するデータは見つかりませんでした。",
-        results,
-        responseId: null,
-        suppressed: false
-      };
+  const talkResults = workerScenario.talks
+    .filter((talk): talk is ScenarioDeviceTalk => isDeviceTalk(talk)
+      && talk.search.length > 0
+      && conditionMet(talk.cond, state)
+      && termsMatch(talk.search, value))
+    .map((talk) => ({
+      contentId: talk.publicId,
+      appId: talk.appId,
+      targetKind: "content" as const,
+      title: talk.label,
+      repairable: talk.initialState !== "normal" && !state.repairedContentIds.includes(talk.id)
+    }));
+  return [...appResults, ...contentResults, ...talkResults];
 }
 
 export function repairTarget(publicContentId: string, appId: string) {
@@ -962,6 +1464,10 @@ export function repairTarget(publicContentId: string, appId: string) {
   const content = contentByPublicId(publicContentId);
   if (content && content.appId === appId && content.initialState !== "normal") {
     return { kind: "content" as const, internalId: content.id, appId: content.appId };
+  }
+  const talk = talkByPublicId(publicContentId);
+  if (talk && isDeviceTalk(talk) && talk.appId === appId && talk.initialState !== "normal") {
+    return { kind: "talk" as const, internalId: talk.id, appId: talk.appId };
   }
   return null;
 }
@@ -974,10 +1480,10 @@ export function openTargetExists(publicContentId: string, appId: string, state: 
     const historyRepair = talkHistoryRepairByContentId.get(content.id);
     return conditionMet(content.cond, state)
       && conditionMet(appById(content.appId)?.cond, state)
-      && (!historyRepair || talkAvailable(historyRepair.talk, state));
+      && (!historyRepair || (talkAvailable(historyRepair.talk, state) && talkHistoryRepairAvailable(state, content.id)));
   }
   const talk = talkByPublicId(publicContentId);
-  return Boolean(talk?.appId === appId && talkAvailable(talk, state));
+  return Boolean(talk && isDeviceTalk(talk) && talk.appId === appId && talkDefinitionAvailable(talk, state));
 }
 
 export function notificationIdsForTarget(publicContentId: string, state: StoredPlayerState) {

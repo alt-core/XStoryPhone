@@ -1,10 +1,16 @@
 <script lang="ts">
   export let owner = false;
-  export let variant: "messages" | "chat" = "messages";
+  export let variant: "messages" | "chat" | "search" = "messages";
   export let ariaLabel = "入力中";
 </script>
 
-<div class="typing-indicator" class:owner class:chat={variant === "chat"} aria-label={ariaLabel}>
+<div
+  class="typing-indicator"
+  class:owner
+  class:chat={variant === "chat"}
+  class:search={variant === "search"}
+  aria-label={ariaLabel}
+>
   <span></span>
   <span></span>
   <span></span>
@@ -57,6 +63,13 @@
       rgba(4, 11, 14, 0.24);
   }
 
+  .typing-indicator.search {
+    border-color: rgba(143, 210, 255, 0.18);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(143, 210, 255, 0.14)),
+      rgba(5, 11, 18, 0.46);
+  }
+
   .typing-indicator span {
     width: 5px;
     height: 5px;
@@ -69,6 +82,11 @@
   .typing-indicator.chat span {
     background: #c6ffd1;
     box-shadow: 0 0 8px rgba(126, 224, 147, 0.42);
+  }
+
+  .typing-indicator.search span {
+    background: #b9e5ff;
+    box-shadow: 0 0 8px rgba(143, 210, 255, 0.5);
   }
 
   .typing-indicator span:nth-child(2) {

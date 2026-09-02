@@ -1,16 +1,16 @@
 comment	talk	from	cond	intent	criteria	example	match	next	mode	set	notes
-	guide	*		ヘルプ	/^(?:help|ヘルプ)$/i	ヘルプ		common_help	stay		どの状態からでも利用できる共通分岐
-	guide	*		機能テスト	/^(?:着信テスト|遅延メッセージ|メッセージ連携|画像受信テスト|チャットへ送る)$/u	着信テスト		demo_test_ack	stay		機能テスト一覧メモに記載したデモコマンド
-	guide	intro	rainy_window_opened	灯りの色を報告	/(?:黄色?|きいろ|オレンジ(?:色)?|橙色)/u	黄色です		"found_lead
-found_done"		image_color_reported=true	正規表現だけで選択するデモ
-	guide	intro						intro_prompt	stay
-	guide	found_done		ゲームオーバー確認	/^終了$/u	終了		game_over_reply	game_over		ゲームオーバーUIのデモ
-	guide	found_done						done_repeat	stay
+	guide	*	!chat_auth_verified	チャット未認証	/^チャットへ送る$/u	チャットへ送る		chat_auth_required	stay		未認証時は案内だけを返し、hookで会話位置を変更しない
+	guide	*		メッセージ機能テスト	/^(?:メッセージ連携|別ルームへ送る|チャットへ送る)$/u	別ルームへ送る		message_test_ack	stay		メッセージアプリから別ルーム・別アプリへ送る確認
+	guide	intro						message_reply	stay
 	lobby	start						lobby_reply		demo_completed=true
 	lobby	*		機能テスト	/^(?:チャット連携|メッセージへ送る)$/u	チャット連携		chat_test_ack	stay		別ルーム・別アプリへの連携確認
 	lobby	lobby_reply						lobby_done	stay
 	sms_receiver	start						receiver_reply	stay
+	sms_receiver	received_from_sms						receiver_reply	stay		受信後も確認用返信を受け付ける
+	sms_receiver	received_from_chat						receiver_reply	stay		受信後も確認用返信を受け付ける
+	sms_receiver	received_delayed						receiver_reply	stay		受信後も確認用返信を受け付ける
 	sms_media_receiver	start						receiver_reply	stay
+	sms_media_receiver	received_image						receiver_reply	stay		受信後も確認用返信を受け付ける
 	dummy_sms_1	start						dummy_reply	stay
 	dummy_sms_2	start						dummy_reply	stay
 	dummy_sms_3	start						dummy_reply	stay
@@ -18,9 +18,29 @@ found_done"		image_color_reported=true	正規表現だけで選択するデモ
 	dummy_sms_5	start						dummy_reply	stay
 	dummy_sms_6	start						dummy_reply	stay
 	chat_receiver	start						receiver_reply	stay
+	chat_receiver	received_from_sms						receiver_reply	stay		受信後も確認用返信を受け付ける
+	chat_receiver	received_from_chat						receiver_reply	stay		受信後も確認用返信を受け付ける
 	dummy_chat_1	start						dummy_reply	stay
 	dummy_chat_2	start						dummy_reply	stay
 	dummy_chat_3	start						dummy_reply	stay
 	dummy_chat_4	start						dummy_reply	stay
 	dummy_chat_5	start						dummy_reply	stay
 	dummy_chat_6	start						dummy_reply	stay
+	search_agent	*		ヘルプ	/^(?:help|ヘルプ)$/i	ヘルプ		common_help	stay		検索ナビの役割を案内する共通分岐
+	search_agent	*	old_note_opened && !image_color_reported	灯りの色を報告	/(?:青|あお|水色|みずいろ|ブルー|シアン|黄色?|きいろ|オレンジ(?:色)?|橙色)/u	黄色です		color_reported	stay	"image_color_reported=true; clue_attachments_pending=true"	検索結果の画像だけで色を判断した場合も受け付け、同じturnのhookでSMS添付を配送する
+	search_agent	*		機能テスト一覧	/^(?:機能テスト|テストメニュー)$/u	機能テスト		test_menu	stay		Quick Replyから汎用機能テストを選ぶ
+	search_agent	*	demo_call_completed	完了済み着信テスト	/^着信テスト$/u	着信テスト		demo_test_already_done	stay		一度限りの機能テストは成功文を出す前に判定する
+	search_agent	*	demo_delayed_message_received	完了済み遅延メッセージ	/^遅延メッセージ$/u	遅延メッセージ		demo_test_already_done	stay		一度限りの機能テストは成功文を出す前に判定する
+	search_agent	*	demo_image_received	完了済み画像受信テスト	/^画像受信テスト$/u	画像受信テスト		demo_test_already_done	stay		一度限りの機能テストは成功文を出す前に判定する
+	search_agent	*		機能テスト	/^(?:着信テスト|遅延メッセージ|画像受信テスト|ノイズ演出|フラッシュ演出|暗転演出|ゲームオーバー演出|オールクリア演出)$/u	着信テスト		demo_test_ack	stay		検索ナビへ集約した汎用機能テスト
+	search_agent	intro	!old_note_opened	最初のヒント	/ヒント/u	ヒント		hint_first	stay		結果を出さず案内だけを返す
+	search_agent	intro	old_note_opened && !rainy_window_opened && !image_color_reported	写真のヒント	/ヒント/u	ヒント		hint_photo	stay		結果を出さず案内だけを返す
+	search_agent	intro	rainy_window_opened && !image_color_reported	報告のヒント	/ヒント/u	ヒント		hint_report	stay		結果を出さず案内だけを返す
+	search_agent	intro	image_color_reported && !sealed_note_unlocked	添付解錠のヒント	/ヒント/u	ヒント		hint_unlock	stay		結果を出さず案内だけを返す
+	search_agent	intro	sealed_note_unlocked && !chat_auth_link_sent	チャットのヒント	/ヒント/u	ヒント		hint_chat	stay		結果を出さず案内だけを返す
+	search_agent	intro	chat_auth_link_sent && !chat_auth_verified	再認証のヒント	/ヒント/u	ヒント		hint_auth	stay		結果を出さず案内だけを返す
+	search_agent	intro	chat_auth_verified && !demo_completed	チャット投稿のヒント	/ヒント/u	ヒント		hint_contact	stay		結果を出さず案内だけを返す
+	search_agent	intro	demo_completed	完了後のヒント	/ヒント/u	ヒント		hint_done	stay		結果を出さず案内だけを返す
+	search_agent	intro			入力された言葉で端末内のデータを検索する。	古いメモ		"/search {{player_input}}
+/if (search_found) found
+/if (!search_found) not_found"	stay		/searchは一度だけ事前評価し、結果の後に復帰メニューを表示する

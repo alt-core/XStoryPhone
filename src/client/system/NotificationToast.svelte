@@ -1,13 +1,15 @@
 <script lang="ts">
   import type { NotificationItem } from "../scenario-runtime/types";
+  import { appCatalog, type AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
 
   export let notification: NotificationItem;
+  export let apps: AppCatalogItem[] = appCatalog;
   export let onOpen: () => void = () => {};
 </script>
 
 <div class="toast-shell" aria-live="polite">
-  <NotificationCard {notification} variant="shade" onSelect={() => onOpen()} />
+  <NotificationCard {notification} {apps} variant="shade" onSelect={() => onOpen()} />
 </div>
 
 <style>

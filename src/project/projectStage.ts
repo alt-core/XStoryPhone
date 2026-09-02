@@ -7,7 +7,7 @@ export type PhonePresentation = {
 };
 
 export type ProjectStageContext = {
-  sessionToken: string;
+  playerReady: boolean;
   playerState: PlayerState | null;
   projectState: Readonly<Record<string, string | number | boolean>>;
   dispatchScenarioEvent: (

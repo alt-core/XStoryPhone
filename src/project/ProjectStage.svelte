@@ -11,7 +11,7 @@
 <section
   class="project-stage"
   data-project-stage
-  data-session-ready={context.sessionToken ? "true" : "false"}
+  data-session-ready={context.playerReady ? "true" : "false"}
 >
   <div class="phone-stage-layer">
     {@render phone(focusedPhone)}

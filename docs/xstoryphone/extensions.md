@@ -1,6 +1,6 @@
 # 作品固有の拡張
 
-汎用コアを肥大化させないため、作品固有機能には3つの差し込み口だけを用意しています。
+汎用コアを肥大化させないため、作品固有機能には生成音声provider、API、Stage、project appの4つの差し込み口だけを用意しています。
 
 ## 生成音声provider
 
@@ -26,7 +26,7 @@ export const projectGeneratedAudioProviders = [myTtsProvider];
 
 次に `scenario.json` の `generatedAudio[].provider` を同じIDへ変更します。serverモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserモードは外部生成ジョブを保存せず、`staticUrl` の音声だけを使います。
 
-ラジオ投稿などの入力を作品固有hookで審査するときは、受理できない入力を `context.form.reject("message_rejected")` で返せます。ゲームオーバーにする入力は `context.form.gameOver()`、生成音声を準備する受理経路は `context.genAudio.prepare()` を使います。フォームUIと共通APIを保ったまま、LLM審査や外部で生成した音声を使う処理だけを作品側へ置けます。
+ラジオ投稿などの入力を作品固有hookで審査するときは、受理できない入力を`context.form.deny("message_rejected")`で返せます。成立した処理をゲームオーバー演出へ進める場合は`context.effectSequence.gameOver()`、生成音声を準備する受理経路は`context.genAudio.prepare()`を使います。単発の全画面演出には`context.effect.noise()`、`flash(options?)`、`blackout(options?)`を利用できます。フラッシュと暗転のoptionsには`fadeInMs`、`holdMs`、`fadeOutMs`、`intensity`を指定でき、フラッシュだけは6桁HEXの`color`も指定できます。フォームUIと共通APIを保ったまま、LLM審査や外部で生成した音声を使う処理だけを作品側へ置けます。
 
 外部の音声生成サービスに固有の認証、payload、polling、音声保存はprovider内だけに置けます。
 
@@ -48,7 +48,7 @@ PhoneStageの表示は次の3種類です。
 
 作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
 
-`context` には現在のsession、PlayerState、明示公開された `projectState` と、`dispatchScenarioEvent` が渡されます。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは従来どおり `clientCallableEvents` へ明示してください。
+`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは従来どおり `clientCallableEvents` へ明示してください。
 
 Stage表示に必要な状態変数だけを、scenario最上位の `publicStateVariables` へ列挙します。指定していない状態変数はクライアントへ公開されません。
 
@@ -60,17 +60,29 @@ Stage表示に必要な状態変数だけを、scenario最上位の `publicState
 
 作品固有Stageで復旧不能な例外が起きた場合は、PhoneStageだけへ戻さず、既存のゲーム外エラー画面を表示します。
 
-この3点は、必要な作品だけが固有コードを追加し、汎用コアを小さく保つための境界です。
+これらは、必要な作品だけが固有コードを追加し、汎用コアを小さく保つための境界です。
+
+## アプリregistryの境界
+
+標準アプリのIDと既定アイコンは `src/shared/appRegistry.ts` に集約しています。作品固有appは`src/project/apps.ts`へ1エントリ追加し、`src/project/apps/<app-id>/App.svelte`を置きます。
+
+manifestではID、Lucide icon名、record validator、到達後に公開してよいfieldを返す`publicRecord()`を定義します。シナリオ側は通常の`apps[] / contents[]`を使うため、normal / repairable / hidden、検索、通知、badge、履歴、hookをそのまま利用できます。修復前のrecordは`publicRecord()`へ渡しません。
+
+componentは共通のitems、ProjectStage context、focus要求、open／blocked／noise handlerだけを受けます。app固有APIが必要なら従来どおり`src/project/routes.ts`へ追加し、registryへroute lifecycleやDI基盤は追加しません。built-in appもregistryへ合わせて書き直しません。
+
+`src/project/apps/*/App.svelte`とそこからimportするmoduleは、選択中シナリオで未使用でもclient配布物へ入ります。未到達の本文、答え、ヒント、asset URLをcomponentへ直書きせず、シナリオとserver側のrecordに置き、到達後に`publicRecord()`から受け取って表示してください。
 
 ## 予約イベントと着信
 
 作品固有hookから、汎用の予約イベントと着信UIを利用できます。
 
 ```ts
-context.schedule.after("scheduled_call", 30_000, "show_scheduled_call");
-context.incomingCall.show("scheduled_call");
+context.schedule.after("show_scheduled_call", 30_000);
+context.incoming.start("scheduled_call");
 ```
 
-`scenario.json` の `incomingCalls` へ表示名と任意の音声URLを定義します。`transcript` に音声開始からのミリ秒と本文を並べると、通話中の字幕として同期表示されます。電話アプリの履歴で音声と全文書き起こしを提供する場合は、別途 `phone` コンテンツの `record.audioUrl` と `record.transcript` に同じ形式で定義します。
+`scenario.json` の `incomingCalls` へ表示名と任意の音声URLを定義します。`transcript` に音声開始からのミリ秒と本文を並べると、通話中の字幕として同期表示されます。電話アプリの履歴で音声と全文書き起こしを提供する場合は、別途 `phone` コンテンツの `record.audioUrl` と `record.transcript` に同じ形式で定義します。留守番電話として表示する場合は `record.kind` に `voicemail` を指定します。
 
-初回ログインからの相対時間で開始するものは `initialSchedules` に定義できます。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。
+初回ログインからの相対時間で開始するものは `initialSchedules` に定義できます。serverモードでは新規プレイヤー作成と同じ保存操作で登録され、既存プレイヤーへの再認証では追加されません。AWS版のserverモードはDynamoDB transactionの上限により98件以下にしてください。`npm run build:aws`がserverモードの件数と過大なfieldsを事前検査します。browserモードはDynamoDBへ保存せず、既存の署名tokenサイズ上限を使います。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。
+
+予定イベントのhookが例外で失敗した場合、イベントを成功扱いや破棄にはせず、限定再試行後に明示エラーを表示します。handlerや設定を修正して再配備すると、保持していた同じイベントから再実行します。物語上必要なイベントを黙って飛ばす試行回数上限は設けていません。

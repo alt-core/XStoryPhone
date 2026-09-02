@@ -12,7 +12,7 @@ export function playerInputReviewPageHtml() {
     header { padding: 20px 24px 12px; border-bottom: 1px solid #d8dee8; background: #fff; }
     h1 { margin: 0; font-size: 20px; font-weight: 700; }
     main { padding: 18px 24px 28px; display: grid; gap: 16px; }
-    form { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 10px; align-items: end; }
+    form { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; align-items: end; }
     label { display: grid; gap: 4px; font-size: 12px; font-weight: 650; color: #485568; }
     input, select, button { min-height: 34px; border: 1px solid #c9d1de; border-radius: 6px; padding: 6px 8px; font: inherit; background: #fff; }
     button { cursor: pointer; background: #17202a; color: #fff; border-color: #17202a; font-weight: 700; }
@@ -38,10 +38,9 @@ export function playerInputReviewPageHtml() {
   <main>
     <form id="filters">
       <label class="wide">管理トークン<input id="secret" type="password" autocomplete="off"></label>
-      <label>種別<select id="eventType"><option value="">すべて</option><option value="search">検索</option><option value="talk_send">会話</option></select></label>
       <label>player ID<input id="playerId"></label>
       <label>会話ID<input id="talkId"></label>
-      <label>検索<input id="q"></label>
+      <label>本文検索<input id="q"></label>
       <label>件数<input id="limit" type="number" min="1" max="500" value="100"></label>
       <button type="submit">読み込み</button>
       <button type="button" class="secondary" id="csv">CSV</button>
@@ -49,7 +48,7 @@ export function playerInputReviewPageHtml() {
     <section class="panel">
       <div class="status" id="status">未読み込み</div>
       <div class="table-wrap"><table>
-        <thead><tr><th style="width:150px">時刻</th><th style="width:150px">player</th><th style="width:70px">種別</th><th style="width:90px">状態</th><th>入力</th><th>返答</th></tr></thead>
+        <thead><tr><th style="width:150px">時刻</th><th style="width:150px">player</th><th style="width:90px">状態</th><th>入力</th><th>返答</th></tr></thead>
         <tbody id="rows"></tbody>
       </table></div>
     </section>
@@ -61,7 +60,7 @@ export function playerInputReviewPageHtml() {
     const statusEl = document.getElementById('status');
     const detail = document.getElementById('detail');
     const secret = document.getElementById('secret');
-    const controls = ['eventType', 'playerId', 'talkId', 'q', 'limit'].reduce((map, id) => {
+    const controls = ['playerId', 'talkId', 'q', 'limit'].reduce((map, id) => {
       map[id] = document.getElementById(id);
       return map;
     }, {});
@@ -77,11 +76,10 @@ export function playerInputReviewPageHtml() {
 
     function responseText(item) {
       const snapshot = item.responseSnapshot || {};
-      if (item.eventType === 'search') {
-        return [snapshot.responseId || '', Number.isFinite(snapshot.resultCount) ? snapshot.resultCount + '件' : ''].filter(Boolean).join(' / ');
-      }
       const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
-      return messages.map((message) => message && message.body || '').filter(Boolean).join('\\n');
+      const text = messages.map((message) => message && message.body || '').filter(Boolean).join('\\n');
+      if (text) return text;
+      return Number.isFinite(snapshot.resultCount) ? snapshot.resultCount + '件' : '';
     }
 
     function setText(node, value) {
@@ -94,10 +92,10 @@ export function playerInputReviewPageHtml() {
         const tr = document.createElement('tr');
         const state = item.status + (item.matched ? ' / 一致' : ' / 不一致');
         const response = responseText(item);
-        const values = [item.occurredAt, item.playerId, item.eventType === 'search' ? '検索' : '会話', state, item.userInput, response];
+        const values = [item.occurredAt, item.playerId, state, item.userInput, response];
         for (const [index, value] of values.entries()) {
           const td = document.createElement('td');
-          td.className = index >= 4 ? 'text' : 'clip mono';
+          td.className = index >= 3 ? 'text' : 'clip mono';
           setText(td, value);
           tr.appendChild(td);
         }

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import {
+  assertAwsInitialScheduleLimit,
+  AWS_INITIAL_SCHEDULE_ITEM_LIMIT_BYTES,
+  AWS_INITIAL_SCHEDULE_LIMIT
+} from "../scripts/audit-aws-scenario.mjs";
 
 const template = readFileSync(new URL("../infra/aws/template.yaml", import.meta.url), "utf8");
 const samconfig = readFileSync(new URL("../infra/aws/samconfig.toml", import.meta.url), "utf8");
@@ -53,7 +58,42 @@ test("dev・stg・prodは明示的なビルド／デプロイコマンドを持�
     assert.match(packageJson.scripts[`build:cloudflare:${environment}`], new RegExp(`CLOUDFLARE_ENV=${environment}`, "u"));
   }
   assert.match(packageJson.scripts["build:aws"], /BUILD_PLATFORM=aws/u);
+  assert.match(packageJson.scripts["build:aws"], /audit:aws:scenario/u);
   assert.doesNotMatch(packageJson.scripts["build:aws"], /deploy/u);
+});
+
+test("AWS版のserverモードだけ新規player作成transactionへ収まる初期scheduleを検証する", () => {
+  const schedule = { id: "schedule", eventId: "event", fields: {}, delayMs: 0 };
+  assert.doesNotThrow(() => assertAwsInitialScheduleLimit(Array.from(
+    { length: AWS_INITIAL_SCHEDULE_LIMIT },
+    (_, index) => ({ ...schedule, id: `schedule_${index}` })
+  ), "server"));
+  assert.throws(
+    () => assertAwsInitialScheduleLimit(Array.from(
+      { length: AWS_INITIAL_SCHEDULE_LIMIT + 1 },
+      (_, index) => ({ ...schedule, id: `schedule_${index}` })
+    ), "server"),
+    /initialSchedulesは98件以下/u
+  );
+  assert.throws(
+    () => assertAwsInitialScheduleLimit([{
+      ...schedule,
+      fields: { body: "あ".repeat(AWS_INITIAL_SCHEDULE_ITEM_LIMIT_BYTES) }
+    }], "server"),
+    /initialSchedules\[0\]が大きすぎます/u
+  );
+  assert.throws(
+    () => assertAwsInitialScheduleLimit(Array.from({ length: 12 }, (_, index) => ({
+      ...schedule,
+      id: `large_${index}`,
+      fields: { body: "あ".repeat(90_000) }
+    })), "server"),
+    /initialSchedules全体が大きすぎます/u
+  );
+  assert.doesNotThrow(() => assertAwsInitialScheduleLimit(Array.from(
+    { length: AWS_INITIAL_SCHEDULE_LIMIT + 1 },
+    (_, index) => ({ ...schedule, id: `browser_schedule_${index}` })
+  ), "browser"));
 });
 
 test("dev・stgデプロイだけがテストプレイ用リセットをクライアントへ組み込む", () => {
@@ -126,12 +166,25 @@ test("AWSデプロイは設定されたLLM項目だけをLambdaへ渡す", () =>
     ["LlmModel", "LLM_MODEL"],
     ["LlmBaseUrl", "LLM_BASE_URL"],
     ["LlmTimeoutMs", "LLM_TIMEOUT_MS"],
-    ["LlmReasoningEffort", "LLM_REASONING_EFFORT"]
+    ["LlmReasoningEffort", "LLM_REASONING_EFFORT"],
+    ["LlmProfileFastModel", "LLM_PROFILE_FAST_MODEL"],
+    ["LlmProfileFastReasoningEffort", "LLM_PROFILE_FAST_REASONING_EFFORT"],
+    ["LlmProfileFastTimeoutMs", "LLM_PROFILE_FAST_TIMEOUT_MS"],
+    ["LlmProfileSuperModel", "LLM_PROFILE_SUPER_MODEL"],
+    ["LlmProfileSuperReasoningEffort", "LLM_PROFILE_SUPER_REASONING_EFFORT"],
+    ["LlmProfileSuperTimeoutMs", "LLM_PROFILE_SUPER_TIMEOUT_MS"],
+    ["LlmProfileUltraModel", "LLM_PROFILE_ULTRA_MODEL"],
+    ["LlmProfileUltraReasoningEffort", "LLM_PROFILE_ULTRA_REASONING_EFFORT"],
+    ["LlmProfileUltraTimeoutMs", "LLM_PROFILE_ULTRA_TIMEOUT_MS"],
+    ["LlmAnalyticsEnabled", "LLM_ANALYTICS_ENABLED"],
+    ["LlmDebugLogs", "LLM_DEBUG_LOGS"],
+    ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"]
   ]) {
     assert.match(template, new RegExp(`${environmentVariable}: !Ref ${parameter}`, "u"));
     assert.match(deployAws, new RegExp(`\\["${parameter}", "${environmentVariable}"\\]`, "u"));
   }
   assert.match(template, /LlmApiKey:\s+[\s\S]*?NoEcho: true/u);
+  assert.match(template, /TimeToLiveSpecification:\s+[\s\S]*?AttributeName: expiresAtEpoch[\s\S]*?Enabled: true/u);
 });
 
 test("AWSの人数限定アクセスコードは任意の非表示parameterとして渡す", () => {

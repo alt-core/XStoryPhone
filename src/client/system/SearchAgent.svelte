@@ -1,15 +1,28 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { Send, X } from "@lucide/svelte";
   import type {
     AssistantMessage,
     SearchAgentAction,
     SearchAgentMessage,
-    SearchAgentSearchResponse,
     SearchAgentSearchResult,
+    SearchAgentTalkView,
     DeviceState
   } from "../scenario-runtime/types";
-  import { getAppById } from "./appCatalog";
+  import {
+    queuedTalkMessageDelayMs,
+    shouldQueueTalkMessage
+  } from "./talkMessageDelay";
+  import TypingIndicator from "./TypingIndicator.svelte";
+  import QuickReplies from "./QuickReplies.svelte";
+  import { latestQuickReplyPlacement, resolvedTalkInputState } from "./talkInputState.ts";
+  import {
+    loadTalkDelaySeenMessages,
+    saveTalkDelaySeenMessages,
+    type SeenMessageIdsByThread
+  } from "../apps/talkDelaySeenStorage";
+  import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
+  import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
 
   type SurfaceMessageMode = "search" | "dismissOnTap";
 
@@ -20,21 +33,23 @@
     updatedAt: string;
   };
 
-  const SEARCH_HISTORY_PAGE_SIZE = 20;
+  const SEARCH_HISTORY_PAGE_SIZE = 40;
+  const DELAY_MEMORY_SCOPE = "search_agent";
 
-  export let messages: SearchAgentMessage[] = [];
+  export let talk: SearchAgentTalkView | null = null;
+  export let apps: AppCatalogItem[] = appCatalog;
   export let name = "ナビ";
   export let deviceState: DeviceState;
   export let contentStates: ContentStateSnapshot[] = [];
-  export let onSearchAgentSearch: (query: string, requestId: string) => Promise<SearchAgentSearchResponse> = async () => ({
+  export let onSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
-    matched: false,
-    body: "検索できませんでした。",
-    results: []
+    error: "送信できません。"
   });
   export let onOpenSearchAgentResult: (result: SearchAgentSearchResult) => boolean | Promise<boolean> = () => false;
+  export let delayMemoryKey = "";
   export let peeking = false;
   export let surfaceKey = "home";
+  export let closeRequestId = 0;
   export let surfaceMessage: AssistantMessage | undefined = undefined;
   export let surfaceMessageMode: SurfaceMessageMode = "dismissOnTap";
 
@@ -42,20 +57,36 @@
   let input = "";
   let transientMessages: SearchAgentMessage[] = [];
   let pending = false;
+  let sendError = "";
   let dismissedSurfaceMessageKey = "";
   let lastSurfaceKey = surfaceKey;
+  let lastCloseRequestId = closeRequestId;
   let expandedFromVisible = false;
   let agentAction: SearchAgentAction = "idle";
   let lastServerMessageKey = "";
-  let visibleExchangeCount = SEARCH_HISTORY_PAGE_SIZE;
+  let visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
   let messageListElement: HTMLDivElement | undefined;
   let inputElement: HTMLInputElement | undefined;
   let loadingOlderHistory = false;
   let openingResult = false;
+  let trackedTalkId = "";
+  let trackedMessages: SearchAgentMessage[] = [];
+  let visibleMessageIds = new Set<string>();
+  let pendingMessageIds = new Set<string>();
+  let messageDelayTimer: number | undefined;
+  let scheduledMessageId = "";
+  let seenMessageIdsByThread: SeenMessageIdsByThread = {};
+  let loadedDelayMemoryKey: string | undefined;
+  let lastQuickReplySignature = "";
 
   $: if (surfaceKey !== lastSurfaceKey) {
     lastSurfaceKey = surfaceKey;
     dismissedSurfaceMessageKey = "";
+    closeExpanded();
+  }
+  $: if (closeRequestId !== lastCloseRequestId) {
+    lastCloseRequestId = closeRequestId;
+    closeExpanded();
   }
   $: surfaceMessageKey = surfaceMessage ? `${surfaceKey}:${surfaceMessage.id}` : "";
   $: surfaceBubbleVisible = Boolean(
@@ -65,6 +96,9 @@
   );
   $: agentPeeking = peeking && !expanded && !surfaceBubbleVisible;
   $: agentAction = surfaceBubbleVisible ? surfaceMessage?.agentAction ?? "idle" : "idle";
+  $: messages = talk?.messages ?? [];
+  $: syncSeenMessageMemory(delayMemoryKey);
+  $: syncDelayedMessages(expanded ? talk?.talkId ?? "" : "", messages);
   $: serverMessageKey = messages.map((message) => message.id).join("|");
   $: if (serverMessageKey !== lastServerMessageKey) {
     lastServerMessageKey = serverMessageKey;
@@ -73,37 +107,29 @@
       void scrollMessagesToBottom();
     }
   }
-  $: serverExchangeCount = countMessageExchanges(messages);
-  $: visibleServerMessages = recentMessagesForExchangeCount(messages, visibleExchangeCount);
-  $: displayedMessages = [...visibleServerMessages, ...transientMessages];
-  $: hasOlderHistory = visibleExchangeCount < serverExchangeCount;
-
-  function messageExchangeKey(message: SearchAgentMessage) {
-    return message.requestId ?? message.id;
-  }
-
-  function messageExchangeKeys(history: readonly SearchAgentMessage[]) {
-    const keys: string[] = [];
-    const seen = new Set<string>();
-    for (const message of history) {
-      const key = messageExchangeKey(message);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      keys.push(key);
+  $: visibleServerMessages = messages.filter((message) => visibleMessageIds.has(message.id));
+  $: pagedServerMessages = visibleServerMessages.slice(-visibleMessageCount);
+  $: displayedMessages = [...pagedServerMessages, ...transientMessages];
+  $: hasOlderHistory = visibleMessageCount < visibleServerMessages.length;
+  $: resolvedInput = resolvedTalkInputState(talk ?? undefined, messages, visibleMessageIds);
+  $: composerVisible = resolvedInput.visible;
+  $: composerEnabled = resolvedInput.canSubmit;
+  $: quickReplyPlacement = pending || transientMessages.length
+    ? undefined
+    : latestQuickReplyPlacement(messages, visibleMessageIds, composerEnabled);
+  $: quickReplySignature = quickReplyPlacement?.messageId ?? "";
+  $: if (quickReplySignature !== lastQuickReplySignature) {
+    const wasNearBottom = isMessageListNearBottom();
+    lastQuickReplySignature = quickReplySignature;
+    if (expanded && wasNearBottom) {
+      void scrollMessagesToBottom();
     }
-    return keys;
   }
+  $: typingVisible = pending || pendingMessageIds.size > 0;
 
-  function countMessageExchanges(history: readonly SearchAgentMessage[]) {
-    return messageExchangeKeys(history).length;
-  }
-
-  function recentMessagesForExchangeCount(history: readonly SearchAgentMessage[], count: number) {
-    const keys = messageExchangeKeys(history);
-    const visibleKeys = new Set(keys.slice(Math.max(0, keys.length - count)));
-    return history.filter((message) => visibleKeys.has(messageExchangeKey(message)));
+  function isMessageListNearBottom() {
+    if (!messageListElement) return true;
+    return messageListElement.scrollHeight - messageListElement.scrollTop - messageListElement.clientHeight <= 48;
   }
 
   async function scrollMessagesToBottom() {
@@ -122,7 +148,7 @@
     loadingOlderHistory = true;
     const previousHeight = messageListElement.scrollHeight;
     const previousTop = messageListElement.scrollTop;
-    visibleExchangeCount = Math.min(serverExchangeCount, visibleExchangeCount + SEARCH_HISTORY_PAGE_SIZE);
+    visibleMessageCount = Math.min(visibleServerMessages.length, visibleMessageCount + SEARCH_HISTORY_PAGE_SIZE);
     await tick();
     messageListElement.scrollTop = messageListElement.scrollHeight - previousHeight + previousTop;
     loadingOlderHistory = false;
@@ -151,7 +177,7 @@
 
   function openExpanded() {
     expandedFromVisible = !agentPeeking;
-    visibleExchangeCount = SEARCH_HISTORY_PAGE_SIZE;
+    visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
     expanded = true;
     void scrollMessagesToBottom();
     void focusInput();
@@ -183,62 +209,206 @@
     dismissSurfaceMessage();
   }
 
-  function serverHasRequest(requestId: string) {
-    return messages.some((message) => message.requestId === requestId);
+  function seenMessageIds(talkId: string) {
+    if (!seenMessageIdsByThread[talkId]) {
+      seenMessageIdsByThread[talkId] = new Set<string>();
+    }
+    return seenMessageIdsByThread[talkId];
   }
 
-  async function sendMessage() {
-    const body = input.trim();
-    if (!body || pending) {
+  function saveSeenMessageMemory() {
+    saveTalkDelaySeenMessages(
+      DELAY_MEMORY_SCOPE,
+      loadedDelayMemoryKey ?? delayMemoryKey,
+      seenMessageIdsByThread
+    );
+  }
+
+  function markMessageSeen(talkId: string, messageId: string) {
+    if (!talkId || !messageId) return;
+    const seen = seenMessageIds(talkId);
+    if (seen.has(messageId)) return;
+    seen.add(messageId);
+    saveSeenMessageMemory();
+  }
+
+  function markVisibleMessagesSeen() {
+    if (!trackedTalkId) return;
+    for (const message of trackedMessages) {
+      if (visibleMessageIds.has(message.id)) markMessageSeen(trackedTalkId, message.id);
+    }
+  }
+
+  function syncSeenMessageMemory(memoryKey: string) {
+    if (memoryKey === loadedDelayMemoryKey) return;
+    loadedDelayMemoryKey = memoryKey;
+    seenMessageIdsByThread = loadTalkDelaySeenMessages(DELAY_MEMORY_SCOPE, memoryKey);
+  }
+
+  function clearMessageDelayTimer() {
+    if (messageDelayTimer) window.clearTimeout(messageDelayTimer);
+    messageDelayTimer = undefined;
+    scheduledMessageId = "";
+  }
+
+  function lastOwnerMessageIndex(items: SearchAgentMessage[]) {
+    let ownerIndex = -1;
+    items.forEach((message, index) => {
+      if (message.sender === "owner") ownerIndex = index;
+    });
+    return ownerIndex;
+  }
+
+  function nextPendingMessage() {
+    return trackedMessages.find((message) => pendingMessageIds.has(message.id));
+  }
+
+  function revealDelayedMessage(messageId: string, talkId: string) {
+    if (scheduledMessageId === messageId) {
+      messageDelayTimer = undefined;
+      scheduledMessageId = "";
+    }
+    if (talkId !== trackedTalkId || !pendingMessageIds.has(messageId)) {
+      scheduleNextPendingMessage();
+      return;
+    }
+    const nextPending = new Set(pendingMessageIds);
+    const nextVisible = new Set(visibleMessageIds);
+    nextPending.delete(messageId);
+    nextVisible.add(messageId);
+    markMessageSeen(talkId, messageId);
+    pendingMessageIds = nextPending;
+    visibleMessageIds = nextVisible;
+    void scrollMessagesToBottom();
+    scheduleNextPendingMessage();
+  }
+
+  function scheduleNextPendingMessage() {
+    if (!trackedTalkId || scheduledMessageId) return;
+    const message = nextPendingMessage();
+    if (!message) return;
+    scheduledMessageId = message.id;
+    messageDelayTimer = window.setTimeout(
+      () => revealDelayedMessage(message.id, trackedTalkId),
+      queuedTalkMessageDelayMs(message)
+    );
+  }
+
+  function syncDelayedMessages(talkId: string, items: SearchAgentMessage[]) {
+    if (!talkId) {
+      markVisibleMessagesSeen();
+      clearMessageDelayTimer();
+      trackedTalkId = "";
+      trackedMessages = [];
+      visibleMessageIds = new Set();
+      pendingMessageIds = new Set();
+      return;
+    }
+
+    const itemIds = new Set(items.map((message) => message.id));
+    const ownerIndex = lastOwnerMessageIndex(items);
+    if (talkId !== trackedTalkId) {
+      markVisibleMessagesSeen();
+      clearMessageDelayTimer();
+      trackedTalkId = talkId;
+      trackedMessages = items;
+      const seen = seenMessageIds(talkId);
+      const nextVisible = new Set<string>();
+      const nextPending = new Set<string>();
+      let earlierReplyPending = false;
+      for (const [index, message] of items.entries()) {
+        if (seen.has(message.id)) {
+          nextVisible.add(message.id);
+          continue;
+        }
+        if (shouldQueueTalkMessage(message, index, ownerIndex, earlierReplyPending)) {
+          nextPending.add(message.id);
+          earlierReplyPending = true;
+          continue;
+        }
+        nextVisible.add(message.id);
+        markMessageSeen(talkId, message.id);
+      }
+      visibleMessageIds = nextVisible;
+      pendingMessageIds = nextPending;
+      scheduleNextPendingMessage();
+      return;
+    }
+
+    trackedMessages = items;
+    const nextVisible = new Set([...visibleMessageIds].filter((id) => itemIds.has(id)));
+    const nextPending = new Set([...pendingMessageIds].filter((id) => itemIds.has(id)));
+    let earlierReplyPending = false;
+    if (scheduledMessageId && !nextPending.has(scheduledMessageId)) clearMessageDelayTimer();
+    for (const [index, message] of items.entries()) {
+      if (nextPending.has(message.id)) {
+        earlierReplyPending = true;
+        continue;
+      }
+      if (nextVisible.has(message.id)) continue;
+      if (shouldQueueTalkMessage(message, index, ownerIndex, earlierReplyPending)) {
+        nextPending.add(message.id);
+        earlierReplyPending = true;
+      } else {
+        nextVisible.add(message.id);
+        markMessageSeen(talkId, message.id);
+      }
+    }
+    visibleMessageIds = nextVisible;
+    pendingMessageIds = nextPending;
+    scheduleNextPendingMessage();
+  }
+
+  onDestroy(() => {
+    markVisibleMessagesSeen();
+    clearMessageDelayTimer();
+  });
+
+  async function sendBody(body: string, clearInput: boolean) {
+    if (!body || pending || !composerEnabled) {
       return;
     }
 
     const requestId = crypto.randomUUID();
     const sentAt = new Date().toISOString();
     const userMessage: SearchAgentMessage = {
+      kind: "message",
+      seq: (messages[messages.length - 1]?.seq ?? 0) + 1,
       id: `searchAgent-pending-${requestId}:user`,
-      requestId,
-      role: "user",
+      talkId: talk?.talkId ?? "search_agent",
+      sender: "owner",
       body,
       sentAt
     };
 
     transientMessages = [...transientMessages, userMessage];
-    input = "";
+    if (clearInput) input = "";
     pending = true;
+    sendError = "";
     void scrollMessagesToBottom();
 
     try {
-      const result = await onSearchAgentSearch(body, requestId);
-      if (serverHasRequest(requestId)) {
-        transientMessages = [];
-        return;
+      const result = await onSend(body);
+      if (!result.ok) {
+        if (clearInput && !input) input = body;
+        sendError = result.error ?? "送信に失敗しました。";
       }
-
-      const assistantMessage: SearchAgentMessage = {
-        id: `searchAgent-pending-${requestId}:assistant`,
-        requestId,
-        role: "assistant",
-        body: result.body,
-        results: result.results,
-        sentAt: new Date().toISOString()
-      };
-      transientMessages = [...transientMessages, assistantMessage];
-      void scrollMessagesToBottom();
     } catch {
-      const assistantMessage: SearchAgentMessage = {
-        id: `searchAgent-pending-${requestId}:assistant`,
-        requestId,
-        role: "assistant",
-        body: "検索できませんでした。",
-        results: [],
-        sentAt: new Date().toISOString()
-      };
-      transientMessages = [...transientMessages, assistantMessage];
-      void scrollMessagesToBottom();
+      if (clearInput && !input) input = body;
+      sendError = "送信に失敗しました。";
     } finally {
+      transientMessages = [];
       pending = false;
+      void focusInput();
     }
+  }
+
+  async function sendMessage() {
+    await sendBody(input.trim(), true);
+  }
+
+  async function sendQuickReply(reply: string) {
+    await sendBody(reply, false);
   }
 
   async function openResult(result: SearchAgentSearchResult) {
@@ -256,8 +426,11 @@
       transientMessages = [
         ...transientMessages,
         {
+          kind: "message",
+          seq: (messages[messages.length - 1]?.seq ?? 0) + transientMessages.length + 1,
           id: `searchAgent-open-failed-${crypto.randomUUID()}`,
-          role: "assistant",
+          talkId: talk?.talkId ?? "search_agent",
+          sender: "other",
           body: "このデータはまだ開けないみたい。",
           sentAt: new Date().toISOString()
         }
@@ -269,7 +442,7 @@
   }
 
   function isHomeAppRepairResult(result: SearchAgentSearchResult) {
-    return result.targetKind === "app" || result.contentId === result.appId;
+    return result.targetKind === "app";
   }
 
   function currentAppById(appId: string) {
@@ -313,44 +486,8 @@
     return false;
   }
 
-  function visibleRecordForResult(result: SearchAgentSearchResult) {
-    const groups: Array<readonly unknown[]> = [
-      deviceState.messages,
-      deviceState.photos,
-      deviceState.notes,
-      deviceState.mails,
-      deviceState.calendarEvents,
-      deviceState.callLogs,
-      deviceState.browserTabs,
-      deviceState.radioItems,
-      deviceState.chatThreads
-    ];
-
-    for (const group of groups) {
-      const record = group.find((item) => {
-        const entry = item as { id?: unknown; contentId?: unknown };
-        return entry.contentId === result.contentId || entry.id === result.contentId;
-      });
-      if (record) {
-        return record as { initialState?: string };
-      }
-    }
-
-    return undefined;
-  }
-
   function isRepairableResult(result: SearchAgentSearchResult) {
-    if (result.repairable) {
-      return true;
-    }
-
-    if (isHomeAppRepairResult(result)) {
-      const app = currentAppById(result.appId);
-      return app?.initialState === "repairable" || app?.initialState === "hidden";
-    }
-
-    const record = visibleRecordForResult(result);
-    return record?.initialState === "repairable" || record?.initialState === "hidden";
+    return result.repairable;
   }
 
   function shouldShowRepairBadge(result: SearchAgentSearchResult) {
@@ -380,53 +517,83 @@
 
       <div class="message-list" bind:this={messageListElement} on:scroll={handleMessageListScroll}>
         {#each displayedMessages as message (message.id)}
-          <article class:user={message.role === "user"} class:has-results={Boolean(message.results?.length)}>
-            <p>{message.body}</p>
-            {#if message.results?.length}
-              <div class="result-list" aria-label="検索結果">
-                {#each message.results as result}
-                  {@const app = getAppById(result.appId)}
-                  {@const label = appLabel(result, app)}
-                  {@const title = resultTitle(result, label)}
-                  <button
-                    type="button"
-                    class="result-card"
-                    class:attention={shouldShowRepairBadge(result)}
-                    disabled={openingResult}
-                    on:click={() => openResult(result)}
-                  >
-                    <span class="result-icon" style={`--result-accent: ${app?.accent ?? "#8fd2ff"}`}>
-                      {#if app}
-                        <svelte:component this={app.icon} size={20} strokeWidth={2.2} />
-                      {/if}
-                    </span>
-                    <span class="result-copy">
-                      <span class="result-meta">
-                        <span>{resultSourceLabel(result, label)}</span>
-                        {#if shouldShowRepairBadge(result)}
-                          <span class="result-badge" aria-hidden="true"></span>
+          {#if message.kind === "message" || message.results.length}
+            <article class:user={message.sender === "owner"} class:has-results={message.kind === "search_results"}>
+              {#if message.kind === "message"}
+                <p>{message.body}</p>
+              {:else}
+                <div class="result-list" aria-label="検索結果">
+                  {#each message.results as result}
+                    {@const app = getAppById(result.appId, apps)}
+                    {@const label = appLabel(result, app)}
+                    {@const title = resultTitle(result, label)}
+                    <button
+                      type="button"
+                      class="result-card"
+                      class:attention={shouldShowRepairBadge(result)}
+                      disabled={openingResult}
+                      on:click={() => openResult(result)}
+                    >
+                      <span class="result-icon" style={`--result-accent: ${app?.accent ?? "#8fd2ff"}`}>
+                        {#if app}
+                          <svelte:component this={app.icon} size={20} strokeWidth={2.2} />
                         {/if}
                       </span>
-                      {#if result.thumbnailUrl}
-                        <img src={result.thumbnailUrl} alt="" />
-                      {:else if title}
-                        <strong>{title}</strong>
-                      {/if}
-                    </span>
-                  </button>
-                {/each}
+                      <span class="result-copy">
+                        <span class="result-meta">
+                          <span>{resultSourceLabel(result, label)}</span>
+                          {#if shouldShowRepairBadge(result)}
+                            <span class="result-badge" aria-hidden="true"></span>
+                          {/if}
+                        </span>
+                        {#if result.thumbnailUrl}
+                          <img src={result.thumbnailUrl} alt="" />
+                        {:else if title}
+                          <strong>{title}</strong>
+                        {/if}
+                      </span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </article>
+            {#if quickReplyPlacement?.messageId === message.id}
+              <div class="history-quick-replies">
+                <QuickReplies replies={quickReplyPlacement.replies} accent="#8fd2ff" onSelect={sendQuickReply} />
               </div>
             {/if}
-          </article>
+          {/if}
         {/each}
+        {#if typingVisible}
+          <TypingIndicator variant="search" ariaLabel={pending ? "返答待ち" : "入力中"} />
+        {/if}
       </div>
 
-      <form class="agent-composer" on:submit|preventDefault={sendMessage}>
-        <input bind:this={inputElement} bind:value={input} type="text" aria-label={`${name}検索`} placeholder="端末内の語句を検索" />
-        <button type="submit" aria-label="検索" title="検索" disabled={pending}>
-          <Send size={15} strokeWidth={2.2} />
-        </button>
-      </form>
+      {#if composerVisible || sendError}
+        <div class="agent-controls">
+          {#if sendError}
+            <p class="send-error" role="alert">{sendError}</p>
+          {/if}
+          {#if composerVisible}
+            <div class="composer-area">
+              <form class="agent-composer" on:submit|preventDefault={sendMessage}>
+                <input
+                  bind:this={inputElement}
+                  bind:value={input}
+                  type="text"
+                  maxlength={MAX_SEARCH_AGENT_QUERY_LENGTH}
+                  aria-label={`${name}へ送信`}
+                  placeholder={composerEnabled ? "メッセージを入力" : "送信できません"}
+                  disabled={pending || !composerEnabled}
+                />
+                <button type="submit" aria-label="送信" title="送信" disabled={pending || !composerEnabled || !input.trim()}>
+                  <Send size={15} strokeWidth={2.2} />
+                </button>
+              </form>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -651,6 +818,17 @@
     padding-right: 2px;
   }
 
+  .agent-controls {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .history-quick-replies {
+    min-width: 0;
+    width: 100%;
+  }
+
   .message-list article {
     display: grid;
     justify-self: start;
@@ -806,6 +984,18 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) 38px;
     gap: 8px;
+  }
+
+  .composer-area {
+    display: grid;
+    gap: 6px;
+  }
+
+  .send-error {
+    margin: 0;
+    color: #ffc2bd;
+    font-size: 0.68rem;
+    line-height: 1.4;
   }
 
   .agent-composer input {

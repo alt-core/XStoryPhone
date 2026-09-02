@@ -1,6 +1,7 @@
 <script lang="ts">
   import { House, Play, Radio } from "@lucide/svelte";
-  import type { AssistantMessage, SearchAgentMessage, SearchAgentSearchResponse, SearchAgentSearchResult, DeviceState, IncomingCallItem } from "../scenario-runtime/types";
+  import type { AssistantMessage, SearchAgentSearchResult, SearchAgentTalkView, DeviceState, IncomingCallItem } from "../scenario-runtime/types";
+  import { appCatalog, type AppCatalogItem } from "./appCatalog";
   import SearchAgent from "./SearchAgent.svelte";
   import IncomingCallScreen from "./IncomingCallScreen.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -8,6 +9,7 @@
   type SurfaceMessageMode = "search" | "dismissOnTap";
 
   export let deviceState: DeviceState;
+  export let apps: AppCatalogItem[] = appCatalog;
   export let assistantVisible = false;
   export let assistantSurfaceKey = "home";
   export let assistantSurfaceMessage: AssistantMessage | undefined = undefined;
@@ -17,7 +19,9 @@
   export let backLinkLabel = "";
   export let radioPlaybackActive = false;
   export let searchAgentPeeking = false;
-  export let searchAgentMessages: SearchAgentMessage[] = [];
+  export let searchAgentTalk: SearchAgentTalkView | null = null;
+  export let searchAgentDelayMemoryKey = "";
+  export let searchAgentCloseRequestId = 0;
   export let contentStates: Array<{ contentId: string; state: string; appId: string | null; updatedAt: string }> = [];
   export let incomingCall: IncomingCallItem | undefined = undefined;
   export let osName = "XStoryPhone";
@@ -25,16 +29,15 @@
   export let wallpaperUrl = "";
   export let wallpaperVisible = false;
   export let frameOnly = false;
+  export let presentationEffectActive = false;
   export let onHome: () => void = () => {};
   export let onBackLink: () => void = () => {};
   export let onOpenRadioPlayback: () => void = () => {};
   export let onToggleShade: () => void = () => {};
   export let onCompleteCall: (callId: string) => void = () => {};
-  export let onSearchAgentSearch: (query: string, requestId: string) => Promise<SearchAgentSearchResponse> = async () => ({
+  export let onSearchAgentSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
-    matched: false,
-    body: "検索できませんでした。",
-    results: []
+    error: "送信できません。"
   });
   export let onOpenSearchAgentResult: (result: SearchAgentSearchResult) => boolean | Promise<boolean> = () => false;
 
@@ -44,12 +47,16 @@
 <div class="phone-shell" class:frame-only={frameOnly} aria-label={osName} data-phone-shell>
   <div class="side-key side-key-top"></div>
   <div class="side-key side-key-bottom"></div>
-  <div class="phone-screen" data-phone-screen>
+  <div
+    class="phone-screen"
+    data-phone-screen
+    aria-busy={presentationEffectActive ? "true" : undefined}
+  >
     <div
       class="phone-base"
       class:wallpaper-visible={wallpaperVisible && Boolean(wallpaperUrl)}
       style={wallpaperStyle}
-      inert={Boolean(incomingCall)}
+      inert={Boolean(incomingCall) || presentationEffectActive}
       aria-hidden={incomingCall ? "true" : undefined}
     >
       <StatusBar {deviceState} {shadeOpen} {backLinkLabel} {onToggleShade} {onBackLink} />
@@ -81,17 +88,20 @@
           {/if}
         </div>
       {/if}
-      {#if assistantVisible}
+      {#if assistantVisible && searchAgentTalk}
         <SearchAgent
-          name={searchAgentName}
-          messages={searchAgentMessages}
+          name={searchAgentTalk.label || searchAgentName}
+          {apps}
+          talk={searchAgentTalk}
           {deviceState}
           {contentStates}
+          delayMemoryKey={searchAgentDelayMemoryKey}
+          closeRequestId={searchAgentCloseRequestId}
           peeking={searchAgentPeeking}
           surfaceKey={assistantSurfaceKey}
           surfaceMessage={assistantSurfaceMessage}
           surfaceMessageMode={assistantSurfaceMessageMode}
-          {onSearchAgentSearch}
+          onSend={onSearchAgentSend}
           {onOpenSearchAgentResult}
         />
       {/if}

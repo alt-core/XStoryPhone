@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_player_id ON sessions(player_id);
 
 CREATE TABLE IF NOT EXISTS player_input_events (
   id TEXT PRIMARY KEY,
-  event_type TEXT NOT NULL CHECK (event_type IN ('search', 'talk_send')),
+  event_type TEXT NOT NULL CHECK (event_type = 'talk_send'),
   player_id TEXT NOT NULL,
   request_key TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS player_input_events (
   rule_id TEXT,
   next_from_id TEXT,
   response_snapshot_json TEXT NOT NULL DEFAULT '{}',
-  UNIQUE (event_type, player_id, request_key)
+  UNIQUE (player_id, request_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_input_events_occurred

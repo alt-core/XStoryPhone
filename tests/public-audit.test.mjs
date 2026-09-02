@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { loadAndValidateScenario } from "../scripts/scenario-lib.mjs";
 
 const auditScript = fileURLToPath(new URL("../scripts/audit-public.mjs", import.meta.url));
+const clientAuditScript = fileURLToPath(new URL("../scripts/audit-client-boundary.mjs", import.meta.url));
 
 test("公開監査はデプロイ・CI・環境変数例のテキストも検査する", () => {
   for (const relativePath of ["infra/test.yaml", ".github/test.yml", "infra/test.toml", ".env.example"]) {
@@ -26,5 +28,27 @@ test("公開監査はデプロイ・CI・環境変数例のテキストも検査
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test("クライアント境界監査は会話ruleの未到達値もbuildから検出する", () => {
+  const scenario = loadAndValidateScenario();
+  const protectedValue = scenario.worker.talks
+    .flatMap((talk) => talk.rules)
+    .map((rule) => rule.notes)
+    .find((value) => value.length >= 10);
+  assert.ok(protectedValue);
+
+  const buildDir = mkdtempSync(join(tmpdir(), "xstoryphone-client-audit-"));
+  try {
+    writeFileSync(join(buildDir, "leak.js"), JSON.stringify(protectedValue));
+    const result = spawnSync(process.execPath, [clientAuditScript, buildDir], {
+      cwd: process.cwd(),
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /未到達シナリオ値がclient buildへ混入/u);
+  } finally {
+    rmSync(buildDir, { recursive: true, force: true });
   }
 });

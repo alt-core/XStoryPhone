@@ -43,7 +43,7 @@
           <span class="icon-surface" style={`--accent: ${app.accent}`}>
             {#if app.available}
               <svelte:component this={app.icon} size={25} strokeWidth={2.1} />
-              {#if unreadAppIdSet.has(app.id)}
+              {#if unreadAppIdSet.has(app.id) || app.badge}
                 <span class="app-unread-dot" aria-hidden="true"></span>
               {/if}
             {:else}
@@ -64,7 +64,7 @@
       <ul class="todo-list">
         {#each notificationItems as notification}
           <li class="todo-notification">
-            <NotificationCard {notification} variant="todo" onSelect={() => onOpenNotification(notification.id)} />
+            <NotificationCard {notification} {apps} variant="todo" onSelect={() => onOpenNotification(notification.id)} />
           </li>
         {/each}
         {#each todoItems as todo}

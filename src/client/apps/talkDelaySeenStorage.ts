@@ -1,4 +1,5 @@
 export type SeenMessageIdsByThread = Record<string, Set<string>>;
+type TalkDelayScope = "messages" | "chat" | "search_agent";
 
 const STORAGE_KEY = "xstoryphone.talk-delay-seen";
 const STORAGE_VERSION = 1;
@@ -31,8 +32,8 @@ function stableHash(value: string) {
   return (hash >>> 0).toString(36);
 }
 
-function scopeKey(appId: "messages" | "chat", memoryKey: string) {
-  return `${appId}:${stableHash(memoryKey || "local")}`;
+function scopeKey(scope: TalkDelayScope, memoryKey: string) {
+  return `${scope}:${stableHash(memoryKey || "local")}`;
 }
 
 function readStore(): StoredTalkDelaySeen {
@@ -132,25 +133,25 @@ function mergeSeenMessages(base: SeenMessageIdsByThread, extra: SeenMessageIdsBy
   return merged;
 }
 
-export function loadTalkDelaySeenMessages(appId: "messages" | "chat", memoryKey: string): SeenMessageIdsByThread {
-  clearedScopeKeys.delete(scopeKey(appId, memoryKey));
+export function loadTalkDelaySeenMessages(scope: TalkDelayScope, memoryKey: string): SeenMessageIdsByThread {
+  clearedScopeKeys.delete(scopeKey(scope, memoryKey));
   const store = readStore();
-  return seenMessagesFromStoredScope(store.scopes?.[scopeKey(appId, memoryKey)]);
+  return seenMessagesFromStoredScope(store.scopes?.[scopeKey(scope, memoryKey)]);
 }
 
-export function saveTalkDelaySeenMessages(appId: "messages" | "chat", memoryKey: string, seenMessages: SeenMessageIdsByThread) {
+export function saveTalkDelaySeenMessages(scope: TalkDelayScope, memoryKey: string, seenMessages: SeenMessageIdsByThread) {
   const store = readStore();
-  const key = scopeKey(appId, memoryKey);
+  const key = scopeKey(scope, memoryKey);
   if (clearedScopeKeys.has(key)) {
     return;
   }
 
   const scopes = { ...(store.scopes ?? {}) };
-  const scope = storedScopeFromSeenMessages(mergeSeenMessages(seenMessagesFromStoredScope(scopes[key]), seenMessages));
+  const storedScope = storedScopeFromSeenMessages(mergeSeenMessages(seenMessagesFromStoredScope(scopes[key]), seenMessages));
 
   delete scopes[key];
-  if (Object.keys(scope).length) {
-    scopes[key] = scope;
+  if (Object.keys(storedScope).length) {
+    scopes[key] = storedScope;
   }
 
   writeStore({
@@ -168,9 +169,12 @@ export function clearTalkDelaySeenMessagesForMemoryKey(memoryKey: string | undef
   const scopes = { ...(store.scopes ?? {}) };
   const messagesScopeKey = scopeKey("messages", memoryKey);
   const chatScopeKey = scopeKey("chat", memoryKey);
+  const searchAgentScopeKey = scopeKey("search_agent", memoryKey);
   clearedScopeKeys.add(messagesScopeKey);
   clearedScopeKeys.add(chatScopeKey);
+  clearedScopeKeys.add(searchAgentScopeKey);
   delete scopes[messagesScopeKey];
   delete scopes[chatScopeKey];
+  delete scopes[searchAgentScopeKey];
   writeStore({ version: STORAGE_VERSION, scopes });
 }

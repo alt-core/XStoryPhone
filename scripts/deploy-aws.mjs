@@ -32,7 +32,19 @@ const llmParameterOverrides = [
   ["LlmModel", "LLM_MODEL"],
   ["LlmBaseUrl", "LLM_BASE_URL"],
   ["LlmTimeoutMs", "LLM_TIMEOUT_MS"],
-  ["LlmReasoningEffort", "LLM_REASONING_EFFORT"]
+  ["LlmReasoningEffort", "LLM_REASONING_EFFORT"],
+  ["LlmProfileFastModel", "LLM_PROFILE_FAST_MODEL"],
+  ["LlmProfileFastReasoningEffort", "LLM_PROFILE_FAST_REASONING_EFFORT"],
+  ["LlmProfileFastTimeoutMs", "LLM_PROFILE_FAST_TIMEOUT_MS"],
+  ["LlmProfileSuperModel", "LLM_PROFILE_SUPER_MODEL"],
+  ["LlmProfileSuperReasoningEffort", "LLM_PROFILE_SUPER_REASONING_EFFORT"],
+  ["LlmProfileSuperTimeoutMs", "LLM_PROFILE_SUPER_TIMEOUT_MS"],
+  ["LlmProfileUltraModel", "LLM_PROFILE_ULTRA_MODEL"],
+  ["LlmProfileUltraReasoningEffort", "LLM_PROFILE_ULTRA_REASONING_EFFORT"],
+  ["LlmProfileUltraTimeoutMs", "LLM_PROFILE_ULTRA_TIMEOUT_MS"],
+  ["LlmAnalyticsEnabled", "LLM_ANALYTICS_ENABLED"],
+  ["LlmDebugLogs", "LLM_DEBUG_LOGS"],
+  ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"]
 ].flatMap(([parameter, environmentVariable]) => {
   const value = process.env[environmentVariable]?.trim();
   return value ? [`${parameter}=${value}`] : [];

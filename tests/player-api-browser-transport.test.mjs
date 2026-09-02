@@ -8,16 +8,17 @@ test("browserモードのplayer APIは進行tokenと操作を共通JSON bodyで�
   assert.equal(refresh.headers["x-xstoryphone-progress"], undefined);
   assert.deepEqual(JSON.parse(refresh.body), { progressToken: "signed-progress" });
 
-  const search = browserPlayerRequestInit({
+  const talk = browserPlayerRequestInit({
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query: "古いメモ", requestId: "request-1" })
+    body: JSON.stringify({ talkId: "t_search_agent", turnKey: "turn-1", message: "古いメモ" })
   }, "signed-progress");
-  assert.equal(search.method, "POST");
-  assert.equal(search.headers["x-xstoryphone-progress"], undefined);
-  assert.deepEqual(JSON.parse(search.body), {
-    query: "古いメモ",
-    requestId: "request-1",
+  assert.equal(talk.method, "POST");
+  assert.equal(talk.headers["x-xstoryphone-progress"], undefined);
+  assert.deepEqual(JSON.parse(talk.body), {
+    talkId: "t_search_agent",
+    turnKey: "turn-1",
+    message: "古いメモ",
     progressToken: "signed-progress"
   });
 });

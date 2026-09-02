@@ -99,14 +99,11 @@ function cleanAnalysisClusters(value: unknown) {
 }
 
 function inputReviewFilters(c: AppContext) {
-  const rawType = c.req.query("eventType");
-  const eventType: "search" | "talk_send" | undefined = rawType === "search" || rawType === "talk_send" ? rawType : undefined;
   const playerId = cleanId(c.req.query("playerId"), 160);
   const talkId = cleanId(c.req.query("talkId"), 160);
   const query = cleanMessage(c.req.query("q"), 200);
   const limit = Math.max(1, Math.min(500, Number.parseInt(c.req.query("limit") ?? "100", 10) || 100));
   return {
-    ...(eventType ? { eventType } : {}),
     ...(playerId ? { playerId } : {}),
     ...(talkId ? { talkId } : {}),
     ...(query ? { query } : {}),
@@ -144,9 +141,9 @@ export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const items = await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
     const rows = [
-      ["occurred_at", "event_type", "user_input", "matched", "talk_id", "from_id", "rule_id", "next_from_id", "player_id", "response_snapshot_json"],
+      ["occurred_at", "user_input", "matched", "talk_id", "from_id", "rule_id", "next_from_id", "player_id", "response_snapshot_json"],
       ...items.map((item) => [
-        item.occurredAt, item.eventType, item.userInput, item.matched, item.talkId, item.fromId, item.ruleId,
+        item.occurredAt, item.userInput, item.matched, item.talkId, item.fromId, item.ruleId,
         item.nextFromId, item.playerId, JSON.stringify(item.responseSnapshot)
       ])
     ];

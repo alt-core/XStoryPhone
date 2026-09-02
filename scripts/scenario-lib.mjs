@@ -4,18 +4,96 @@ import path from "node:path";
 import { evaluateCondition, validateConditionExpression, validateStateAssignments } from "../src/shared/condition.ts";
 import { parseTalkMatchSpec } from "../src/shared/talkMatch.ts";
 import { parseStoryDate } from "../src/shared/storyDate.ts";
-import { collectScopedTalkBlocks, resolveScopedTalkBlockId } from "./lib/talk-blocks.mjs";
+import { APP_REGISTRY } from "../src/shared/appRegistry.ts";
+import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../src/shared/searchAgent.ts";
+import {
+  CORE_SCENARIO_HOOK_EVENTS,
+  coreScenarioHookEventMetadata
+} from "../src/shared/scenarioHookEvents.ts";
+import { projectApps } from "../src/project/apps.ts";
+import { parseTalkFlowRegexCriteria } from "../src/worker/product/talkFlowLlmSelection.ts";
+import { collectScopedTalkBlocks, isRepeatTalkBlockId, resolveScopedTalkBlockId } from "./lib/talk-blocks.mjs";
+import {
+  outputStepNextFromKey,
+  parseTalkOutputSteps
+} from "./lib/talk-output-steps.mjs";
+import { collectClientImportGraph } from "./lib/client-import-graph.mjs";
+import { clientRevisionFor, transcriptRevisionFor } from "./lib/scenario-revisions.mjs";
+import { activeRows, inheritColumns, loadTsvSheet } from "./lib/tsv-utils.mjs";
 
 const rootDir = process.cwd();
-const scenarioDir = path.join(rootDir, "scenario/demo");
+const engineRootDir = path.resolve(import.meta.dirname, "..");
+const configuredScenarioDir = String(process.env.XSTORYPHONE_SCENARIO_DIR ?? "scenario/demo").trim() || "scenario/demo";
+const scenarioDir = path.resolve(rootDir, configuredScenarioDir);
 const scenarioPath = path.join(scenarioDir, "scenario.json");
 const talkFlowPath = path.join(scenarioDir, "authoring/talk_flow.tsv");
 const talkBlocksPath = path.join(scenarioDir, "authoring/talk_blocks.tsv");
 const idPattern = /^[a-z][a-z0-9_-]*$/u;
-const supportedAppIds = new Set(["phone", "messages", "photos", "chat", "notes", "mail", "calendar", "radio", "browser"]);
+const engineAppIds = new Set(APP_REGISTRY.map((app) => app.id));
+const projectAppById = new Map(projectApps.map((app) => [app.id, app]));
+const supportedAppIds = new Set([...engineAppIds, ...projectAppById.keys()]);
 const initialStates = new Set(["normal", "repairable", "hidden"]);
 const systemStateVariableIds = new Set(["os_date", "os_time_label"]);
-const reservedStateVariableIds = new Set([...systemStateVariableIds, "player_input"]);
+const searchOutputStateDefinitions = {
+  search_found: { type: "boolean" },
+  search_result_count: { type: "integer" }
+};
+const MAX_TALK_INPUT_LENGTH = 500;
+const reservedStateVariableIds = new Set([
+  ...systemStateVariableIds,
+  "player_input",
+  ...Object.keys(searchOutputStateDefinitions)
+]);
+const talkFlowHeaders = ["comment", "talk", "from", "cond", "intent", "criteria", "example", "match", "next", "mode", "set", "notes"];
+const talkBlockHeaders = ["comment", "sender", "body", "attachment", "time", "delay_ms", "notes", "updated_at", "source", "quick_replies"];
+
+function validateTsvHeaders(label, headers, expected, errors) {
+  const actual = new Set(headers);
+  for (const header of expected) {
+    if (!actual.has(header)) errors.push(`${label}: 必須headerがありません: ${header}`);
+  }
+  for (const header of headers) {
+    if (!expected.includes(header)) errors.push(`${label}: 未知または廃止済みのheaderです: ${header}`);
+  }
+}
+
+function validateObjectKeys(label, value, allowed, errors) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) errors.push(`${label}: 未知のkeyです: ${key}`);
+  }
+}
+
+function validateTextLength(label, value, maxLength, errors) {
+  if (typeof value === "string" && value.length > maxLength) {
+    errors.push(`${label} は${maxLength}文字以内にしてください。`);
+  }
+}
+
+function validateUniqueItems(label, items, errors) {
+  const seen = new Set();
+  for (const item of items) {
+    const id = String(item?.id ?? "");
+    if (!idPattern.test(id)) errors.push(`${label} id が不正です: ${id}`);
+    else if (seen.has(id)) errors.push(`${label} id が重複しています: ${id}`);
+    seen.add(id);
+  }
+}
+
+function sourceSnapshot(files) {
+  return files.map((file) => {
+    const target = path.join(engineRootDir, file);
+    return [file, fs.readFileSync(target, "utf8")];
+  });
+}
+
+function clientSourceSnapshot() {
+  const graph = collectClientImportGraph(engineRootDir);
+  return graph.files
+    .map((file) => path.relative(engineRootDir, file))
+    .filter((file) => !file.startsWith("src/client/generated/") && !file.startsWith("src/generated/"))
+    .map((file) => [file, fs.readFileSync(path.join(engineRootDir, file), "utf8")]);
+}
 
 function stateVariableConfigurationFor(source, errors = []) {
   const values = {};
@@ -34,7 +112,7 @@ function stateVariableConfigurationFor(source, errors = []) {
       }
       const valuesList = Array.isArray(raw.values) ? raw.values : [];
       const initialValid = type === "boolean" ? typeof initial === "boolean"
-        : type === "integer" ? Number.isInteger(initial)
+        : type === "integer" ? Number.isSafeInteger(initial)
           : typeof initial === "string";
       if (!initialValid) errors.push(`stateVariables.${id}.initial が${type}型ではありません。`);
       if (type === "enum") {
@@ -54,7 +132,7 @@ function stateVariableConfigurationFor(source, errors = []) {
     }
     const type = typeof raw === "boolean" ? "boolean"
       : typeof raw === "string" ? "string"
-        : Number.isInteger(raw) ? "integer" : null;
+        : Number.isSafeInteger(raw) ? "integer" : null;
     if (!type) {
       errors.push(`stateVariables.${id} はboolean、整数、文字列、または型定義objectにしてください。`);
       continue;
@@ -73,57 +151,25 @@ function stateVariablesFor(source) {
   return stateVariableConfigurationFor(source).values;
 }
 
-function parseTsv(source, label) {
-  const rows = [];
-  let row = [];
-  let cell = "";
-  let quoted = false;
-
-  for (let index = 0; index <= source.length; index += 1) {
-    const char = source[index] ?? "\n";
-    if (quoted) {
-      if (char === '"' && source[index + 1] === '"') {
-        cell += '"';
-        index += 1;
-      } else if (char === '"') {
-        quoted = false;
-      } else {
-        cell += char;
-      }
-      continue;
-    }
-    if (char === '"' && cell === "") {
-      quoted = true;
-    } else if (char === "\t") {
-      row.push(cell);
-      cell = "";
-    } else if (char === "\n") {
-      row.push(cell.replace(/\r$/u, ""));
-      if (row.some((value) => value.trim())) {
-        rows.push(row);
-      }
-      row = [];
-      cell = "";
-    } else {
-      cell += char;
-    }
-  }
-
-  if (quoted) {
-    throw new Error(`${label} の引用符が閉じていません。`);
-  }
-  const [headers, ...values] = rows;
-  if (!headers) {
-    throw new Error(`${label} が空です。`);
-  }
-  return values.map((cells, index) => ({
-    __rowNumber: index + 2,
-    ...Object.fromEntries(headers.map((header, column) => [header.trim(), cells[column] ?? ""]))
-  }));
-}
-
 function splitList(value) {
   return String(value ?? "").split(/\r?\n|;/u).map((item) => item.trim()).filter(Boolean);
+}
+
+function quickRepliesFromCell(value, label, errors) {
+  const source = String(value ?? "");
+  if (!source) return [];
+  const replies = source.split(/\r?\n/u).map((item) => item.trim().normalize("NFC"));
+  if (replies.some((item) => !item)) {
+    errors.push(`${label}: quick_replies に空の選択肢を含められません。`);
+  }
+  const seen = new Set();
+  for (const reply of replies) {
+    if (seen.has(reply)) errors.push(`${label}: quick_replies が重複しています: ${reply}`);
+    seen.add(reply);
+    validateTextLength(`${label}: quick_replies`, reply, MAX_TALK_INPUT_LENGTH, errors);
+    validateTemplateSyntax(`${label}: quick_replies`, reply, errors);
+  }
+  return replies.filter(Boolean);
 }
 
 function normalizeSearchTerms(value) {
@@ -171,7 +217,7 @@ function parseMessageLinkTarget(value) {
   };
 }
 
-function messageBody(value) {
+function messageBody(value, onInvalidLink = () => {}) {
   const body = String(value ?? "");
   const segments = [];
   const linkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
@@ -185,6 +231,7 @@ function messageBody(value) {
       hasLink = true;
       segments.push({ kind: "link", text: match[1], ...target });
     } else {
+      onInvalidLink(match[2]);
       segments.push({ kind: "text", text: match[0] });
     }
     cursor = index + match[0].length;
@@ -193,27 +240,46 @@ function messageBody(value) {
   return hasLink ? { body: segments.map((segment) => segment.text).join(""), segments } : { body };
 }
 
-function regexCriteriaError(criteria) {
-  const source = criteria.trim();
-  if (!source.startsWith("/")) return null;
-  let escaped = false;
-  let inClass = false;
-  let end = -1;
-  for (let index = 1; index < source.length; index += 1) {
-    const char = source[index];
-    if (escaped) escaped = false;
-    else if (char === "\\") escaped = true;
-    else if (char === "[") inClass = true;
-    else if (char === "]") inClass = false;
-    else if (char === "/" && !inClass) end = index;
+function templateReferences(value) {
+  const source = String(value ?? "");
+  const keys = [];
+  const errors = [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    const start = source.indexOf("{{", cursor);
+    if (start < 0) break;
+    const end = source.indexOf("}}", start + 2);
+    if (end < 0) {
+      errors.push("閉じる }} がありません。");
+      break;
+    }
+    const key = source.slice(start + 2, end);
+    if (!/^[a-zA-Z0-9_]+$/u.test(key)) {
+      errors.push(`placeholderの識別子が不正です: {{${key}}}`);
+    } else {
+      keys.push(key);
+    }
+    cursor = end + 2;
   }
-  if (end < 1) return "正規表現を閉じる / がありません。";
-  try {
-    new RegExp(source.slice(1, end), source.slice(end + 1));
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+  return { keys, errors };
+}
+
+function templateKeys(value) {
+  return templateReferences(value).keys;
+}
+
+function validateTemplateSyntax(label, value, errors) {
+  for (const error of templateReferences(value).errors) {
+    errors.push(`${label}: template構文が不正です: ${error}`);
   }
+}
+
+function blockTemplateKeys(block) {
+  return [...new Set((block?.messages ?? []).flatMap((message) => [
+    ...templateKeys(message.body),
+    ...(message.segments ?? []).flatMap((segment) => segment.kind === "text" ? templateKeys(segment.text) : []),
+    ...(message.quickReplies ?? []).flatMap(templateKeys)
+  ]))];
 }
 
 function stableId(namespace, value) {
@@ -222,6 +288,43 @@ function stableId(namespace, value) {
 
 function splitAssignments(value) {
   return String(value ?? "").split(";").map((item) => item.trim()).filter(Boolean);
+}
+
+function validateTalkInputOutputShape(label, steps, errors) {
+  const inputSteps = steps.flatMap((step, index) => step.kind === "input" ? [{ action: step.action, index }] : []);
+  const firstContentIndex = steps.findIndex((step) => step.kind !== "input");
+  const lastContentIndex = steps.findLastIndex((step) => step.kind !== "input");
+  for (const action of ["show", "hide", "enable", "disable"]) {
+    if (inputSteps.filter((step) => step.action === action).length > 1) {
+      errors.push(`${label}: /input ${action} は一つのstep列に1件までです。`);
+    }
+  }
+  for (const action of ["hide", "disable"]) {
+    const step = inputSteps.find((item) => item.action === action);
+    if (step && firstContentIndex >= 0 && step.index > firstContentIndex) {
+      errors.push(`${label}: /input ${action} は表示stepより前に置いてください。`);
+    }
+  }
+  for (const action of ["show", "enable"]) {
+    const step = inputSteps.find((item) => item.action === action);
+    if (step && lastContentIndex >= 0 && step.index < lastContentIndex) {
+      errors.push(`${label}: /input ${action} は表示stepより後に置いてください。`);
+    }
+  }
+  for (const [offAction, onAction] of [["hide", "show"], ["disable", "enable"]]) {
+    const off = inputSteps.find((step) => step.action === offAction);
+    const on = inputSteps.find((step) => step.action === onAction);
+    if (off && on && off.index > on.index) {
+      errors.push(`${label}: /input ${onAction} の後に ${offAction} は置けません。`);
+    } else if (off && on && !steps.slice(off.index + 1, on.index).some((step) => step.kind !== "input")) {
+      errors.push(`${label}: /input ${offAction} と ${onAction} の間には表示stepを置いてください。`);
+    }
+  }
+}
+
+function validateSearchAgentOutputShape(label, steps, errors) {
+  const searches = steps.filter((step) => step.kind === "search");
+  if (searches.length > 1) errors.push(`${label}: /search は一つのnextのstep列に1件までです。`);
 }
 
 function validateCondition(label, value, stateVariableDefinitions, errors) {
@@ -241,6 +344,7 @@ function validateProject(project, playerMode, errors) {
     if (typeof project?.[key] !== "string" || !project[key].trim()) {
       errors.push(`project.${key} は空でない文字列にしてください。`);
     }
+    validateTextLength(`project.${key}`, project?.[key], 1_200, errors);
   }
   if (!Number.isInteger(project?.batteryLevel) || project.batteryLevel < 0 || project.batteryLevel > 100) {
     errors.push("project.batteryLevel は0から100の整数にしてください。");
@@ -253,6 +357,7 @@ function validateProject(project, playerMode, errors) {
     errors.push("project.lockScreen はobjectにしてください。");
     return;
   }
+  validateObjectKeys("project.lockScreen", lockScreen, ["method", "pin"], errors);
   if (!new Set(["player-passcode", "fixed-pin", "none"]).has(lockScreen.method)) {
     errors.push("project.lockScreen.method は player-passcode、fixed-pin、none のいずれかにしてください。");
   } else if (lockScreen.method === "player-passcode" && playerMode === "browser") {
@@ -285,8 +390,23 @@ function validateCallTranscript(label, value, errors) {
       errors.push(`${label} はatMsの昇順にしてください。`);
       break;
     }
+    validateTextLength(`${label}[${index}].text`, cue.text, 600, errors);
     previousAtMs = cue.atMs;
   }
+}
+
+function cueAtMs(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value * 1_000);
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (/^\d+(?:\.\d+)?$/u.test(trimmed)) return Math.round(Number(trimmed) * 1_000);
+  const parts = trimmed.split(":");
+  if (parts.length < 2 || parts.length > 3 || parts.some((part) => !/^\d+(?:\.\d+)?$/u.test(part))) return null;
+  const seconds = Number(parts.at(-1));
+  const minutes = Number(parts.at(-2));
+  const hours = parts.length === 3 ? Number(parts[0]) : 0;
+  if (seconds >= 60 || (parts.length === 3 && minutes >= 60)) return null;
+  return Math.round((hours * 3_600 + minutes * 60 + seconds) * 1_000);
 }
 
 function isRootRelativeUrl(value) {
@@ -316,9 +436,19 @@ function validateRecord(content, errors) {
   if (content.appId === "mail" && record.cc !== undefined && typeof record.cc !== "string") {
     errors.push(`${content.id}: record.cc は文字列にしてください。`);
   }
+  if (content.appId === "mail") {
+    for (const key of ["from", "to", "cc"]) validateTextLength(`${content.id}: record.${key}`, record[key], 80, errors);
+    validateTextLength(`${content.id}: record.subject`, record.subject, 200, errors);
+    validateTextLength(`${content.id}: record.body`, record.body, 4_000, errors);
+  }
+  if (content.appId === "notes") validateTextLength(`${content.id}: record.body`, record.body, 4_000, errors);
+  if (content.appId === "browser") validateTextLength(`${content.id}: record.title`, record.title, 200, errors);
   if (["notes", "photos"].includes(content.appId) && record.tags !== undefined) {
     if (!Array.isArray(record.tags) || record.tags.some((tag) => typeof tag !== "string" || !tag.trim())) {
       errors.push(`${content.id}: record.tags は文字列の配列にし、空文字を含めないでください。`);
+    }
+    for (const [index, tag] of (Array.isArray(record.tags) ? record.tags : []).entries()) {
+      validateTextLength(`${content.id}: record.tags[${index}]`, tag, 80, errors);
     }
   }
   if (content.appId === "photos" && record.mediaKind !== undefined) {
@@ -336,6 +466,9 @@ function validateRecord(content, errors) {
     errors.push(`${content.id}: record.date は YYYY-MM-DD 形式の実在する日付にしてください。`);
   }
   if (content.appId === "phone") {
+    if (!new Set(["incoming", "missed", "outgoing", "voicemail"]).has(record.kind)) {
+      errors.push(`${content.id}: record.kind は incoming、missed、outgoing、voicemail のいずれかにしてください。`);
+    }
     validateCallTranscript(`${content.id}: record.transcript`, record.transcript, errors);
   }
   if (content.appId === "radio") {
@@ -378,6 +511,7 @@ function deviceStateFor(source, publicIds, revision) {
       icon: app.icon,
       accent: app.accent,
       available: app.initialState === "normal",
+      ...(String(app.badgeCond ?? "").trim() && evaluateCondition(String(app.badgeCond), initialState) ? { badge: true } : {}),
       ...(app.initialState !== "normal" ? { initialState: app.initialState, repairLabel: app.repairLabel ?? app.label } : {})
     })),
     messages: [],
@@ -397,10 +531,38 @@ function deviceStateFor(source, publicIds, revision) {
 export function loadAndValidateScenario() {
   const errors = [];
   const source = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
-  const rawRules = parseTsv(fs.readFileSync(talkFlowPath, "utf8"), "talk_flow.tsv")
-    .filter((row) => !String(row.comment ?? "").trim().startsWith(";"));
-  const rawBlocks = parseTsv(fs.readFileSync(talkBlocksPath, "utf8"), "talk_blocks.tsv");
-  const blockScope = collectScopedTalkBlocks(rawBlocks, errors);
+  const talkFlowSheet = loadTsvSheet(talkFlowPath, { trimHeaders: true, normalizeNewlines: true });
+  const talkBlocksSheet = loadTsvSheet(talkBlocksPath, { trimHeaders: true, normalizeNewlines: true });
+  validateTsvHeaders("talk_flow.tsv", talkFlowSheet.headers, talkFlowHeaders, errors);
+  validateTsvHeaders("talk_blocks.tsv", talkBlocksSheet.headers, talkBlockHeaders, errors);
+  const rawRules = activeRows(inheritColumns(talkFlowSheet.rows, ["talk", "from"]));
+  const rawBlocks = talkBlocksSheet.rows;
+  const blockScope = collectScopedTalkBlocks(rawBlocks, { onError: (error) => errors.push(error) });
+
+  validateObjectKeys("scenario", source, [
+    "schemaVersion", "playerMode", "features", "project", "stateVariables", "publicStateVariables",
+    "photoDescriptions", "apps", "contents", "talkPeople", "attachments", "talks", "todos",
+    "notifications", "assistantMessages", "chatAuthGate", "generatedAudio",
+    "incomingCalls", "initialSchedules", "clientCallableEvents", "hooks"
+  ], errors);
+  validateObjectKeys("features", source.features, ["llm"], errors);
+  if (source.features?.llm !== undefined && typeof source.features.llm !== "boolean") {
+    errors.push("features.llm はbooleanにしてください。");
+  }
+  validateObjectKeys("project", source.project, [
+    "id", "name", "osName", "assistantName", "accentColor", "lockScreen", "date", "timeLabel",
+    "batteryLevel", "signalLabel", "wallpaperUrl"
+  ], errors);
+  const seenProjectAppIds = new Set();
+  for (const app of projectApps) {
+    if (app.id === "search_agent" || !idPattern.test(app.id) || engineAppIds.has(app.id) || seenProjectAppIds.has(app.id)) {
+      errors.push(`project app idが不正、予約済み、または重複しています: ${app.id}`);
+    }
+    if (typeof app.icon !== "string" || !app.icon.trim()) errors.push(`${app.id}: project app iconが必要です。`);
+    const componentPath = path.join(engineRootDir, `src/project/apps/${app.id}/App.svelte`);
+    if (!fs.existsSync(componentPath)) errors.push(`${app.id}: 規約componentがありません: src/project/apps/${app.id}/App.svelte`);
+    seenProjectAppIds.add(app.id);
+  }
 
   if (source.schemaVersion !== 1) errors.push("schemaVersion は 1 にしてください。");
   const playerMode = source.playerMode ?? "server";
@@ -435,41 +597,109 @@ export function loadAndValidateScenario() {
   const apps = Array.isArray(source.apps) ? source.apps : [];
   const appIds = new Set();
   for (const app of apps) {
-    if (!idPattern.test(app?.id ?? "") || !supportedAppIds.has(app.id)) errors.push(`app id が不正です: ${app?.id ?? ""}`);
+    validateObjectKeys(`app ${app?.id ?? ""}`, app, ["id", "label", "repairLabel", "icon", "accent", "initialState", "search", "cond", "badgeCond"], errors);
+    if (app?.id === "search_agent" || !idPattern.test(app?.id ?? "") || !supportedAppIds.has(app.id)) {
+      errors.push(`app id が不正または予約済みです: ${app?.id ?? ""}`);
+    }
     else if (appIds.has(app.id)) errors.push(`app id が重複しています: ${app.id}`);
     appIds.add(app.id);
+    for (const key of ["label", "accent"]) {
+      if (typeof app?.[key] !== "string" || !app[key].trim()) errors.push(`${app?.id ?? "app"}: ${key} が必要です。`);
+    }
+    if (engineAppIds.has(app?.id) && (typeof app?.icon !== "string" || !app.icon.trim())) errors.push(`${app?.id ?? "app"}: icon が必要です。`);
+    validateTextLength(`${app?.id ?? "app"}.label`, app?.label, 24, errors);
+    validateTextLength(`${app?.id ?? "app"}.icon`, app?.icon, 40, errors);
+    validateTextLength(`${app?.id ?? "app"}.accent`, app?.accent, 16, errors);
+    validateTextLength(`${app?.id ?? "app"}.repairLabel`, app?.repairLabel, 24, errors);
     if (!initialStates.has(app?.initialState)) errors.push(`${app?.id ?? "app"}: initialState が不正です。`);
     if (app?.initialState !== "normal" && !app?.repairLabel) errors.push(`${app?.id ?? "app"}: repairLabel が必要です。`);
-    validateSearchTerms(app?.id ?? "app", app?.search, errors);
+    validateSearchTerms(app?.id ?? "app", app?.search ?? [], errors, false);
     validateCondition(`app ${app?.id ?? ""}`, app?.cond, stateVariableDefinitions, errors);
+    validateCondition(`app ${app?.id ?? ""}.badgeCond`, app?.badgeCond, stateVariableDefinitions, errors);
   }
 
-  const talks = Array.isArray(source.talks) ? source.talks : [];
+  const sourceTalks = Array.isArray(source.talks) ? source.talks : [];
+  const talks = sourceTalks.filter((talk) => talk?.kind !== "search_agent" && talk?.id !== "search_agent");
+  const searchAgentTalks = sourceTalks.filter((talk) => talk?.kind === "search_agent" || talk?.id === "search_agent");
+  const searchAgentSource = searchAgentTalks.find((talk) => talk?.id === "search_agent" && talk?.kind === "search_agent") ?? null;
+  const deviceTalkIds = new Set(talks.map((talk) => talk?.id).filter(Boolean));
   const talkIds = new Set();
-  for (const talk of talks) {
+  for (const talk of sourceTalks) {
+    const searchAgent = talk?.id === "search_agent" || talk?.kind === "search_agent";
+    validateObjectKeys(
+      `talk ${talk?.id ?? ""}`,
+      talk,
+      searchAgent
+        ? ["id", "kind", "inputVisible", "inputEnabled", "startSteps"]
+        : ["id", "kind", "appId", "label", "avatarUrl", "initialState", "repairLabel", "search", "cond", "inputVisible", "inputEnabled", "startBlocks"],
+      errors
+    );
     if (!idPattern.test(talk?.id ?? "")) errors.push(`talk id が不正です: ${talk?.id ?? ""}`);
     else if (talkIds.has(talk.id)) errors.push(`talk id が重複しています: ${talk.id}`);
     talkIds.add(talk.id);
+    for (const key of ["inputVisible", "inputEnabled"]) {
+      if (talk?.[key] !== undefined && typeof talk[key] !== "boolean") {
+        errors.push(`${talk?.id ?? "talk"}: ${key} はbooleanにしてください。`);
+      }
+    }
+    if (searchAgent) {
+      if (talk?.id !== "search_agent" || talk?.kind !== "search_agent") {
+        errors.push("検索AI talkは id と kind をともに search_agent にしてください。");
+      }
+      if (!Array.isArray(talk?.startSteps) || !talk.startSteps.length) {
+        errors.push("search_agent: startSteps は空でない文字列配列にしてください。");
+      }
+      continue;
+    }
     if ((talk.kind !== "sms" && talk.kind !== "chat") || talk.appId !== (talk.kind === "sms" ? "messages" : "chat")) errors.push(`${talk?.id ?? "talk"}: kind と appId の組み合わせが不正です。`);
     if (!talk?.label || !Array.isArray(talk?.startBlocks) || talk.startBlocks.length === 0) {
       errors.push(`${talk?.id ?? "talk"}: label と startBlocks は必須です。`);
     }
+    if (Array.isArray(talk?.startBlocks) && talk.startBlocks.some((block) => typeof block !== "string")) {
+      errors.push(`${talk?.id ?? "talk"}: startBlocks はblock IDの文字列配列にしてください。初期block単位のcondは仕様にありません。`);
+    }
+    const initialState = talk?.initialState ?? "normal";
+    if (!initialStates.has(initialState)) errors.push(`${talk?.id ?? "talk"}: initialState が不正です。`);
+    if (talk?.avatarUrl !== undefined && !isRootRelativeUrl(talk.avatarUrl)) {
+      errors.push(`${talk?.id ?? "talk"}: avatarUrl は / から始まる同一オリジンURLにしてください。`);
+    }
+    if (initialState === "repairable" && talk?.repairLabel !== undefined && (typeof talk.repairLabel !== "string" || !talk.repairLabel.trim())) {
+      errors.push(`${talk?.id ?? "talk"}: repairLabel は空でない文字列にしてください。`);
+    }
+    if (initialState !== "repairable" && talk?.repairLabel !== undefined) {
+      errors.push(`${talk?.id ?? "talk"}: repairLabel は initialState=repairable のtalkだけで使えます。`);
+    }
+    validateTextLength(`${talk?.id ?? "talk"}.repairLabel`, talk?.repairLabel, 80, errors);
+    validateSearchTerms(talk?.id ?? "talk", talk?.search ?? [], errors, false);
     validateCondition(`talk ${talk?.id ?? ""}`, talk?.cond, stateVariableDefinitions, errors);
+  }
+  if (searchAgentTalks.length !== 1 || !searchAgentSource) {
+    errors.push("talksには id=search_agent / kind=search_agent の検索AI talkを1件だけ定義してください。");
   }
 
   const contents = Array.isArray(source.contents) ? source.contents : [];
   const contentIds = new Set();
+  const audioCueTargets = new Set();
   const repairableTalkBlockIds = new Set();
+  const repairableTalkContentIds = new Set();
   for (const content of contents) {
+    validateObjectKeys(`content ${content?.id ?? ""}`, content, ["id", "appId", "initialState", "repairLabel", "search", "cond", "record"], errors);
     if (!idPattern.test(content?.id ?? "")) errors.push(`content id が不正です: ${content?.id ?? ""}`);
     else if (contentIds.has(content.id)) errors.push(`content id が重複しています: ${content.id}`);
+    else if (talkIds.has(content.id)) errors.push(`content id がtalk idと重複しています: ${content.id}`);
     contentIds.add(content.id);
     if (!appIds.has(content?.appId)) errors.push(`${content?.id ?? "content"}: appId が不正です。`);
     if (!initialStates.has(content?.initialState)) errors.push(`${content?.id ?? "content"}: initialState が不正です。`);
-    validateSearchTerms(content?.id ?? "content", content?.search, errors);
+    validateTextLength(`${content?.id ?? "content"}.repairLabel`, content?.repairLabel, 80, errors);
+    validateSearchTerms(content?.id ?? "content", content?.search ?? [], errors, false);
     validateCondition(`content ${content?.id ?? ""}`, content?.cond, stateVariableDefinitions, errors);
     validateRecord(content, errors);
+    const projectApp = projectAppById.get(content?.appId);
+    if (projectApp && content?.record && typeof content.record === "object" && !Array.isArray(content.record)) {
+      projectApp.validateRecord(content.record, (message) => errors.push(`${content.id}: ${message}`));
+    }
     if (content?.appId === "messages" || content?.appId === "chat") {
+      repairableTalkContentIds.add(content.id);
       const record = content?.record && typeof content.record === "object" && !Array.isArray(content.record)
         ? content.record
         : {};
@@ -480,6 +710,8 @@ export function loadAndValidateScenario() {
       }
       if (!talk || talk.appId !== content.appId) {
         errors.push(`${content.id}: record.talk は同じアプリのtalkを指定してください。`);
+      } else if ((talk.initialState ?? "normal") !== "normal") {
+        errors.push(`${content.id}: talk単位のinitialStateと初期履歴block修復は同時に使えません。`);
       } else if (!blockId || !Array.isArray(talk.startBlocks) || talk.startBlocks.filter((item) => item === record.block).length !== 1) {
         errors.push(`${content.id}: record.block は指定talkのstartBlocksに含まれるblockを指定してください。`);
       } else if (repairableTalkBlockIds.has(blockId)) {
@@ -490,26 +722,48 @@ export function loadAndValidateScenario() {
     }
   }
 
-  const talkPeople = Array.isArray(source.talkPeople) ? source.talkPeople : [];
+  const authoredTalkPeople = Array.isArray(source.talkPeople) ? source.talkPeople : [];
   const talkPeopleById = new Map();
-  for (const person of talkPeople) {
+  for (const person of authoredTalkPeople) {
+    validateObjectKeys(`talkPerson ${person?.id ?? ""}`, person, ["id", "name", "role", "avatar"], errors);
     if (!idPattern.test(person?.id ?? "") || !person?.name || !["owner", "npc"].includes(person?.role)) {
       errors.push(`talkPeople が不正です: ${person?.id ?? ""}`);
+      continue;
+    }
+    if (person.id === "search_agent") {
+      errors.push("talkPeople.search_agent はproject.assistantNameから自動生成される予約IDです。");
       continue;
     }
     if (talkPeopleById.has(person.id)) errors.push(`talkPeople id が重複しています: ${person.id}`);
     talkPeopleById.set(person.id, person);
   }
+  const searchAgentPerson = {
+    id: "search_agent",
+    name: source.project?.assistantName ?? "検索AI",
+    role: "npc"
+  };
+  talkPeopleById.set(searchAgentPerson.id, searchAgentPerson);
+  const talkPeople = [...authoredTalkPeople.filter((person) => person?.id !== "search_agent"), searchAgentPerson];
 
   const attachments = Array.isArray(source.attachments) ? source.attachments : [];
   const attachmentsById = new Map();
   for (const attachment of attachments) {
-    if (!idPattern.test(attachment?.id ?? "") || !["image", "audio", "video"].includes(attachment?.type) || !attachment?.asset) {
+    validateObjectKeys(`attachment ${attachment?.id ?? ""}`, attachment, ["id", "type", "asset", "content", "lock", "title", "body", "poster"], errors);
+    const mediaType = ["image", "audio", "video"].includes(attachment?.type);
+    const documentType = attachment?.type === "document";
+    if (!idPattern.test(attachment?.id ?? "") || (!mediaType && !documentType) || (mediaType && !attachment?.asset)) {
       errors.push(`attachment が不正です: ${attachment?.id ?? ""}`);
       continue;
     }
+    if (documentType && (!String(attachment.body ?? "").trim() || attachment.lock !== "password" || !attachment.content)) {
+      errors.push(`${attachment.id}: documentはbody、content、lock=passwordが必要です。`);
+    }
+    validateTextLength(`${attachment?.id ?? "attachment"}.body`, attachment?.body, 4_000, errors);
     if (attachmentsById.has(attachment.id)) errors.push(`attachment id が重複しています: ${attachment.id}`);
     if (attachment.content && !contentIds.has(attachment.content)) errors.push(`${attachment.id}: content が未定義です。`);
+    if (attachment.content && repairableTalkContentIds.has(attachment.content)) {
+      errors.push(`${attachment.id}: talk初期履歴の修復contentをattachment対象にできません。`);
+    }
     if (attachment.lock && attachment.lock !== "password") errors.push(`${attachment.id}: lock が不正です。`);
     attachmentsById.set(attachment.id, attachment);
   }
@@ -525,8 +779,9 @@ export function loadAndValidateScenario() {
     }
   }
 
+  const messageLinkActionIds = new Set();
   const talkBlocks = [...blockScope.blocks.entries()].map(([id, rows]) => {
-    const info = blockScope.infoById.get(id);
+    const info = blockScope.blockInfo.get(id);
     if (!talkIds.has(info?.talkId ?? "")) errors.push(`${id}: 所属talkが未定義です。`);
     return {
       id,
@@ -536,19 +791,39 @@ export function loadAndValidateScenario() {
       messages: rows.map((row, index) => {
         const sender = String(row.sender ?? "").trim();
         const attachmentId = String(row.attachment ?? "").trim();
+        const quickReplies = quickRepliesFromCell(row.quick_replies, `talk_blocks.tsv:${row.__rowNumber}`, errors);
+        const updatedAt = String(row.updated_at ?? "").trim();
+        const authoringSource = String(row.source ?? "").trim();
         if (!talkPeopleById.has(sender)) errors.push(`talk_blocks.tsv:${row.__rowNumber}: sender が未定義です: ${sender}`);
         if (attachmentId && !attachmentsById.has(attachmentId)) errors.push(`talk_blocks.tsv:${row.__rowNumber}: attachment が未定義です: ${attachmentId}`);
         const delayMs = String(row.delay_ms ?? "").trim() ? Number(row.delay_ms) : undefined;
         if (delayMs !== undefined && (!Number.isInteger(delayMs) || delayMs < 0)) {
           errors.push(`talk_blocks.tsv:${row.__rowNumber}: delay_ms は0以上の整数にしてください。`);
         }
+        if (updatedAt && !/^\d{4}-\d{2}-\d{2}$/u.test(updatedAt)) errors.push(`talk_blocks.tsv:${row.__rowNumber}: updated_at は YYYY-MM-DD にしてください。`);
+        if (authoringSource && !["human", "ai", "ai_edited"].includes(authoringSource)) errors.push(`talk_blocks.tsv:${row.__rowNumber}: source は human / ai / ai_edited にしてください。`);
+        if (updatedAt && !authoringSource) errors.push(`talk_blocks.tsv:${row.__rowNumber}: updated_atを使う場合はsourceが必要です。`);
+        if (authoringSource && !updatedAt) errors.push(`talk_blocks.tsv:${row.__rowNumber}: sourceを使う場合はupdated_atが必要です。`);
+        if (quickReplies.length && talkPeopleById.get(sender)?.role !== "npc") {
+          errors.push(`talk_blocks.tsv:${row.__rowNumber}: quick_replies はNPCメッセージだけに指定できます。`);
+        }
+        if (quickReplies.length && index !== rows.length - 1) {
+          errors.push(`talk_blocks.tsv:${row.__rowNumber}: quick_replies はblock最後のメッセージだけに指定できます。`);
+        }
+        validateTextLength(`talk_blocks.tsv:${row.__rowNumber}: body`, String(row.body ?? ""), 1_200, errors);
+        validateTemplateSyntax(`talk_blocks.tsv:${row.__rowNumber}: body`, row.body, errors);
+        validateTextLength(`talk_blocks.tsv:${row.__rowNumber}: notes`, String(row.notes ?? ""), 4_000, errors);
         if (!String(row.body ?? "") && !attachmentId) errors.push(`talk_blocks.tsv:${row.__rowNumber}: body または attachment が必要です。`);
-        const content = messageBody(row.body);
+        const content = messageBody(row.body, (target) => errors.push(`talk_blocks.tsv:${row.__rowNumber}: メッセージリンクが不正です: ${target}`));
         for (const segment of content.segments ?? []) {
           if (segment.kind !== "link" || !("contentId" in segment)) continue;
           const validApp = appIds.has(segment.appId);
-          const validTarget = contentIds.has(segment.contentId) || talkIds.has(segment.contentId);
+          const validTarget = contentIds.has(segment.contentId) || deviceTalkIds.has(segment.contentId);
           if (!validApp || !validTarget) errors.push(`talk_blocks.tsv:${row.__rowNumber}: メッセージリンクの対象が未定義です。`);
+          if (segment.actionId) messageLinkActionIds.add(segment.actionId);
+          if (repairableTalkContentIds.has(segment.contentId)) {
+            errors.push(`talk_blocks.tsv:${row.__rowNumber}: talk初期履歴の修復contentは検索結果から開いてください。`);
+          }
         }
         return {
           id: `${id}_${index + 1}`,
@@ -557,13 +832,27 @@ export function loadAndValidateScenario() {
           attachmentId,
           sentAt: String(row.time ?? "").trim(),
           ...(delayMs === undefined ? {} : { delayMs }),
+          ...(quickReplies.length ? { quickReplies } : {}),
           notes: String(row.notes ?? "").trim(),
-          updatedAt: String(row.updated_at ?? "").trim(),
-          source: String(row.source ?? "").trim()
+          updatedAt,
+          source: authoringSource
         };
       })
     };
   });
+  for (const block of talkBlocks.filter((item) => item.talkId === "search_agent")) {
+    for (const message of block.messages) {
+      if (message.sender !== "search_agent") {
+        errors.push(`${block.talkId}/${block.blockKey}: senderはsearch_agentにしてください。`);
+      }
+      if (message.attachmentId || message.segments?.some((segment) => segment.kind === "link")) {
+        errors.push(`${block.talkId}/${block.blockKey}: search_agentの発話は第一版では本文とQuick Replyだけを使用してください。`);
+      }
+      if (message.sentAt) {
+        errors.push(`${block.talkId}/${block.blockKey}: search_agentの発話時刻は実行時に決まるためtimeを指定できません。`);
+      }
+    }
+  }
   for (const blockId of repairableTalkBlockIds) {
     const block = talkBlocks.find((item) => item.id === blockId);
     if (!block?.messages.length) {
@@ -573,11 +862,16 @@ export function loadAndValidateScenario() {
     if (block.messages.some((message) => !message.sentAt)) {
       errors.push(`${blockId}: 修復対象の初期履歴blockでは全メッセージのtimeを指定してください。`);
     }
+    if (block.messages.some((message) => JSON.stringify({ body: message.body, segments: message.segments }).includes("{{"))) {
+      errors.push(`${blockId}: 修復対象の初期履歴blockではテンプレートを使用できません。`);
+    }
   }
 
   const generatedAudio = Array.isArray(source.generatedAudio) ? source.generatedAudio : [];
+  validateUniqueItems("generatedAudio", generatedAudio, errors);
   const generatedAudioIds = new Set(generatedAudio.map((item) => item.id));
   for (const audio of generatedAudio) {
+    validateObjectKeys(`generatedAudio ${audio?.id ?? ""}`, audio, ["id", "title", "provider"], errors);
     if (!idPattern.test(audio?.id ?? "") || !idPattern.test(audio?.provider ?? "") || !audio?.title) errors.push(`generatedAudio が不正です: ${audio?.id ?? ""}`);
   }
   const formIds = new Set();
@@ -623,6 +917,10 @@ export function loadAndValidateScenario() {
     const cueIds = new Set();
     let previousAtMs = -1;
     for (const [index, cue] of (Array.isArray(record.audioCues) ? record.audioCues : []).entries()) {
+      if (cue && typeof cue === "object" && !Array.isArray(cue) && cue.atMs === undefined && cue.at !== undefined) {
+        cue.atMs = cueAtMs(cue.at);
+        delete cue.at;
+      }
       if (!cue || typeof cue !== "object" || Array.isArray(cue) || !idPattern.test(cue.id ?? "") || !Number.isInteger(cue.atMs) || cue.atMs < 0) {
         errors.push(`${content.id}: record.audioCues[${index}] が不正です。`);
         continue;
@@ -630,6 +928,7 @@ export function loadAndValidateScenario() {
       if (cueIds.has(cue.id)) errors.push(`${content.id}: audio cue id が重複しています: ${cue.id}`);
       if (cue.atMs < previousAtMs) errors.push(`${content.id}: record.audioCues はatMsの昇順にしてください。`);
       cueIds.add(cue.id);
+      audioCueTargets.add(`${content.id}:${cue.id}`);
       previousAtMs = cue.atMs;
     }
   }
@@ -637,6 +936,7 @@ export function loadAndValidateScenario() {
   const incomingCalls = Array.isArray(source.incomingCalls) ? source.incomingCalls : [];
   const incomingCallIds = new Set();
   for (const call of incomingCalls) {
+    validateObjectKeys(`incomingCall ${call?.id ?? ""}`, call, ["id", "name", "audioUrl", "transcript", "cond"], errors);
     if (!idPattern.test(call?.id ?? "") || !call?.name) errors.push(`incomingCall が不正です: ${call?.id ?? ""}`);
     if (incomingCallIds.has(call.id)) errors.push(`incomingCall id が重複しています: ${call.id}`);
     if (call.audioUrl !== undefined && (typeof call.audioUrl !== "string" || !call.audioUrl.trim())) {
@@ -646,33 +946,68 @@ export function loadAndValidateScenario() {
     if (call.transcript !== undefined && !call.audioUrl) {
       errors.push(`${call.id}: incomingCall.transcriptを使う場合はaudioUrlが必要です。`);
     }
+    validateCondition(`${call.id}: incomingCall.cond`, call.cond, stateVariableDefinitions, errors);
     incomingCallIds.add(call.id);
   }
 
   const initialSchedules = Array.isArray(source.initialSchedules) ? source.initialSchedules : [];
   const scheduleIds = new Set();
   for (const schedule of initialSchedules) {
+    validateObjectKeys(`initialSchedule ${schedule?.id ?? ""}`, schedule, ["id", "delayMs", "eventId", "fields"], errors);
     if (!idPattern.test(schedule?.id ?? "") || !idPattern.test(schedule?.eventId ?? "") || !Number.isInteger(schedule?.delayMs) || schedule.delayMs < 0) {
       errors.push(`initialSchedule が不正です: ${schedule?.id ?? ""}`);
     }
     if (scheduleIds.has(schedule.id)) errors.push(`initialSchedule id が重複しています: ${schedule.id}`);
     if (schedule.fields !== undefined && (!schedule.fields || typeof schedule.fields !== "object" || Array.isArray(schedule.fields))) {
       errors.push(`${schedule.id}: fields はobjectにしてください。`);
+    } else if (schedule.fields && Object.values(schedule.fields).some((value) => typeof value !== "string")) {
+      errors.push(`${schedule.id}: fields の値は文字列にしてください。`);
     }
     scheduleIds.add(schedule.id);
   }
 
   const hooks = Array.isArray(source.hooks) ? source.hooks : [];
-  const hookEvents = new Set(["session_started", "content_repaired", "content_opened", "content_unlocked", "talk_sent", "scenario_event"]);
+  const hookEvents = new Set(Object.keys(CORE_SCENARIO_HOOK_EVENTS));
   const hookIds = new Set();
   for (const hook of hooks) {
-    if (!hookEvents.has(hook?.event)) errors.push(`hook event が不正です: ${hook?.event ?? ""}`);
+    validateObjectKeys(`hook ${hook?.handler ?? ""}`, hook, ["event", "target", "handler", "cond", "llm"], errors);
+    if (!hookEvents.has(hook?.event) && !idPattern.test(hook?.event ?? "")) errors.push(`hook event が不正です: ${hook?.event ?? ""}`);
+    if (["scenario_event", "talk_sent"].includes(hook?.event)) errors.push(`${hook.handler}: 廃止済みhook eventです: ${hook.event}`);
     if (!idPattern.test(hook?.handler ?? "")) errors.push(`hook handler id が不正です: ${hook?.handler ?? ""}`);
     hookIds.add(hook.handler);
-    if (["content_repaired", "content_opened", "content_unlocked"].includes(hook.event) && !contentIds.has(hook.target)) errors.push(`${hook.handler}: targetが未定義です。`);
+    const metadata = coreScenarioHookEventMetadata(hook.event);
+    const target = typeof hook.target === "string" ? hook.target.trim() : "";
+    if (metadata?.targetRequired && !target) {
+      errors.push(`${hook.handler}: ${hook.event} のtargetは必須です。`);
+    } else if (metadata?.targetKind === "blocked_app" && target !== "*" && !appIds.has(target)) {
+      errors.push(`${hook.handler}: target appが未定義です。`);
+    } else if (metadata?.targetKind === "content_open" && target
+      && !contentIds.has(target) && !appIds.has(target) && !deviceTalkIds.has(target)) {
+      errors.push(`${hook.handler}: targetが未定義です。`);
+    } else if (metadata?.targetKind === "content" && target && !contentIds.has(target)) {
+      errors.push(`${hook.handler}: content targetが未定義です。`);
+    } else if (metadata?.targetKind === "audio_cue" && target && !audioCueTargets.has(target)) {
+      errors.push(`${hook.handler}: audio cue targetが未定義です。`);
+    } else if (metadata?.targetKind === "incoming_call" && target && !incomingCallIds.has(target)) {
+      errors.push(`${hook.handler}: call targetが未定義です。`);
+    } else if (metadata?.targetKind === "message_action" && target && !/^[a-zA-Z0-9_:-]+$/u.test(target)) {
+      errors.push(`${hook.handler}: message action targetが不正です。`);
+    } else if (metadata?.targetKind === "talk" && target && !talkIds.has(target)) {
+      errors.push(`${hook.handler}: talk targetが未定義です。`);
+    } else if (metadata?.targetKind === "form" && target && !formIds.has(target)) {
+      errors.push(`${hook.handler}: form targetが未定義です。`);
+    } else if (metadata?.targetKind === "schedule" && target && !/^[a-zA-Z0-9_:-]+$/u.test(target)) {
+      errors.push(`${hook.handler}: schedule targetが不正です。`);
+    }
     if (source.features?.llm !== true && hook?.llm === true) errors.push(`${hook.handler}: LLM無効時はllm hookを使用できません。`);
+    if (hook?.llm !== undefined && typeof hook.llm !== "boolean") errors.push(`${hook.handler}: llm はbooleanにしてください。`);
     if (hook?.clientCallable !== undefined) errors.push(`${hook.handler}: clientCallable はhookではなくclientCallableEventsへ指定してください。`);
     validateCondition(`hook ${hook?.handler ?? ""}`, hook?.cond, stateVariableDefinitions, errors);
+  }
+  for (const actionId of messageLinkActionIds) {
+    if (!hooks.some((hook) => hook.event === "message_link_opened" && hook.target === actionId)) {
+      errors.push(`action付きメッセージリンクに対応するhookがありません: ${actionId}`);
+    }
   }
 
   const clientCallableEvents = Array.isArray(source.clientCallableEvents)
@@ -685,32 +1020,80 @@ export function loadAndValidateScenario() {
   for (const eventId of clientCallableEvents) {
     if (!idPattern.test(eventId)) errors.push(`clientCallableEvents のevent idが不正です: ${eventId}`);
     if (seenClientCallableEvents.has(eventId)) errors.push(`clientCallableEvents が重複しています: ${eventId}`);
-    if (!hooks.some((hook) => hook.event === "scenario_event" && hook.target === eventId)) {
-      errors.push(`clientCallableEvents に対応するscenario_event hookがありません: ${eventId}`);
+    if (!hooks.some((hook) => hook.event === eventId)) {
+      errors.push(`clientCallableEvents に対応するcustom event hookがありません: ${eventId}`);
     }
     seenClientCallableEvents.add(eventId);
+  }
+
+  const todoItems = Array.isArray(source.todos) ? source.todos : [];
+  validateUniqueItems("todo", todoItems, errors);
+  for (const todo of todoItems) {
+    validateObjectKeys(`todo ${todo?.id ?? ""}`, todo, ["id", "text", "cond"], errors);
+    if (typeof todo?.text !== "string" || !todo.text.trim()) errors.push(`${todo?.id ?? "todo"}: text が必要です。`);
+    validateTextLength(`${todo?.id ?? "todo"}.text`, todo?.text, 80, errors);
+  }
+
+  const notificationItems = Array.isArray(source.notifications) ? source.notifications : [];
+  validateUniqueItems("notification", notificationItems, errors);
+  for (const notification of notificationItems) {
+    validateObjectKeys(`notification ${notification?.id ?? ""}`, notification, ["id", "appId", "targetTalkId", "targetContentId", "title", "body", "cond"], errors);
+    if (!appIds.has(notification?.appId)) errors.push(`${notification?.id ?? "notification"}: appId が未定義です。`);
+    if (notification?.targetTalkId && !deviceTalkIds.has(notification.targetTalkId)) errors.push(`${notification.id}: targetTalkId が未定義またはアプリに属さないtalkです。`);
+    if (notification?.targetContentId && !contentIds.has(notification.targetContentId) && !appIds.has(notification.targetContentId)) errors.push(`${notification.id}: targetContentId が未定義です。`);
+    if (!notification?.targetTalkId && !notification?.targetContentId) errors.push(`${notification?.id ?? "notification"}: targetTalkId または targetContentId が必要です。`);
+    if (typeof notification?.title !== "string" || !notification.title.trim() || typeof notification?.body !== "string" || !notification.body.trim()) {
+      errors.push(`${notification?.id ?? "notification"}: title と body が必要です。`);
+    }
+    validateTextLength(`${notification?.id ?? "notification"}.body`, notification?.body, 300, errors);
+  }
+
+  const assistantItems = Array.isArray(source.assistantMessages) ? source.assistantMessages : [];
+  validateUniqueItems("assistantMessage", assistantItems, errors);
+  for (const message of assistantItems) {
+    validateObjectKeys(`assistantMessage ${message?.id ?? ""}`, message, ["id", "surface", "body", "weight", "agentAction", "cond"], errors);
+    if (typeof message?.surface !== "string" || !message.surface.trim() || typeof message?.body !== "string" || !message.body.trim()) {
+      errors.push(`${message?.id ?? "assistantMessage"}: surface と body が必要です。`);
+    }
+    if (!Number.isFinite(message?.weight)) errors.push(`${message?.id ?? "assistantMessage"}: weight は数値にしてください。`);
+    validateTextLength(`${message?.id ?? "assistantMessage"}.body`, message?.body, 600, errors);
+  }
+
+  for (const [id, description] of Object.entries(source.photoDescriptions ?? {})) {
+    validateTextLength(`photoDescriptions.${id}`, description, 300, errors);
   }
 
   const rules = rawRules.map((row) => {
     const label = `talk_flow.tsv:${row.__rowNumber}`;
     const order = row.__rowNumber;
+    const talkSource = sourceTalks.find((talk) => talk?.id === row.talk);
+    const searchAgent = talkSource?.kind === "search_agent";
     if (!talkIds.has(row.talk)) errors.push(`${label}: 未定義のtalkです: ${row.talk}`);
     if (!row.from || !row.next) errors.push(`${label}: from と next は必須です。`);
     const isDefault = !String(row.intent ?? "").trim() && !String(row.match ?? "").trim();
     const criteria = String(row.criteria ?? "").trim();
     const match = String(row.match ?? "").trim();
-    if (isDefault && (criteria || match)) errors.push(`${label}: default rule に criteria / match は書けません。`);
+    if (isDefault && match) errors.push(`${label}: default rule に match は書けません。`);
     if (!isDefault && !criteria) errors.push(`${label}: defaultでないruleにはcriteriaが必要です。`);
-    const regexError = regexCriteriaError(criteria);
-    if (regexError) errors.push(`${label}: criteria が不正です: ${regexError}`);
-    if (source.features?.llm !== true && criteria && !criteria.startsWith("/")) errors.push(`${label}: LLM無効時は自然文criteriaを使用できません。`);
+    validateTextLength(`${label}: criteria`, criteria, 2_000, errors);
+    validateTextLength(`${label}: example`, String(row.example ?? ""), 300, errors);
+    validateTemplateSyntax(`${label}: criteria`, criteria, errors);
+    const parsedRegex = parseTalkFlowRegexCriteria(criteria);
+    if (parsedRegex.kind === "invalid") errors.push(`${label}: criteria が不正です: ${parsedRegex.error}`);
+    if (source.features?.llm !== true && !isDefault && criteria && !criteria.startsWith("/")) {
+      errors.push(`${label}: LLM無効時は自然文criteriaを使用できません。`);
+    }
     if (source.features?.llm !== true && match) errors.push(`${label}: LLM無効時はmatchを使用できません。`);
     if (match) {
       const parsed = parseTalkMatchSpec(match);
       if (!parsed.ok) errors.push(`${label}: ${parsed.error}`);
     }
+    for (const key of templateKeys(criteria)) {
+      if (!Object.hasOwn(stateVariableDefinitions, key)) errors.push(`${label}: criteriaのtemplateが未定義です: {{${key}}}`);
+    }
     const mode = String(row.mode ?? "").trim();
     if (!["", "stay", "game_over"].includes(mode)) errors.push(`${label}: modeが不正です。`);
+    if (searchAgent && mode === "game_over") errors.push(`${label}: search_agentではmode=game_overを使用できません。`);
     const assignments = splitAssignments(row.set);
     validateCondition(label, row.cond, stateVariableDefinitions, errors);
     let matchIds = new Set();
@@ -721,20 +1104,83 @@ export function loadAndValidateScenario() {
         // JSON自体のエラーは直前で報告済み。
       }
     }
+    if (searchAgent) {
+      for (const id of matchIds) {
+        if (id === "player_input" || Object.hasOwn(searchOutputStateDefinitions, id)) {
+          errors.push(`${label}: search_agentのmatch IDに予約名を使用できません: ${id}`);
+        }
+      }
+    }
     for (const error of validateStateAssignments(assignments, new Map(Object.entries(stateVariableDefinitions)), matchIds)) {
       errors.push(`${label}: 状態更新が不正です: ${error}`);
+    }
+    const parsedOutput = parseTalkOutputSteps(row.next);
+    for (const error of parsedOutput.errors) errors.push(`${label}: next ${error}`);
+    if (mode === "game_over" && parsedOutput.steps.some((step) => step.kind === "input")) {
+      errors.push(`${label}: mode=game_overでは/inputを使用できません。`);
+    }
+    if (!searchAgent && parsedOutput.steps.some((step) => step.kind === "search" || step.kind === "if")) {
+      errors.push(`${label}: /search と /if はsearch_agentのnextだけで使用できます。`);
+    }
+    validateTalkInputOutputShape(label, parsedOutput.steps, errors);
+    if (searchAgent) validateSearchAgentOutputShape(label, parsedOutput.steps, errors);
+    const hasSearch = parsedOutput.steps.some((step) => step.kind === "search");
+    const outputDefinitions = new Map(Object.entries({
+      ...stateVariableDefinitions,
+      player_input: { type: "string" },
+      ...Object.fromEntries([...matchIds].map((id) => [id, { type: "string" }])),
+      ...(hasSearch ? searchOutputStateDefinitions : {})
+    }));
+    const queryTemplateIds = new Set([...Object.keys(stateVariableDefinitions), ...matchIds, "player_input"]);
+    for (const step of parsedOutput.steps) {
+      if (step.kind === "search") {
+        validateTextLength(`${label}: /search query`, step.queryTemplate, MAX_SEARCH_AGENT_QUERY_LENGTH, errors);
+        validateTemplateSyntax(`${label}: /search query`, step.queryTemplate, errors);
+        for (const key of templateKeys(step.queryTemplate)) {
+          if (!queryTemplateIds.has(key)) errors.push(`${label}: /search queryのtemplateが未定義です: {{${key}}}`);
+        }
+      } else if (step.kind === "if") {
+        for (const error of validateConditionExpression(step.cond, outputDefinitions)) {
+          errors.push(`${label}: /if cond が不正です: ${error}`);
+        }
+      }
+    }
+    const resolvedFrom = row.from === "*" ? "*" : resolveScopedTalkBlockId(blockScope, row.talk, row.from);
+    const outputSteps = parsedOutput.steps.map((step) => {
+      if (step.kind === "block") {
+        return { kind: "block", blockId: resolveScopedTalkBlockId(blockScope, row.talk, step.blockKey) };
+      }
+      if (step.kind === "if") {
+        return { kind: "if", cond: step.cond, blockId: resolveScopedTalkBlockId(blockScope, row.talk, step.blockKey) };
+      }
+      return step;
+    });
+    const resolvedNextBlocks = outputSteps.flatMap((step) => step.kind === "block" || step.kind === "if" ? [step.blockId] : []);
+    const nextFromKey = outputStepNextFromKey(parsedOutput.steps);
+    const nextFromId = nextFromKey ? resolveScopedTalkBlockId(blockScope, row.talk, nextFromKey) : "";
+    if (resolvedFrom !== "*" && isRepeatTalkBlockId(blockScope, resolvedFrom)) {
+      errors.push(`${label}: repeat生成blockをfromへ指定できません。`);
+    }
+    if (resolvedNextBlocks.some((blockId) => isRepeatTalkBlockId(blockScope, blockId))) {
+      errors.push(`${label}: repeat生成blockをnextへ指定できません。`);
+    }
+    const lastDisplayStep = [...parsedOutput.steps].reverse().find((step) => step.kind !== "input");
+    if (searchAgent && !mode && lastDisplayStep?.kind !== "block") {
+      errors.push(`${label}: search_agentの通常遷移は入力制御を除くnextの最後を無条件blockにしてください。`);
     }
     return {
       id: stableId("rule", `${row.talk}\0${row.from}\0${order}\0${criteria}\0${row.next}`),
       talkId: row.talk,
       order,
-      from: row.from === "*" ? "*" : resolveScopedTalkBlockId(blockScope, row.talk, row.from),
+      from: resolvedFrom,
       isDefault,
       cond: String(row.cond ?? "").trim(),
       intent: String(row.intent ?? "").trim(),
       criteria,
       match,
-      nextBlocks: splitList(row.next).map((blockKey) => resolveScopedTalkBlockId(blockScope, row.talk, blockKey)),
+      outputSteps,
+      nextBlocks: resolvedNextBlocks,
+      nextFromId,
       set: assignments,
       mode,
       notes: String(row.notes ?? "").trim(),
@@ -742,38 +1188,143 @@ export function loadAndValidateScenario() {
     };
   });
 
+  const parsedSearchStart = parseTalkOutputSteps(searchAgentSource?.startSteps ?? []);
+  for (const error of parsedSearchStart.errors) errors.push(`search_agent.startSteps: ${error}`);
+  if (parsedSearchStart.steps.some((step) => step.kind !== "block" && step.kind !== "input")) {
+    errors.push("search_agent.startStepsではblockと/inputだけを使用できます。");
+  }
+  validateTalkInputOutputShape("search_agent.startSteps", parsedSearchStart.steps, errors);
+  validateSearchAgentOutputShape("search_agent.startSteps", parsedSearchStart.steps, errors);
+  const searchStartSteps = parsedSearchStart.steps.map((step) => step.kind === "block"
+    ? { kind: "block", blockId: resolveScopedTalkBlockId(blockScope, "search_agent", step.blockKey) }
+    : step);
+  const searchStartBlocks = searchStartSteps.flatMap((step) => step.kind === "block" ? [step.blockId] : []);
+  const searchInitialFromKey = outputStepNextFromKey(parsedSearchStart.steps);
+  const searchInitialFrom = searchInitialFromKey
+    ? resolveScopedTalkBlockId(blockScope, "search_agent", searchInitialFromKey)
+    : "";
+  if (!searchInitialFrom) errors.push("search_agent.startStepsには無条件blockを1件以上指定してください。");
+
+  const stateTemplateIds = new Set(Object.keys(stateVariableDefinitions));
+  const blockContexts = new Map();
+  function addBlockContext(blockId, allowed, sourceLabel) {
+    const contexts = blockContexts.get(blockId) ?? [];
+    contexts.push({ allowed, sourceLabel });
+    blockContexts.set(blockId, contexts);
+  }
+  for (const talk of talks) {
+    for (const blockKey of talk.startBlocks ?? []) {
+      addBlockContext(resolveScopedTalkBlockId(blockScope, talk.id, blockKey), stateTemplateIds, `${talk.id}: startBlocks`);
+    }
+  }
+  for (const blockId of searchStartBlocks) {
+    addBlockContext(blockId, stateTemplateIds, "search_agent: startSteps");
+  }
+  for (const [index, rule] of rules.entries()) {
+    const rawMatch = rawRules[index]?.match;
+    let matchIds = [];
+    if (rawMatch) {
+      try {
+        matchIds = Object.keys(JSON.parse(rawMatch));
+      } catch {
+        // match構文自体のerrorはrule検証で報告する。
+      }
+    }
+    const searchRule = rule.talkId === "search_agent";
+    const allowed = new Set([
+      ...stateTemplateIds,
+      ...matchIds,
+      ...(searchRule ? ["player_input"] : []),
+      ...(searchRule && rule.outputSteps.some((step) => step.kind === "search")
+        ? Object.keys(searchOutputStateDefinitions)
+        : [])
+    ]);
+    for (const blockId of rule.nextBlocks) addBlockContext(blockId, allowed, `${rule.talkId}/${rule.from}`);
+  }
+  for (const block of talkBlocks) {
+    const contexts = blockContexts.get(block.id)
+      ?? (block.repeatOf ? blockContexts.get(block.repeatOf) : undefined)
+      ?? [{ allowed: stateTemplateIds, sourceLabel: "独立またはhook block" }];
+    for (const key of blockTemplateKeys(block)) {
+      for (const context of contexts) {
+        if (!context.allowed.has(key)) {
+          errors.push(`${block.talkId}/${block.blockKey}: 未定義template {{${key}}} を ${context.sourceLabel} から解決できません。`);
+        }
+      }
+    }
+  }
+
   for (const talk of talks) {
     const talkRules = rules.filter((rule) => rule.talkId === talk.id);
     const fromIds = new Set(talkRules.filter((rule) => rule.from !== "*").map((rule) => rule.from));
     const startBlocks = talk.startBlocks.map((blockKey) => resolveScopedTalkBlockId(blockScope, talk.id, blockKey));
     const initialFrom = startBlocks.at(-1) ?? "";
     if (startBlocks.some((blockId) => !blockId)) errors.push(`${talk.id}: startBlocks に未定義blockがあります。`);
+    if (startBlocks.some((blockId) => isRepeatTalkBlockId(blockScope, blockId))) errors.push(`${talk.id}: repeat生成blockをstartBlocksへ指定できません。`);
     if (!fromIds.has(initialFrom)) errors.push(`${talk.id}: startBlocksの最後に対応するruleがありません。`);
     for (const from of fromIds) {
       const defaults = talkRules.filter((rule) => rule.from === from && rule.isDefault);
       if (defaults.length !== 1) errors.push(`${talk.id}/${from}: default rule は1件必要です。`);
+      const llmRules = talkRules.filter((rule) => rule.from === from && !rule.isDefault && rule.criteria && !rule.criteria.startsWith("/"));
+      if (llmRules.length) {
+        for (const rule of llmRules) {
+          if (!rule.intent || !rule.criteria || !rule.example) errors.push(`${talk.id}/${from}: LLM ruleはintent / criteria / exampleが必要です: ${rule.id}`);
+        }
+        if (!defaults[0]?.example) errors.push(`${talk.id}/${from}: LLMを使うfromのdefault ruleにはexampleが必要です。`);
+      }
     }
+    if (talkRules.some((rule) => rule.from === "*" && rule.isDefault)) errors.push(`${talk.id}: from=* にdefault ruleは指定できません。`);
     for (const rule of talkRules) {
       if (rule.nextBlocks.some((blockId) => !blockId)) errors.push(`${talk.id}/${rule.from}: nextに未定義blockがあります。`);
       const nextFrom = rule.nextBlocks.at(-1) ?? "";
       if (!rule.mode && !fromIds.has(nextFrom)) errors.push(`${talk.id}/${rule.from}: nextの最後に対応するruleがありません。`);
     }
   }
+  if (searchAgentSource) {
+    const talkRules = rules.filter((rule) => rule.talkId === "search_agent");
+    const fromIds = new Set(talkRules.filter((rule) => rule.from !== "*").map((rule) => rule.from));
+    if (searchStartBlocks.some((blockId) => !blockId)) errors.push("search_agent.startStepsに未定義blockがあります。");
+    if (searchStartBlocks.some((blockId) => isRepeatTalkBlockId(blockScope, blockId))) {
+      errors.push("search_agent.startStepsへrepeat生成blockを指定できません。");
+    }
+    if (!fromIds.has(searchInitialFrom)) errors.push("search_agent.startStepsの最後のblockに対応するruleがありません。");
+    for (const from of fromIds) {
+      const defaults = talkRules.filter((rule) => rule.from === from && rule.isDefault);
+      if (defaults.length !== 1) errors.push(`search_agent/${from}: default rule は1件必要です。`);
+      const llmRules = talkRules.filter((rule) => rule.from === from && !rule.isDefault && rule.criteria && !rule.criteria.startsWith("/"));
+      for (const rule of llmRules) {
+        if (!rule.intent || !rule.criteria || !rule.example) errors.push(`search_agent/${from}: LLM ruleはintent / criteria / exampleが必要です: ${rule.id}`);
+      }
+      if (llmRules.length && !defaults[0]?.example) errors.push(`search_agent/${from}: LLMを使うfromのdefault ruleにはexampleが必要です。`);
+    }
+    if (talkRules.some((rule) => rule.from === "*" && rule.isDefault)) errors.push("search_agent: from=* にdefault ruleは指定できません。");
+    for (const rule of talkRules) {
+      if (rule.nextBlocks.some((blockId) => !blockId)) errors.push(`search_agent/${rule.from}: nextに未定義blockがあります。`);
+      if (!rule.mode && (!rule.nextFromId || !fromIds.has(rule.nextFromId))) {
+        errors.push(`search_agent/${rule.from}: nextの最後の無条件blockに対応するruleがありません。`);
+      }
+    }
+  }
 
-  const scenarioEventIds = [...new Set(
-    hooks.filter((hook) => hook.event === "scenario_event").map((hook) => hook.target).filter(Boolean)
-  )];
+  const scenarioEventIds = [...new Set([
+    ...hooks.filter((hook) => !hookEvents.has(hook.event)).map((hook) => hook.event),
+    ...hooks.filter((hook) => hook.event === "scheduled_event").map((hook) => hook.target)
+  ].filter(Boolean))];
   for (const schedule of initialSchedules) {
-    if (!scenarioEventIds.includes(schedule.eventId)) errors.push(`${schedule.id}: eventId に対応するscenario_event hookがありません。`);
+    if (!hooks.some((hook) => hook.event === "scheduled_event" && hook.target === schedule.eventId)) errors.push(`${schedule.id}: eventId に対応するscheduled_event hookがありません。`);
   }
   for (const [collection, items] of [
     ["todo", source.todos],
     ["notification", source.notifications],
-    ["assistantMessage", source.assistantMessages],
-    ["searchResponse", source.searchResponses]
+    ["assistantMessage", source.assistantMessages]
   ]) {
     for (const item of Array.isArray(items) ? items : []) {
       validateCondition(`${collection} ${item?.id ?? ""}`, item?.cond, stateVariableDefinitions, errors);
+    }
+  }
+  for (const notification of Array.isArray(source.notifications) ? source.notifications : []) {
+    if (repairableTalkContentIds.has(notification?.targetContentId)) {
+      errors.push(`${notification.id}: talk初期履歴の修復contentを通知対象にできません。`);
     }
   }
   validateCondition("chatAuthGate", source.chatAuthGate?.cond, stateVariableDefinitions, errors);
@@ -783,7 +1334,7 @@ export function loadAndValidateScenario() {
 
   const publicIds = {
     content: Object.fromEntries(contents.map((content) => [content.id, stableId("c", content.id)])),
-    talk: Object.fromEntries(talks.map((talk) => [talk.id, stableId("t", talk.id)])),
+    talk: Object.fromEntries(sourceTalks.map((talk) => [talk.id, stableId("t", talk.id)])),
     attachment: Object.fromEntries(attachments.map((attachment) => [attachment.id, stableId("a", attachment.id)])),
     incomingCall: Object.fromEntries(incomingCalls.map((call) => [call.id, stableId("call", call.id)])),
     form: Object.fromEntries(contents.flatMap((content) => {
@@ -798,8 +1349,10 @@ export function loadAndValidateScenario() {
   };
   const normalizedApps = apps.map((app) => ({
     ...app,
+    icon: app.icon || `project:${app.id}`,
     search: normalizeSearchTerms(app.search),
-    cond: String(app.cond ?? "").trim()
+    cond: String(app.cond ?? "").trim(),
+    badgeCond: String(app.badgeCond ?? "").trim()
   }));
   const normalizedContents = contents.map((content) => {
     const record = Object.fromEntries(Object.entries(content.record ?? {}).filter(([key]) => key !== "unlockCode"));
@@ -825,14 +1378,34 @@ export function loadAndValidateScenario() {
     }
     if (!description) errors.push(`photoDescriptions.${id} は空でない文字列にしてください。`);
   }
-  const normalizedTalks = talks.map((talk) => ({
+  const normalizedDeviceTalks = talks.map((talk) => ({
     ...talk,
+    initialState: talk.initialState ?? "normal",
+    search: normalizeSearchTerms(talk.search),
     cond: String(talk.cond ?? "").trim(),
+    inputVisible: talk.inputVisible ?? true,
+    inputEnabled: talk.inputEnabled ?? true,
     publicId: publicIds.talk[talk.id],
     startBlocks: talk.startBlocks.map((blockKey) => resolveScopedTalkBlockId(blockScope, talk.id, blockKey)),
     initialFrom: resolveScopedTalkBlockId(blockScope, talk.id, talk.startBlocks.at(-1)),
     rules: rules.filter((rule) => rule.talkId === talk.id).map(({ talkId: _talkId, ...rule }) => rule)
   }));
+  const normalizedSearchAgentTalk = {
+    id: "search_agent",
+    publicId: publicIds.talk.search_agent,
+    kind: "search_agent",
+    label: source.project?.assistantName ?? "検索AI",
+    inputVisible: searchAgentSource?.inputVisible ?? true,
+    inputEnabled: searchAgentSource?.inputEnabled ?? true,
+    startSteps: searchStartSteps,
+    initialFrom: searchInitialFrom,
+    rules: rules.filter((rule) => rule.talkId === "search_agent").map(({ talkId: _talkId, ...rule }) => rule)
+  };
+  const normalizedTalkById = new Map([
+    ...normalizedDeviceTalks.map((talk) => [talk.id, talk]),
+    ["search_agent", normalizedSearchAgentTalk]
+  ]);
+  const normalizedTalks = sourceTalks.flatMap((talk) => normalizedTalkById.has(talk.id) ? [normalizedTalkById.get(talk.id)] : []);
   const normalizedAudio = generatedAudio.map((audio) => ({
     ...audio,
     publicId: publicIds.generatedAudio[audio.id],
@@ -840,6 +1413,7 @@ export function loadAndValidateScenario() {
   }));
   const normalizedIncomingCalls = incomingCalls.map((call) => ({
     ...call,
+    cond: String(call.cond ?? "").trim(),
     publicId: publicIds.incomingCall[call.id]
   }));
   const albumMediaAttachmentLinks = attachments.flatMap((attachment) => {
@@ -875,20 +1449,6 @@ export function loadAndValidateScenario() {
     ...message,
     cond: String(message.cond ?? "").trim()
   }));
-  const searchResponses = Array.isArray(source.searchResponses) ? source.searchResponses : [];
-  for (const response of searchResponses) {
-    if (!idPattern.test(response?.id ?? "") || !["", "found", "not_found"].includes(response?.when ?? "") || !response?.body) {
-      errors.push(`searchResponse が不正です: ${response?.id ?? ""}`);
-    }
-    if (response?.search !== undefined) validateSearchTerms(response?.id ?? "searchResponse", response.search, errors, false);
-  }
-  const normalizedSearchResponses = searchResponses.map((response) => ({
-    ...response,
-    when: response.when ?? "",
-    search: normalizeSearchTerms(response.search),
-    cond: String(response.cond ?? "").trim(),
-    suppressResults: response.suppressResults === true
-  }));
   const chatAuthGate = source.chatAuthGate && typeof source.chatAuthGate === "object" && !Array.isArray(source.chatAuthGate)
     ? {
         cond: String(source.chatAuthGate.cond ?? "").trim(),
@@ -897,11 +1457,48 @@ export function loadAndValidateScenario() {
     : null;
   if (chatAuthGate && !chatAuthGate.cond) errors.push("chatAuthGate.cond は必須です。");
   if (errors.length) throw new Error(errors.map((error) => `- ${error}`).join("\n"));
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(engineRootDir, "package.json"), "utf8")).version ?? "0.0.0";
+  const baseProjectConstants = {
+    "project.id": source.project.id,
+    "project.name": source.project.name,
+    "device.os_name": source.project.osName,
+    "device.lock_method": source.project.lockScreen.method,
+    "device.lock_pin_length": source.project.lockScreen.method === "fixed-pin" ? source.project.lockScreen.pin.length : 0,
+    "device.date": source.project.date,
+    "device.wallpaper_url": source.project.wallpaperUrl,
+    "search_agent.name": source.project.assistantName,
+    "player.mode": playerMode,
+    "searchAgent.broken_link_tutorial_body": `ごめんなさい。アプリへのリンクが破損しています。右下の${source.project.assistantName}を開いて「メッセージ」と検索してみてください。`,
+    "searchAgent.broken_link_body": `リンクが破損しています。中身が分かれば、${source.project.assistantName}の検索結果から開けるかもしれません。`
+  };
+  const transcriptRevision = transcriptRevisionFor({
+    version: 1,
+    talks: normalizedTalks.map(({ search: _search, cond: _cond, repairLabel: _repairLabel, ...talk }) => talk),
+    talkPeople,
+    talkBlocks,
+    attachments,
+    publicIds: {
+      content: publicIds.content,
+      talk: publicIds.talk,
+      attachment: publicIds.attachment
+    },
+    runtime: sourceSnapshot(["src/worker/talkEvents.ts", "src/worker/scenario.ts"])
+  });
+  const clientRevision = clientRevisionFor({
+    packageVersion,
+    projectConstants: baseProjectConstants,
+    deviceState: deviceStateFor(source, publicIds, ""),
+    publicIds,
+    source: clientSourceSnapshot()
+  });
   const worker = {
     revision,
+    clientRevision,
+    transcriptRevision,
     playerMode,
     project: source.project,
     apps: normalizedApps,
+    projectAppIds: projectApps.map((app) => app.id),
     features: { llm: source.features?.llm === true },
     stateVariables,
     stateVariableDefinitions,
@@ -912,13 +1509,22 @@ export function loadAndValidateScenario() {
     talkPeople,
     talkBlocks,
     attachments,
-    repeatTalkBlocks: Object.fromEntries(blockScope.repeatIdsByBase),
+    repeatTalkBlocks: Object.fromEntries(
+      [...blockScope.repeatInfoByBlock.entries()].reduce((groups, [repeatId, info]) => {
+        const variants = groups.get(info.repeatOf) ?? [];
+        variants.push({ id: repeatId, index: info.repeatIndex });
+        groups.set(info.repeatOf, variants);
+        return groups;
+      }, new Map()).entries().map(([baseId, variants]) => [
+        baseId,
+        variants.sort((left, right) => left.index - right.index).map((variant) => variant.id)
+      ])
+    ),
     incomingCalls: normalizedIncomingCalls,
     initialSchedules: initialSchedules.map((schedule) => ({ ...schedule, fields: schedule.fields ?? {} })),
     todos: normalizedTodos,
     notifications: normalizedNotifications,
     assistantMessages: normalizedAssistantMessages,
-    searchResponses: normalizedSearchResponses,
     chatAuthGate,
     clientCallableEvents,
     generatedAudio: normalizedAudio,
@@ -927,24 +1533,32 @@ export function loadAndValidateScenario() {
     hooks: normalizedHooks,
     publicIds
   };
+  function hookBlockTemplateKeys(block) {
+    return [block, ...talkBlocks.filter((candidate) => candidate.repeatOf === block.id)]
+      .flatMap((candidate) => blockTemplateKeys(candidate));
+  }
+  const hookTalkBlocksByTalk = Object.fromEntries(normalizedTalks.map((talk) => [
+    talk.id,
+    talkBlocks
+      .filter((block) => (
+        block.talkId === talk.id
+        && !block.repeatOf
+        && hookBlockTemplateKeys(block).every((key) => stateTemplateIds.has(key))
+      ))
+      .map((block) => block.blockKey)
+  ]));
   return {
     revision,
+    clientRevision,
+    transcriptRevision,
     worker,
-    deviceState: deviceStateFor(source, publicIds, revision),
+    deviceState: deviceStateFor(source, publicIds, clientRevision),
     projectConstants: {
-      "project.id": source.project.id,
-      "project.name": source.project.name,
-      "device.os_name": source.project.osName,
-      "device.lock_method": source.project.lockScreen.method,
-      "device.lock_pin_length": source.project.lockScreen.method === "fixed-pin" ? source.project.lockScreen.pin.length : 0,
-      "device.date": source.project.date,
-      "device.wallpaper_url": source.project.wallpaperUrl,
-      "search_agent.name": source.project.assistantName,
-      "player.mode": playerMode,
-      "searchAgent.broken_link_tutorial_body": `ごめんなさい。アプリへのリンクが破損しています。右下の${source.project.assistantName}を開いて「メッセージ」と検索してみてください。`,
-      "searchAgent.broken_link_body": `リンクが破損しています。中身が分かれば、${source.project.assistantName}の検索結果から開けるかもしれません。`,
-      "client.runtime_revision": revision
+      ...baseProjectConstants,
+      "client.runtime_revision": clientRevision
     },
-    hookIds: [...hookIds].sort()
+    hookIds: [...hookIds].sort(),
+    hookTalkBlocksByTalk,
+    projectApps: projectApps.map((app) => ({ id: app.id, icon: app.icon }))
   };
 }
