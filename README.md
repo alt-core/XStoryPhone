@@ -41,7 +41,7 @@ npm run dev
 2. 作品用の `scenario.json` で、作品名、OS名、アプリ、コンテンツ、通知、hookを編集します。
 3. `authoring/talk_blocks.tsv` で会話本文、添付、表示間隔を編集します。
 4. `authoring/talk_flow.tsv` で会話分岐を編集します。
-5. `scenario/my-story/hooks.ts` に作品固有の状態変化を書きます。単一シナリオだけを使う構成では、従来どおり`src/project/hooks.ts`も使えます。
+5. `scenario/my-story/hooks.ts` に作品固有の状態変化を書きます。
 6. 端末外の画面が必要な作品では、`src/project/ProjectStage.svelte` に作品固有Stageを追加します。
 7. 作品固有アプリが必要なら、`src/project/apps.ts`へ1エントリ追加し、規約pathへcomponentを置きます。
 8. `public/demo/` のデモ素材を作品の素材へ置き換えます。

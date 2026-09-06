@@ -1812,6 +1812,8 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
       status: "queued"
     });
   }
+  const futureWakeAt = "2099-01-01T00:00:00.000Z";
+  await store.queueScheduledEvent(store.player.id, "future-event", "test_after_incoming", {}, futureWakeAt);
 
   try {
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
@@ -1824,6 +1826,7 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
     const interruptedBody = await interrupted.json();
     assert.equal(interruptedBody.error, "incoming_call_active");
     assert.equal(interruptedBody.playerState.visibleDeviceState.incomingCall.id, workerScenario.publicIds.incomingCall.demo_call);
+    assert.equal(interruptedBody.playerState.nextScenarioWakeAt, null);
     assert.equal(store.player.state.incomingCallId, "demo_call");
     assert.equal(store.schedules[0].status, "completed");
     assert.equal(store.schedules[1].status, "queued");
@@ -1835,6 +1838,7 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
       body: JSON.stringify({ eventId: "incoming_call_completed", fields: { callId: workerScenario.publicIds.incomingCall.demo_call } })
     });
     assert.equal(completed.status, 200);
+    assert.equal((await completed.json()).playerState.nextScenarioWakeAt, futureWakeAt);
     assert.equal(store.player.state.incomingCallId, null);
     assert.equal(store.player.state.stateValues.test_after_incoming, true);
     assert.equal(store.schedules[1].status, "completed");
@@ -2543,4 +2547,217 @@ test("監修レポートは指示に必要なtalk・fromの入力だけを取得
   assert.equal(response.status, 200);
   assert.deepEqual(store.reviewInputRequests, [["talk-a", "from-a"], ["talk-b", "from-b"]]);
   assert.deepEqual(store.reviewTrialRequests, [["talk-a", "from-a"], ["talk-b", "from-b"]]);
+});
+
+async function startTalkClockFixture() {
+  const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const headers = { authorization: "Bearer memory-token", "content-type": "application/json" };
+  const started = await app.request("http://localhost/api/session/start", {
+    method: "POST", headers, body: JSON.stringify({ serialCode: "1234" })
+  });
+  assert.equal(started.status, 200);
+  const body = await started.json();
+  const talkId = workerScenario.publicIds.talk.guide;
+  const initialSeq = body.playerState.talks.find((talk) => talk.talkId === talkId).lastMessageSeq;
+  const request = async (path, payload) => {
+    const response = await app.request(`http://localhost${path}`, {
+      method: "POST", headers, body: JSON.stringify(payload)
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const send = (message) => request("/api/talk/send", {
+    talkId, turnKey: store.player.state.talks.guide.turnKey, message
+  });
+  // 即時応答にだけ残るkindとnullのsenderNameを除き、履歴の全表示値を比較する。
+  const comparableMessages = (messages) => messages.map(({ kind: _kind, senderName, ...message }) => ({
+    ...message, ...(senderName == null ? {} : { senderName })
+  }));
+  const messages = (response) => comparableMessages(response.playerState.transcriptDeltas.find((delta) => delta.talkId === talkId)?.messages ?? []);
+  const fetchAfter = async (after) => {
+    const response = await app.request(`http://localhost/api/transcript/${talkId}?after=${after}`, { headers });
+    assert.equal(response.status, 200);
+    return comparableMessages((await response.json()).delta.messages);
+  };
+  return { store, app, headers, talkId, initialSeq, request, send, messages, fetchAfter };
+}
+
+test("短い間隔と時計逆行のtalk送信でも即時応答・復元・差分のseqが一致する", async (t) => {
+  const at = Date.parse("2026-09-05T01:00:00.000Z");
+  t.mock.timers.enable({ apis: ["Date"], now: at });
+  const fixture = await startTalkClockFixture();
+  const immediate = [];
+  for (const [index, offset] of [0, 600, -400].entries()) {
+    t.mock.timers.setTime(at + offset);
+    immediate.push(...fixture.messages(await fixture.send(`確認します${index + 1}`)));
+  }
+  assert.deepEqual(await fixture.fetchAfter(fixture.initialSeq), immediate);
+  assert.deepEqual(await fixture.fetchAfter(immediate[1].seq), immediate.slice(2));
+  assert.equal(immediate[1].sentAt, "2026-09-05T01:00:01.000Z", "従来の返信1秒間隔を維持する");
+  for (let index = 1; index < immediate.length; index += 1) {
+    assert.ok(Date.parse(immediate[index].sentAt) > Date.parse(immediate[index - 1].sentAt));
+  }
+});
+
+test("送信後の同commit hook・別request hook・予定hookはtalk水位を引き継ぐ", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-05T01:00:00.000Z") });
+  const fixture = await startTalkClockFixture();
+  const hooks = [
+    { event: "talk_turn_completed", target: "guide", handler: "test_clock_turn", cond: "", llm: false },
+    { event: "test_clock_request", target: "", handler: "test_clock_request", cond: "", llm: false },
+    { event: "scheduled_event", target: "test_clock_due", handler: "test_clock_due", cond: "", llm: false }
+  ];
+  workerScenario.hooks.push(...hooks);
+  workerScenario.clientCallableEvents.push("test_clock_request");
+  scenarioHookHandlers.test_clock_turn = (context) => {
+    context.talk.addBlock("guide", "clue_attachments", { mode: "stay" });
+    context.talk.addBlock("guide", "message_test_ack", { mode: "stay" });
+  };
+  scenarioHookHandlers.test_clock_request = (context) => context.talk.addBlock("guide", "chat_auth_link", { mode: "stay" });
+  scenarioHookHandlers.test_clock_due = (context) => context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+  try {
+    const immediate = fixture.messages(await fixture.send("確認します"));
+    immediate.push(...fixture.messages(await fixture.request("/api/scenario/event", { eventId: "test_clock_request" })));
+    await fixture.store.queueScheduledEvent(fixture.store.player.id, "test-clock-job", "test_clock_due", {}, new Date().toISOString());
+    immediate.push(...fixture.messages(await fixture.request("/api/player-state", {})));
+    assert.deepEqual(await fixture.fetchAfter(fixture.initialSeq), immediate);
+    for (let index = 1; index < immediate.length; index += 1) {
+      assert.ok(Date.parse(immediate[index].sentAt) > Date.parse(immediate[index - 1].sentAt));
+    }
+    assert.equal(fixture.store.player.state.talks.guide.lastDeliveredAt, immediate.at(-1).sentAt);
+  } finally {
+    for (const hook of hooks) {
+      workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+      delete scenarioHookHandlers[hook.handler];
+    }
+    workerScenario.clientCallableEvents.splice(workerScenario.clientCallableEvents.indexOf("test_clock_request"), 1);
+  }
+});
+
+test("シナリオ更新後の現行talkは保存済み水位を再開session hookへ引き継ぐ", async (t) => {
+  const at = Date.parse("2026-09-05T01:00:00.000Z");
+  t.mock.timers.enable({ apis: ["Date"], now: at });
+  const fixture = await startTalkClockFixture();
+  const beforeUpdate = fixture.messages(await fixture.send("確認します"));
+  const savedDeliveredAt = fixture.store.player.state.talks.guide.lastDeliveredAt;
+  assert.equal(savedDeliveredAt, beforeUpdate.at(-1).sentAt);
+  const originalRevision = workerScenario.revision;
+  workerScenario.revision = `${originalRevision}-clock-update`;
+  const hook = { event: "session_started", target: "", handler: "test_clock_resume", cond: "", llm: false };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_clock_resume = (context) => context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+  let loads = 0;
+  const originalLoad = fixture.store.loadTranscript.bind(fixture.store);
+  fixture.store.loadTranscript = (...args) => { loads += 1; return originalLoad(...args); };
+  try {
+    await fixture.request("/api/player-state", {});
+    assert.equal(fixture.store.player.state.talks.guide.lastDeliveredAt, savedDeliveredAt);
+    assert.equal(loads, 0, "現行stateの取得は履歴読込による時刻補完を要しない");
+    const resumed = await fixture.request("/api/session/start", { serialCode: "1234" });
+    const added = fixture.messages(resumed);
+    assert.equal(added[0].sentAt, new Date(Date.parse(savedDeliveredAt) + 1).toISOString());
+    assert.equal(fixture.store.player.state.talks.guide.lastDeliveredAt, added.at(-1).sentAt);
+    assert.deepEqual(await fixture.fetchAfter(fixture.initialSeq), [...beforeUpdate, ...added]);
+  } finally {
+    workerScenario.revision = originalRevision;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_clock_resume;
+  }
+});
+
+for (const dispatchMode of ["同commit", "別request"]) {
+  test(`個別once条件の2hookが共通blockを${dispatchMode}で追加しても即時・復元・差分が一致する`, async () => {
+    const fixture = await startTalkClockFixture();
+    const hooks = ["a", "b"].map((name) => ({
+      event: dispatchMode === "同commit" ? "test_shared_hook_block" : `test_shared_hook_block_${name}`,
+      target: "", handler: `test_shared_hook_block_${name}`, cond: `!test_shared_hook_block_${name}_done`, llm: false
+    }));
+    const eventIds = [...new Set(hooks.map((hook) => hook.event))];
+    for (const hook of hooks) {
+      workerScenario.stateVariables[`${hook.handler}_done`] = false;
+      workerScenario.hooks.push(hook);
+      scenarioHookHandlers[hook.handler] = (context) => {
+        context.state.set(`${hook.handler}_done`, true);
+        context.talk.addBlock("guide", "message_reply", { mode: "stay" });
+      };
+    }
+    workerScenario.clientCallableEvents.push(...eventIds);
+    try {
+      const immediate = [];
+      for (const eventId of eventIds) {
+        immediate.push(...fixture.messages(await fixture.request("/api/scenario/event", { eventId })));
+        assert.deepEqual(fixture.messages(await fixture.request("/api/scenario/event", { eventId })), [], "各once条件の再送は追加しない");
+      }
+      const stored = fixture.store.player.state.talks.guide;
+      const raw = await fixture.store.loadTranscript(fixture.store.player.id, "talk:guide", stored.transcriptKey);
+      assert.equal(raw.messages.length, 2);
+      assert.equal(new Set(raw.messages.map((event) => event.id)).size, 2);
+      assert.deepEqual(immediate.map((message) => message.seq), [fixture.initialSeq + 1, fixture.initialSeq + 2]);
+      assert.equal(new Set(immediate.map((message) => message.id)).size, 2);
+      assert.deepEqual(immediate.map((message) => message.body), ["メッセージの送受信を確認できました。", "追加のメッセージも受け取りました。"]);
+      assert.deepEqual(await fixture.fetchAfter(fixture.initialSeq), immediate);
+      assert.deepEqual(await fixture.fetchAfter(immediate[0].seq), immediate.slice(1));
+      assert.equal(stored.lastMessageSeq, immediate.at(-1).seq);
+      assert.equal(stored.blockDisplayCounts["guide::message_reply"], 2);
+    } finally {
+      for (const hook of hooks) {
+        workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+        delete workerScenario.stateVariables[`${hook.handler}_done`];
+        delete scenarioHookHandlers[hook.handler];
+      }
+      for (const eventId of eventIds) workerScenario.clientCallableEvents.splice(workerScenario.clientCallableEvents.indexOf(eventId), 1);
+    }
+  });
+}
+
+test("同一turnのCAS敗者はhookのevent IDや表示回数を余分に確定しない", async () => {
+  const fixture = await startTalkClockFixture();
+  const hook = { event: "talk_turn_completed", target: "guide", handler: "test_hook_id_cas", cond: "!test_hook_id_cas_done", llm: false };
+  workerScenario.stateVariables.test_hook_id_cas_done = false;
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers[hook.handler] = (context) => {
+    context.state.set("test_hook_id_cas_done", true);
+    context.talk.addBlock("guide", "message_test_ack", { mode: "stay" });
+  };
+  const originalSave = fixture.store.savePlayer.bind(fixture.store);
+  const candidates = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  fixture.store.savePlayer = async (player, nextState, transcripts, effects) => {
+    const hookEvent = transcripts?.flatMap((append) => append.messages).find((event) => event.block_id === "guide::message_test_ack");
+    if (hookEvent) {
+      candidates.push(hookEvent.id);
+      if (candidates.length === 2) release();
+      await gate;
+    }
+    return originalSave(player, nextState, transcripts, effects);
+  };
+  try {
+    const turnKey = fixture.store.player.state.talks.guide.turnKey;
+    const send = () => fixture.app.request("http://localhost/api/talk/send", {
+      method: "POST", headers: fixture.headers,
+      body: JSON.stringify({ talkId: fixture.talkId, turnKey, message: "確認します" })
+    });
+    const responses = await Promise.all([send(), send()]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    assert.equal(candidates.length, 2);
+    assert.equal(candidates[0], candidates[1], "同じsnapshotから作るhook IDはCASの勝敗に依存しない");
+    const accepted = await responses.find((response) => response.status === 200).json();
+    const immediate = fixture.messages(accepted);
+    const stored = fixture.store.player.state.talks.guide;
+    assert.equal(stored.blockDisplayCounts["guide::message_test_ack"], 1);
+    assert.equal(stored.lastMessageSeq, immediate.at(-1).seq);
+    assert.deepEqual(await fixture.fetchAfter(fixture.initialSeq), immediate);
+    const replayed = await send();
+    assert.equal(replayed.status, 200);
+    assert.equal((await replayed.json()).stale, true);
+    assert.equal(fixture.store.player.state.talks.guide.blockDisplayCounts["guide::message_test_ack"], 1);
+  } finally {
+    release();
+    fixture.store.savePlayer = originalSave;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete workerScenario.stateVariables.test_hook_id_cas_done;
+    delete scenarioHookHandlers[hook.handler];
+  }
 });

@@ -55,8 +55,10 @@ try {
     path.join(clientGeneratedDir, "projectAppIcons.generated.ts"),
     `// scenario:build により生成されます。直接編集しないでください。\n${iconImports.length ? `import { ${iconImports.join(", ")} } from "@lucide/svelte";\n` : ""}export const projectAppIcons = { ${scenario.projectApps.map((app) => `${JSON.stringify(app.id)}: ${app.icon}`).join(", ")} } as const;\n`
   );
-  const hookPath = scenarioHookModulePath(rootDir, selectedScenarioDir);
-  const hookModule = await import(`${pathToFileURL(hookPath).href}?revision=${scenario.revision}`);
+  const hookPath = scenarioHookModulePath(selectedScenarioDir);
+  const hookModule = hookPath
+    ? await import(`${pathToFileURL(hookPath).href}?revision=${scenario.revision}`)
+    : { scenarioHookHandlers: {} };
   const registeredHookIds = Object.keys(hookModule.scenarioHookHandlers ?? {}).sort();
   const expectedHookIds = [...scenario.hookIds].sort();
   const missingHookIds = expectedHookIds.filter((id) => !registeredHookIds.includes(id));
@@ -66,7 +68,9 @@ try {
   }
   writeIfChanged(
     path.join(sharedGeneratedDir, "scenarioHooks.generated.ts"),
-    `// scenario:build により生成されます。直接編集しないでください。\nexport { scenarioHookHandlers } from ${JSON.stringify(generatedHookImportPath(sharedGeneratedDir, hookPath))};\n`
+    `// scenario:build により生成されます。直接編集しないでください。\n${hookPath
+      ? `export { scenarioHookHandlers } from ${JSON.stringify(generatedHookImportPath(sharedGeneratedDir, hookPath))};`
+      : "export const scenarioHookHandlers = {};"}\n`
   );
   writeIfChanged(
     path.join(clientGeneratedDir, "demoDeviceState.generated.ts"),

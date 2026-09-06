@@ -48,6 +48,8 @@ npx wrangler secret put ADMIN_REVIEW_SECRET --env prod
 npx wrangler secret put BROWSER_STATE_SECRET --env prod
 ```
 
+`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保存済みの進行tokenを検証できなくなります。誤って変更した場合は元の値へ戻してください。クライアントは401で保存を自動削除せず、`AP-BROWSER-STATE` を表示するため、設定復旧後にリロードして再開できます。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
+
 LLMを使う場合は `LLM_API_KEY` もsecretへ登録し、model、base URL、timeoutを対象環境のvarsへ設定します。
 
 serverモードで発行済みの8桁アクセスコードだけを受理する場合は、コード生成と同じ秘密値を登録します。人数限定を行わない場合は不要です。

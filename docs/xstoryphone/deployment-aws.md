@@ -48,6 +48,8 @@ export ADMIN_REVIEW_SECRET='十分に長いランダム値'
 npm run deploy:aws:dev
 ```
 
+`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持し、毎回のデプロイで同じ値を渡してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保存済みの進行tokenを検証できなくなります。誤って変更した場合は元の値で再デプロイしてください。クライアントは401で保存を自動削除せず、`AP-BROWSER-STATE` を表示するため、設定復旧後にリロードして再開できます。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
+
 環境ごとのコマンドは次のとおりです。
 
 ```sh
@@ -89,6 +91,10 @@ export LLM_TIMEOUT_MS='15000'                  # 任意
 export LLM_REASONING_EFFORT='low'              # 任意
 npm run deploy:aws:prod
 ```
+
+このリポジトリの `infra/aws/template.yaml` では、Lambdaの実行時間を30秒に設定しています。`LLM_TIMEOUT_MS` とprofileごとのtimeoutはLLMの1試行に対する制限であり、リクエスト全体の制限ではありません。既定の15秒を初回と1回の再試行で使い切ると、250msの待機も加わり30秒を超えます。会話のrule選択後にmatch抽出を行う経路では、抽出の初回2標本を並列実行し、合意できなければ最大3標本をさらに順次取得します。加えて同じリクエスト内のhookがLLMを呼ぶ場合もあります。
+
+再試行の待機、会話選択、複数標本のmatch抽出、hook、保存などを含めたリクエスト全体を30秒以内に収める必要があります。1試行を10秒以下へ設定しても、成功応答が重なるだけで全体が30秒を超えることがあり、完了の保証にはなりません。LLMを使う作品は必要な経路を実環境で確認し、作品側の処理と各timeoutを調整してください。この注意は本リポジトリのLambda設定に基づくもので、AWS全体の上限を示すものではありません。
 
 hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。
 

@@ -434,8 +434,12 @@
     }
 
     openingResult = true;
+    const requestId = closeRequestId;
     try {
-      if (await onOpenSearchAgentResult(result)) {
+      const opened = await onOpenSearchAgentResult(result);
+      // 別画面へ移動した後の応答で、開き直したパネルまで閉じない。
+      if (requestId !== closeRequestId) return;
+      if (opened) {
         closeExpanded();
         return;
       }

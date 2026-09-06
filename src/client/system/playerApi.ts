@@ -21,7 +21,6 @@ import {
   BROWSER_PLAYER_MARKER,
   BROWSER_PLAYER_STORAGE_ERROR_EVENT,
   BrowserPlayerStorageError,
-  clearBrowserPlayerStorage,
   commitBrowserPlayerResponse,
   isBrowserPlayerStorageError,
   prepareBrowserPlayerRequest
@@ -218,12 +217,15 @@ function saveTranscriptCache(credential: string, state: PlayerStateResponse, tra
   }));
 }
 
-function messageSeq(message: { seq?: number }, fallback: number) {
-  return typeof message.seq === "number" && Number.isInteger(message.seq) && message.seq > 0 ? message.seq : fallback;
+function messageSeq(message: { seq?: number }) {
+  if (typeof message.seq !== "number" || !Number.isInteger(message.seq) || message.seq <= 0) {
+    throw new Error("transcript_invalid_seq");
+  }
+  return message.seq;
 }
 
 function lastMessageSeq(messages: readonly { seq?: number }[]) {
-  return messages.reduce((max, message, index) => Math.max(max, messageSeq(message, index + 1)), 0);
+  return messages.reduce((max, message) => Math.max(max, messageSeq(message)), 0);
 }
 
 function missingTranscriptAfter(
@@ -239,7 +241,13 @@ function missingTranscriptAfter(
     return 0;
   }
 
-  const currentLastSeq = lastMessageSeq(current.messages);
+  let currentLastSeq: number;
+  try {
+    currentLastSeq = lastMessageSeq(current.messages);
+  } catch {
+    // cacheの番号を推測せず、サーバーに保存された履歴を取得し直す。
+    return 0;
+  }
   if (currentLastSeq === expected.lastMessageSeq) return null;
   if (currentLastSeq > expected.lastMessageSeq) return 0;
   const incomingSeqs = new Set(incoming.flatMap((message) => (
@@ -269,9 +277,9 @@ export function serverTranscriptFetchPlans(
 
 function mergeMessages<T extends { seq?: number }>(current: T[], incoming: T[]) {
   const bySeq = new Map<number, T>();
-  current.forEach((message, index) => bySeq.set(messageSeq(message, index + 1), message));
-  incoming.forEach((message, index) => {
-    const seq = messageSeq(message, current.length + index + 1);
+  current.forEach((message) => bySeq.set(messageSeq(message), message));
+  incoming.forEach((message) => {
+    const seq = messageSeq(message);
     if (!bySeq.has(seq)) bySeq.set(seq, message);
   });
   return [...bySeq.entries()].sort(([left], [right]) => left - right).map(([, message]) => message);
@@ -321,6 +329,9 @@ async function fetchTranscriptDelta(credential: string, stream: string, after: n
 async function hydratePlayerState(publicState: PlayerStateResponse, credential: string): Promise<PlayerState> {
   const cache = loadTranscriptCache(credential, publicState.transcriptRevision);
   const serverFetchPlans = serverTranscriptFetchPlans(publicState, cache);
+  for (const plan of serverFetchPlans) {
+    if (plan.after === 0) delete cache.talk[plan.stream];
+  }
   for (const delta of publicState.transcriptDeltas ?? []) applyTranscriptDelta(cache, delta);
 
   const requests = serverFetchPlans.map((plan) => fetchTranscriptDelta(credential, plan.stream, plan.after));
@@ -413,11 +424,10 @@ async function readJson<T extends { ok: true }>(response: Response, options: Rea
     playerMode === "browser"
     && !payload.ok
     && payload.error === "unauthorized"
-    && Object.prototype.hasOwnProperty.call(options, "browserParentToken")
+    && options.browserParentToken
   ) {
-    await clearBrowserPlayerStorage({ expectedProgressToken: options.browserParentToken ?? null });
-    delete mutable.playerState;
-    notifyBrowserPlayerCleared();
+    // 鍵の設定不一致でも起こるため、保存を消さず既存の停止・リロード経路へ倒す。
+    throw new BrowserPlayerStorageError("unauthorized", "保存されたプレイデータをサーバーで確認できません。");
   } else if (playerMode === "browser" && !payload.ok && options.browserParentToken === null) {
     delete mutable.playerState;
   } else if (mutable.playerState) {
@@ -494,14 +504,6 @@ export async function startSession(serialCode: string) {
   return playerMode === "browser"
     ? queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute))
     : execute();
-}
-
-export function clearPlayerStorageForLogout() {
-  if (playerMode !== "browser") {
-    clearTranscriptStorage();
-    return Promise.resolve();
-  }
-  return queueBrowserPlayerOperation(() => runBrowserPlayerOperation(() => clearBrowserPlayerStorage()));
 }
 
 export async function verifyDevicePin(pin: string) {

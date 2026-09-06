@@ -85,7 +85,7 @@ function responseState({
   };
 }
 
-test("browser player APIはIndexedDB commit後だけ表示状態を返し、resetとunauthorizedを区別する", async () => {
+test("browser player APIはcommit後だけ表示状態を返し、認証失敗でも保存を保持してリロード後に再開できる", async () => {
   globalThis.indexedDB = new IDBFactory();
   const windowTarget = new EventTarget();
   windowTarget.localStorage = memoryStorage();
@@ -93,7 +93,7 @@ test("browser player APIはIndexedDB commit後だけ表示状態を返し、rese
   globalThis.window = windowTarget;
 
   const storage = await import("../src/client/system/browserPlayerStorage.ts");
-  const api = await import("../src/client/system/playerApi.ts");
+  let api = await import("../src/client/system/playerApi.ts");
   await storage.initializeBrowserPlayerStorage({
     enabled: true,
     projectId: "player-api-test",
@@ -177,16 +177,36 @@ test("browser player APIはIndexedDB commit後だけ表示状態を返し、rese
     assert.deepEqual(reset.playerState.smsMessages, []);
     assert.equal(await storage.prepareBrowserPlayerRequest(), "token-4");
 
-    const unauthorized = await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER);
-    assert.equal(unauthorized.ok, false);
-    assert.equal(unauthorized.error, "unauthorized");
-    assert.equal(storage.loadBrowserPlayerMarker(), undefined);
+    let clearedCount = 0;
+    windowTarget.addEventListener(storage.BROWSER_PLAYER_CLEARED_EVENT, () => { clearedCount += 1; });
+    const beforeUnauthorized = storage.loadCachedBrowserPlayerState();
+    await assert.rejects(api.loadPlayerState(storage.BROWSER_PLAYER_MARKER),
+      (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "unauthorized");
+    assert.equal(storage.loadBrowserPlayerMarker(), storage.BROWSER_PLAYER_MARKER);
+    assert.equal(await storage.prepareBrowserPlayerRequest(), "token-4");
+    assert.deepEqual(storage.loadCachedBrowserPlayerState(), beforeUnauthorized);
+    assert.equal(clearedCount, 0, "認証エラーで開始前画面へ戻す通知を出さない");
 
     const requestCountAfterUnauthorized = requests.length;
+    await assert.rejects(api.loadPlayerState(storage.BROWSER_PLAYER_MARKER),
+      (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "unauthorized");
+    assert.equal(requests.length, requestCountAfterUnauthorized, "reloadまで後続送信も止める");
+
+    // 設定を直してリロードすれば、消さずに保持していたtokenから続行する。
+    api = await import("../src/client/system/playerApi.ts?after-reload");
+    responses.push({ status: 200, body: { ok: true, playerState: responseState({
+      token: "token-5", stateVersion: 5, talkTranscriptKey: "talk-reset", searchTalkTranscriptKey: "search-reset"
+    }) } });
+    assert.equal((await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER)).ok, true);
+    assert.equal(JSON.parse(requests.at(-1).init.body).progressToken, "token-4");
+    assert.equal(await storage.prepareBrowserPlayerRequest(), "token-5");
+
+    await storage.clearBrowserPlayerStorage();
+    const requestCountAfterClear = requests.length;
     const alreadyCleared = await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER);
     assert.equal(alreadyCleared.ok, false);
     assert.equal(alreadyCleared.error, "unauthorized");
-    assert.equal(requests.length, requestCountAfterUnauthorized, "currentが空ならnetworkへ送らない");
+    assert.equal(requests.length, requestCountAfterClear, "currentが空ならnetworkへ送らない");
 
     responses.push({
       status: 422,
@@ -210,7 +230,7 @@ test("browser player APIはIndexedDB commit後だけ表示状態を返し、rese
       }
     });
     assert.equal((await api.startSession("")).ok, true);
-    await api.clearPlayerStorageForLogout();
+    await storage.clearBrowserPlayerStorage();
     assert.equal(storage.loadBrowserPlayerMarker(), undefined);
 
     responses.push({

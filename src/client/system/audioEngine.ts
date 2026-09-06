@@ -418,7 +418,10 @@ function startProgressTicker(playback: ActivePlayback) {
     playback.durationMs = Math.max(playback.durationMs, totalDurationMs(playback.segments));
     const currentMs = currentPlaybackMs(playback);
     playback.request.onProgress?.({ currentMs, durationMs: playback.durationMs });
-    emitReachedCues(playback.request, playback.reachedCueIndexes, currentMs);
+    emitReachedCues(playback, currentMs);
+    if (!isCurrentPlayback(playback)) {
+      return;
+    }
     playback.frameId = window.requestAnimationFrame(tick);
   };
 
@@ -458,6 +461,12 @@ function finishSegmentPlayback(playback: ActivePlayback, segmentIndex: number, s
   if (soundRef) {
     // Howler の end 通知後に内部 stop が走るため、終了済み音源は参照だけ外す。
     forgetSoundRef(playback, soundRef);
+  }
+
+  // 背面化で描画tickerが止まっていても、音源末尾までに到達したcueは通知する。
+  emitReachedCues(playback, playback.elapsedBeforeSegmentMs);
+  if (!isCurrentPlayback(playback)) {
+    return;
   }
 
   const nextSegmentIndex = segmentIndex + 1;
@@ -506,12 +515,17 @@ function forgetSoundRef(playback: ActivePlayback, soundRef: ActiveSound) {
   playback.soundRefs = playback.soundRefs.filter((entry) => entry !== soundRef);
 }
 
-function emitReachedCues(request: AudioPlaybackRequest, reachedCueIndexes: Set<number>, currentMs: number) {
+function emitReachedCues(playback: ActivePlayback, currentMs: number) {
+  const { request, reachedCueIndexes } = playback;
   if (!request.cues?.length) {
     return;
   }
 
   for (const cue of request.cues) {
+    // cueのcallbackから同期的に停止・別音源の再生が始まることがある。
+    if (!isCurrentPlayback(playback)) {
+      return;
+    }
     if (reachedCueIndexes.has(cue.index) || currentMs < cue.atMs) {
       continue;
     }

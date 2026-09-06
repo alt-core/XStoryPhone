@@ -1512,7 +1512,7 @@ export function loadAndValidateScenario() {
       talk: publicIds.talk,
       attachment: publicIds.attachment
     },
-    runtime: sourceSnapshot(["src/worker/talkEvents.ts", "src/worker/scenario.ts"])
+    runtime: sourceSnapshot(["src/worker/talkEvents.ts", "src/worker/scenario.ts", "src/worker/talkMessageClock.ts"])
   });
   const clientRevision = clientRevisionFor({
     packageVersion,

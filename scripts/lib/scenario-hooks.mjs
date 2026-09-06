@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export function scenarioHookModulePath(rootDir, scenarioDir) {
+export function scenarioHookModulePath(scenarioDir) {
   const localHooks = path.join(scenarioDir, "hooks.ts");
-  return fs.existsSync(localHooks) ? localHooks : path.join(rootDir, "src/project/hooks.ts");
+  return fs.existsSync(localHooks) ? localHooks : null;
 }
 
 export function generatedHookImportPath(generatedDir, hookModulePath) {

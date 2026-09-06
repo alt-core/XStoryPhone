@@ -83,6 +83,7 @@ export type StoredTalkState = {
   blockDisplayCounts: Record<string, number>;
   transcriptKey: string;
   lastMessageSeq: number;
+  lastDeliveredAt: string;
   lastOtherMessageId: string;
   historySlots: StoredTalkHistorySlot[];
   initialHistoryLastSeq: number;
@@ -533,6 +534,9 @@ export function normalizeStoredState(value: StoredPlayerState): StoredPlayerStat
       blockDisplayCounts: talk.blockDisplayCounts ?? {},
       transcriptKey: key,
       lastMessageSeq: finiteNonNegativeInteger(talk.lastMessageSeq),
+      lastDeliveredAt: typeof talk.lastDeliveredAt === "string" && Number.isFinite(Date.parse(talk.lastDeliveredAt))
+        ? new Date(talk.lastDeliveredAt).toISOString()
+        : "",
       lastOtherMessageId: typeof talk.lastOtherMessageId === "string" ? talk.lastOtherMessageId : "",
       historySlots: Array.isArray(talk.historySlots)
         ? talk.historySlots.flatMap((slot) => (

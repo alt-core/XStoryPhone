@@ -28,6 +28,7 @@
     scrollConversationToBottomAfterTick
   } from "./conversationScrollMemory";
   import PhotoMessagePicker from "./PhotoMessagePicker.svelte";
+  import { createTalkDrafts, restoreFailedTalkDraft } from "./talkDrafts.ts";
   import { brokenRangesAfterMessages, brokenRangesBeforeMessage } from "./talkHistoryRanges";
   import {
     loadTalkDelaySeenMessages,
@@ -77,11 +78,9 @@
   let selectedThreadId = threads[0]?.id ?? "";
   let pickerOpen = !selectedThreadId;
   let photoPickerOpen = false;
-  let selectedPhotoId = "";
-  let selectedShare: { appId: AppId; contentId: string; title: string } | null = null;
-  let draft = "";
+  const draftForThread = createTalkDrafts();
+  let composer = draftForThread(selectedThreadId);
   let sending = false;
-  let sendError = "";
   let unlockDrafts: Record<string, string> = {};
   let unlockingContentId = "";
   let unlockError = "";
@@ -139,6 +138,7 @@
     }
   }
   $: selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? threads[0];
+  $: composer = draftForThread(selectedThreadId);
   $: hasOtherUnreadThread = threads.some((thread) => thread.id !== selectedThreadId && thread.unread && !thread.corrupted);
   $: selectedThreadMediaSignature = selectedThread ? mediaAttachmentSignature(selectedThread.messages) : "";
   $: selectedThreadVisibleMediaSignature = selectedThread ? mediaAttachmentSignature(selectedThread.messages, visibleMessageIds, "other") : "";
@@ -156,10 +156,10 @@
   $: conversationVisible = Boolean(threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen);
   $: reportDisplayedThread(conversationVisible ? selectedThreadContentId : "");
   $: sendablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
-  $: if (selectedPhotoId && !sendablePhotos.some((photo) => photo.id === selectedPhotoId)) {
-    selectedPhotoId = "";
+  $: if (composer.photoId && !sendablePhotos.some((photo) => photo.id === composer.photoId)) {
+    composer.photoId = "";
   }
-  $: selectedPhoto = sendablePhotos.find((photo) => photo.id === selectedPhotoId);
+  $: selectedPhoto = sendablePhotos.find((photo) => photo.id === composer.photoId);
   $: photoDraftActive = Boolean(selectedPhoto);
   $: if (photoDraftActive !== lastReportedPhotoDraftActive) {
     lastReportedPhotoDraftActive = photoDraftActive;
@@ -321,9 +321,6 @@
       selectedThreadId = talkId;
       pickerOpen = true;
       setPhotoPickerOpen(false);
-      selectedPhotoId = "";
-      selectedShare = null;
-      sendError = "";
       unlockError = "";
       onNoise();
       onBlockedContentOpen(thread.contentId ?? thread.id);
@@ -333,9 +330,6 @@
     selectedThreadId = talkId;
     pickerOpen = false;
     setPhotoPickerOpen(false);
-    selectedPhotoId = "";
-    selectedShare = null;
-    sendError = "";
   }
 
   function openThreadPicker() {
@@ -344,7 +338,7 @@
   }
 
   async function submitMessage() {
-    if (!selectedThread || selectedThread.corrupted || !selectedThreadCanPost || sending || (!draft.trim() && !selectedPhoto && !selectedShare)) {
+    if (!selectedThread || selectedThread.corrupted || !selectedThreadCanPost || sending || (!composer.text.trim() && !selectedPhoto && !composer.share)) {
       return;
     }
 
@@ -352,28 +346,27 @@
     readDividerAfterMessageId = "";
     flushPendingRead();
     sending = true;
-    sendError = "";
-    const outgoingMessage = selectedPhoto ? `photo:${selectedPhoto.id}` : selectedShare ? `share:${selectedShare.contentId}` : draft.trim();
-    const previousDraft = draft;
-    const previousPhotoId = selectedPhotoId;
-    const previousShare = selectedShare;
-    draft = "";
-    selectedPhotoId = "";
-    selectedShare = null;
-    const result = await onSend(selectedThread.id, outgoingMessage);
-    sending = false;
-
-    if (!result.ok) {
-      if (!draft && !selectedPhotoId && !selectedShare) {
-        draft = previousDraft;
-        selectedPhotoId = previousPhotoId;
-        selectedShare = previousShare;
+    const talkId = selectedThread.id;
+    const outgoingDraft = composer;
+    const previousDraft = { ...composer };
+    const outgoingMessage = selectedPhoto ? `photo:${selectedPhoto.id}` : composer.share ? `share:${composer.share.contentId}` : composer.text.trim();
+    composer.error = "";
+    composer.text = "";
+    composer.photoId = "";
+    composer.share = null;
+    try {
+      const result = await onSend(talkId, outgoingMessage);
+      if (!result.ok) {
+        restoreFailedTalkDraft(outgoingDraft, previousDraft, result.error);
+      } else if (selectedThreadId === talkId && !pickerOpen) {
+        scrollHistoryToBottom();
       }
-      sendError = result.error ?? "送信に失敗しました。";
-      return;
+    } catch {
+      restoreFailedTalkDraft(outgoingDraft, previousDraft);
+    } finally {
+      sending = false;
+      composer = draftForThread(selectedThreadId);
     }
-
-    scrollHistoryToBottom();
   }
 
   async function sendQuickReply(reply: string) {
@@ -385,26 +378,31 @@
     readDividerAfterMessageId = "";
     flushPendingRead();
     sending = true;
-    sendError = "";
+    const talkId = selectedThread.id;
+    const outgoingDraft = composer;
+    composer.error = "";
     try {
-      const result = await onSend(selectedThread.id, reply);
+      const result = await onSend(talkId, reply);
       if (!result.ok) {
-        sendError = result.error ?? "送信に失敗しました。";
+        outgoingDraft.error = result.error ?? "送信に失敗しました。";
         return;
       }
-      scrollHistoryToBottom();
+      if (selectedThreadId === talkId && !pickerOpen) {
+        scrollHistoryToBottom();
+      }
     } catch {
-      sendError = "送信に失敗しました。";
+      outgoingDraft.error = "送信に失敗しました。";
     } finally {
       sending = false;
+      composer = draftForThread(selectedThreadId);
     }
   }
 
   function selectPhoto(photoId: string) {
-    selectedPhotoId = photoId;
-    selectedShare = null;
-    draft = "";
-    sendError = "";
+    composer.photoId = photoId;
+    composer.share = null;
+    composer.text = "";
+    composer.error = "";
   }
 
   function applyInitialShareDraft(shareDraft: PendingShareDraft) {
@@ -418,14 +416,15 @@
     selectedThreadId = thread.id;
     pickerOpen = false;
     setPhotoPickerOpen(false);
-    selectedPhotoId = "";
-    draft = "";
-    selectedShare = {
+    composer = draftForThread(thread.id);
+    composer.photoId = "";
+    composer.text = "";
+    composer.share = {
       appId: shareDraft.appId,
       contentId: shareDraft.contentId,
       title: shareDraft.title
     };
-    sendError = "";
+    composer.error = "";
     unlockError = "";
     onInitialShareDraftConsumed(shareDraft.requestId);
   }
@@ -1047,7 +1046,7 @@
           </ScrollHint>
         </div>
 
-        {#if composerVisible || sendError || unlockError}
+        {#if composerVisible || composer.error || unlockError}
           <div class="conversation-controls">
             {#if composerVisible}
             <form class="composer" aria-label="メッセージ入力欄" on:submit|preventDefault={submitMessage}>
@@ -1069,33 +1068,33 @@
                 <img src={selectedPhoto.imageUrl ?? ""} alt="" />
               {/if}
               <span>{isVideoPhoto(selectedPhoto) ? "動画" : "写真"}</span>
-              <button type="button" aria-label="写真を外す" title="写真を外す" on:click={() => (selectedPhotoId = "")}>
+              <button type="button" aria-label="写真を外す" title="写真を外す" on:click={() => (composer.photoId = "")}>
                 <X size={13} strokeWidth={2.4} />
               </button>
             </div>
-          {:else if selectedShare}
-            <div class="selected-share" title={selectedShare.title}>
+          {:else if composer.share}
+            <div class="selected-share" title={composer.share.title}>
               <Radio size={15} strokeWidth={2.2} />
               <span>リンク情報</span>
-              <button type="button" aria-label="リンク情報を外す" title="リンク情報を外す" on:click={() => (selectedShare = null)}>
+              <button type="button" aria-label="リンク情報を外す" title="リンク情報を外す" on:click={() => (composer.share = null)}>
                 <X size={13} strokeWidth={2.4} />
               </button>
             </div>
           {:else}
             <input
-              bind:value={draft}
+              bind:value={composer.text}
               disabled={sending || selectedThread.corrupted || !selectedThreadCanPost}
               maxlength="500"
               placeholder={selectedThreadCanPost ? "メッセージを入力" : "返信できません"}
             />
           {/if}
-          <button type="submit" disabled={sending || selectedThread.corrupted || !selectedThreadCanPost || (!draft.trim() && !selectedPhoto && !selectedShare)} aria-label="送信" title="送信">
+          <button type="submit" disabled={sending || selectedThread.corrupted || !selectedThreadCanPost || (!composer.text.trim() && !selectedPhoto && !composer.share)} aria-label="送信" title="送信">
             <Send size={16} strokeWidth={2.1} />
           </button>
             </form>
             {/if}
-            {#if sendError}
-              <p class="send-error">{sendError}</p>
+            {#if composer.error}
+              <p class="send-error">{composer.error}</p>
             {/if}
             {#if unlockError}
               <p class="send-error">{unlockError}</p>
@@ -1146,7 +1145,7 @@
     <PhotoMessagePicker
       open={photoPickerOpen}
       photos={sendablePhotos}
-      selectedPhotoId={selectedPhotoId}
+      selectedPhotoId={composer.photoId}
       accent="#5cc8a7"
       onSelect={selectPhoto}
       onClose={() => setPhotoPickerOpen(false)}

@@ -12,7 +12,7 @@
   export let onBlockedContentOpen: (contentId: string) => void = () => {};
   export let onNoise: (durationMs?: number) => void = () => {};
 
-  let selectedTabId = tabs[0]?.id ?? "";
+  let selectedTabId = tabs.find((tab) => tab.contentId === focusContentId || tab.id === focusContentId)?.id ?? tabs[0]?.id ?? "";
   let view: "page" | "tabs" = tabs.length ? "page" : "tabs";
   let historiesByTabId: Record<string, string[]> = {};
   let historyIndexByTabId: Record<string, number> = {};

@@ -20,6 +20,5 @@
     "vite.config.ts",
     "svelte.config.js"
   ],
-  "exclude": ["src/project/hooks.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

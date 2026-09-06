@@ -41,7 +41,6 @@ import {
   internalFormId,
   internalIncomingCallId,
   lockedContentPasswordHash,
-  materializedTalkMessagesForEvents,
   messagesForTalkOutputSteps,
   nextTalkTurnKey,
   notificationIdsForTarget,
@@ -75,6 +74,7 @@ import { internalizeTalkCommand, semanticInputForTalkCommand, talkCommandAvailab
 import { resolveScenarioTalkRule } from "../worker/services/talkResolver.ts";
 import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../worker/services/talkOutput.ts";
 import { searchAgentPlayerMessageEvent } from "../worker/talkEvents.ts";
+import { latestTalkDeliveredAt, nextTalkMessageSentAt } from "../worker/talkMessageClock.ts";
 import { applyCompactStateAssignments, effectiveStateValues } from "../worker/stateValues.ts";
 import { registerTalkBranchReviewRoutes } from "../worker/admin/talkBranchReviewRoutes.ts";
 import { BrowserProgressTooLargeError, decodeBrowserProgress, encodeBrowserProgress } from "./browserProgress.ts";
@@ -1410,7 +1410,7 @@ app.post("/api/talk/send", async (c) => {
     });
   }
 
-  const now = new Date().toISOString();
+  const now = nextTalkMessageSentAt(storedTalk.lastDeliveredAt, new Date().toISOString());
   const nextState = copyStoredPlayerState(readState);
   const nextTalk = nextState.talks[talk.id];
   const nextFrom = selection.rule.mode === "stay" || selection.rule.mode === "game_over"
@@ -1474,6 +1474,7 @@ app.post("/api/talk/send", async (c) => {
     nextTalk.blockDisplayCounts = reply.blockDisplayCounts;
     const messages = [ownerMessage, ...reply.messages];
     nextTalk.lastMessageSeq = Math.max(nextTalk.lastMessageSeq, ...messages.map((item) => item.seq));
+    nextTalk.lastDeliveredAt = latestTalkDeliveredAt(nextTalk.lastDeliveredAt, [ownerEvent, ...reply.events], messages);
     nextTalk.lastOtherMessageId = [...messages].reverse().find((item) => item.sender === "other")?.id
       ?? nextTalk.lastOtherMessageId;
     const revealed = revealTalkMessages(nextState, talk.id, messages);

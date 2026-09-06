@@ -81,7 +81,6 @@
     clearAlbumAssistantStateForPhotoDraft
   } from "./system/albumAssistantUiState";
   import {
-    clearPlayerStorageForLogout,
     clearTranscriptStorage,
     loadPlayerState,
     recordContentMediaObserved,
@@ -151,6 +150,7 @@
   const resetForTestingEnabled = import.meta.env.DEV || import.meta.env.VITE_XSTORYPHONE_RESET_FOR_TESTING === "true";
   const shadeProtectionAction = resetForTestingEnabled ? "reset" : deviceLockMethod === "none" ? "none" : "lock";
   const PLAYER_STATE_HOME_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+  const SCENARIO_WAKE_TIMER_MIN_MS = 500;
   const SCENARIO_WAKE_TIMER_MAX_MS = 2_147_483_647;
   const PROGRESSION_RETRY_DELAYS_MS = [1_000, 3_000] as const;
   const incomingCallBellAudioUrl = "/system/incoming-call-bell.wav";
@@ -272,6 +272,8 @@
   let scenarioWakeTimer: number | undefined;
   let scenarioWakeTimerKey = "";
   let scenarioWakeGeneration = 0;
+  let backgroundScenarioEventQueue: Promise<unknown> = Promise.resolve();
+  let playerOperationGeneration = 0;
   let gameOverVisible = qaMode && qaView === "game-over";
   let gameOverReturning = false;
   let gameOverTalk: { talkId: string; kind: "sms" | "chat" } | null = null;
@@ -295,6 +297,7 @@
   let phoneHistoryReady = false;
   let phoneHistoryNavigationId = 0;
   let searchAgentCloseRequestId = 0;
+  let contentNavigationRequestId = 0;
   // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
   let pendingPlayerPasscode = "";
   const storedStartConfirmationDone = hasStartConfirmation();
@@ -480,7 +483,10 @@
     reason: unknown,
     options: { message?: string; supportCode?: string } = {}
   ) {
-    if (globalErrorVisible && globalErrorSupportCode === "AP-STORAGE" && options.supportCode !== "AP-STORAGE") {
+    if (isBrowserPlayerStorageError(reason) && reason.kind === "unauthorized") {
+      options = { message: "保存データを確認できません。しばらくしてからリロードをお試しください。", supportCode: "AP-BROWSER-STATE" };
+    }
+    if (globalErrorVisible && ["AP-STORAGE", "AP-BROWSER-STATE"].includes(globalErrorSupportCode)) {
       return;
     }
     console.error("XStoryPhone のグローバルエラーです。", reason);
@@ -610,6 +616,7 @@
   }
 
   function clearUnauthorizedPlayerUi() {
+    playerOperationGeneration += 1;
     const playerMemoryKey = localPlayerMemoryKey(playerMode, uiState.sessionToken);
     clearPlayerStateCache();
     if (playerMode === "server") clearTranscriptStorage();
@@ -1341,6 +1348,20 @@
     searchAgentCloseRequestId += 1;
   }
 
+  function captureContentNavigation() {
+    // 新しいopen同士は最後に選んだ要求を優先する。背景開封やパネル表示には干渉しない。
+    const requestId = ++contentNavigationRequestId;
+    const closeRequestId = searchAgentCloseRequestId;
+    const historyScope = phoneHistoryScope;
+    const sessionToken = uiState.sessionToken;
+    return () => requestId === contentNavigationRequestId
+      && closeRequestId === searchAgentCloseRequestId
+      && historyScope === phoneHistoryScope
+      && sessionToken === uiState.sessionToken
+      && !uiState.locked
+      && !globalErrorVisible;
+  }
+
   function clearPhoneRoute() {
     requestSearchAgentClose();
     activeAppId = null;
@@ -1605,7 +1626,8 @@
 
   function shouldLogoutFromUrl() {
     const path = window.location.pathname.replace(/\/+$/, "");
-    return path.endsWith(LOGOUT_PATH_SUFFIX);
+    // browserの保存消去は、保存を読み込めない場合も使えるようmainで処理する。
+    return playerMode === "server" && path.endsWith(LOGOUT_PATH_SUFFIX);
   }
 
   function clearLogoutUrl() {
@@ -1685,6 +1707,7 @@
       return false;
     }
 
+    playerOperationGeneration += 1;
     try {
       const result = await resetPlayerState(uiState.sessionToken);
       if (result.ok) {
@@ -1710,8 +1733,9 @@
   }
 
   async function logoutPlayerFromUrl() {
+    playerOperationGeneration += 1;
     try {
-      await clearPlayerStorageForLogout();
+      clearTranscriptStorage();
       clearLocalAuthenticationForLogout();
       clearLogoutUrl();
       trackEvent({ name: "logout", source: "url_suffix" });
@@ -1841,7 +1865,7 @@
           outOfGameVisible || pendingPresentationSequenceCount > 0 || presentationSequenceResolve !== null
         );
       });
-    }, Math.max(0, Math.min(wakeTime - Date.now(), SCENARIO_WAKE_TIMER_MAX_MS)));
+    }, Math.max(SCENARIO_WAKE_TIMER_MIN_MS, Math.min(wakeTime - Date.now(), SCENARIO_WAKE_TIMER_MAX_MS)));
   }
 
   function refreshPlayerStateOnHomeIfStale() {
@@ -1868,6 +1892,7 @@
       options.resumedBrowserProgress === true
     );
     if (sessionChanged) {
+      playerOperationGeneration += 1;
       clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     }
     persist({
@@ -2130,14 +2155,31 @@
     recordAudioPlaybackComplete(detail);
   }
 
-  async function recordBackgroundScenarioEvent(
+  function recordBackgroundScenarioEvent(
     sessionToken: string,
     eventId: string,
     payload: Record<string, unknown>,
     options: { stopWhenLocked?: boolean } = {}
   ) {
+    const generation = playerOperationGeneration;
+    // 到達通知は再試行待ちも含めて順番に送る。演出・音声の完了までは待たない。
+    const result = backgroundScenarioEventQueue.then(() => sendBackgroundScenarioEvent(
+      sessionToken, eventId, payload, options, generation
+    ));
+    backgroundScenarioEventQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async function sendBackgroundScenarioEvent(
+    sessionToken: string,
+    eventId: string,
+    payload: Record<string, unknown>,
+    options: { stopWhenLocked?: boolean },
+    generation: number
+  ) {
     // 致命的エラー画面へ移った後は、通信結果を適用せず再試行もしない。
     const shouldStop = () => globalErrorVisible
+      || generation !== playerOperationGeneration
       || uiState.sessionToken !== sessionToken
       || (options.stopWhenLocked !== false && uiState.locked);
 
@@ -2148,12 +2190,12 @@
 
       try {
         const result = await recordScenarioEvent(sessionToken, eventId, payload);
+        if (shouldStop()) {
+          return null;
+        }
         if (!result.ok && result.error === "unauthorized") {
           applyErrorPlayerState(result);
           return result;
-        }
-        if (shouldStop()) {
-          return null;
         }
         if (result.ok) {
           return result;
@@ -2430,13 +2472,15 @@
       return false;
     }
 
+    if (inFlightContentOpenKeys.includes(contentOpenKey(app.id, contentId))) {
+      return false;
+    }
+    const canNavigate = captureContentNavigation();
     const opened = await openContentFromExplicitNavigation(app.id, contentId);
 
-    if (opened) {
-      focusOpenedContent(app.id, contentId);
-    }
-
-    return opened;
+    if (!opened || !canNavigate()) return false;
+    focusOpenedContent(app.id, contentId);
+    return true;
   }
 
   function recordBlockedContentLink(appId: AppId, attemptedContentId: string) {
@@ -2669,6 +2713,22 @@
     });
   }
 
+  async function handleCalendarContentOpen(contentId: string) {
+    const sessionToken = uiState.sessionToken;
+    const generation = playerOperationGeneration;
+    const canContinue = () => Boolean(sessionToken)
+      && sessionToken === uiState.sessionToken
+      && generation === playerOperationGeneration
+      && !uiState.locked
+      && !globalErrorVisible
+      && !activeIncomingCall
+      && pendingPresentationSequenceCount === 0;
+    if (!canContinue()) return false;
+    // 一件の重複・利用不能と、残りの開封処理を中断すべき状態を区別する。
+    await handleContentOpen("calendar", contentId);
+    return canContinue();
+  }
+
   async function handleContentMediaObserved(appId: AppId, contentId: string | undefined, mediaContentIds: string[]) {
     if (!contentId || qaMode || !uiState.sessionToken) {
       return;
@@ -2765,6 +2825,10 @@
       return;
     }
 
+    // 同じ通知の再選択では、先行する開封をclose要求で取り消さない。
+    if (!uiState.locked && inFlightContentOpenKeys.includes(contentOpenKey(notification.appId, notification.targetContentId))) {
+      return;
+    }
     requestSearchAgentClose();
     if (notificationToast?.id === notificationId) {
       notificationToast = null;
@@ -2842,6 +2906,7 @@
       return false;
     }
 
+    const canNavigate = captureContentNavigation();
     const shouldShowRepairMessage = result.repairable && !isSearchAgentResultAlreadyRepaired(result);
     const historyTalkId = result.targetKind === "talk_history" ? result.targetTalkId ?? "" : "";
     const opened = await handleContentOpen(result.appId, result.contentId, {
@@ -2852,7 +2917,7 @@
       clearDisplayedTalkAfterApply: displayedTalkTarget !== null && displayedTalkTarget.appId !== result.appId
     });
 
-    if (opened) {
+    if (opened && canNavigate()) {
       focusOpenedContent(result.appId, historyTalkId || result.contentId);
       if (historyTalkId) {
         focusedTalkHistoryRepairId = result.contentId;
@@ -3369,6 +3434,7 @@
       return;
     }
 
+    const canNavigate = captureContentNavigation();
     let result: Awaited<ReturnType<typeof openMessageLink>>;
     try {
       result = await openMessageLink(uiState.sessionToken, {
@@ -3390,6 +3456,7 @@
     }
     enqueuePresentation(result.presentation);
     if (result.presentation?.sequence) return;
+    if (!canNavigate()) return;
     const targetAppId = result.target.appId;
     focusOpenedContent(targetAppId, result.target.contentId);
     showTalkBackLink(options.backLinkSource, targetAppId);
@@ -3660,7 +3727,7 @@
               currentDate={deviceState.currentDate}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
-              onContentOpen={(contentId) => void handleContentOpen("calendar", contentId)}
+              onContentOpen={handleCalendarContentOpen}
               onNoise={triggerNoise}
             />
           {:else if activeApp?.id === "radio"}

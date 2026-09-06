@@ -55,6 +55,7 @@ import {
   stateValue
 } from "../stateValues.ts";
 import { searchAgentResultEvent } from "../talkEvents.ts";
+import { latestTalkDeliveredAt, nextTalkMessageSentAt } from "../talkMessageClock.ts";
 
 type ScenarioPresentationTransition = {
   fadeInMs: number;
@@ -656,7 +657,10 @@ export async function runScenarioHooks(
     } else if (effect.type === "talk.addBlock") {
       const current = await ensureTalk(effect.talkId);
       if (!current) throw new Error(`hookのtalk操作を適用できません: ${effect.talkId}`);
-      const baseSentAt = nextMessageSentAtByTalk.get(effect.talkId) ?? new Date().toISOString();
+      const earliestSentAt = nextMessageSentAtByTalk.get(effect.talkId) ?? new Date().toISOString();
+      const baseSentAt = isSearchAgentTalk(current.definition)
+        ? earliestSentAt
+        : nextTalkMessageSentAt(current.state.lastDeliveredAt, earliestSentAt);
       if (isSearchAgentTalk(current.definition)) {
         const idHash = (await sha256(`${services.playerId ?? "hook-preview"}:search_agent:block:${current.state.transcriptKey}:${current.state.lastMessageSeq + 1}:${effect.blockId}`)).slice(0, 32);
         const rendered = searchAgentTimelineForOutputs({
@@ -686,7 +690,9 @@ export async function runScenarioHooks(
         appendTranscript(effect.talkId, rendered.events);
         continue;
       }
-      const idPrefix = await scenarioMessageBlockId(services.playerId ?? "hook-preview", current.definition.kind, effect.talkId, effect.blockId);
+      const baseId = await scenarioMessageBlockId(services.playerId ?? "hook-preview", current.definition.kind, effect.talkId, effect.blockId);
+      // 別hookが共通blockを追加しても保存時に除重されず、同じstateの再評価では同じIDになる。
+      const idPrefix = `${baseId}:${(current.state.blockDisplayCounts[effect.blockId] ?? 0) + 1}`;
       const rendered = messagesForTalkBlocks({
         talk: current.definition,
         blockIds: [effect.blockId],
@@ -697,10 +703,8 @@ export async function runScenarioHooks(
         startSeq: current.state.lastMessageSeq,
         singleBlockMessageIds: true
       });
-      const lastSentAt = rendered.messages.reduce((latest, message) => (
-        Date.parse(message.sentAt) > Date.parse(latest) ? message.sentAt : latest
-      ), baseSentAt);
-      nextMessageSentAtByTalk.set(effect.talkId, new Date(Date.parse(lastSentAt) + 1).toISOString());
+      current.state.lastDeliveredAt = latestTalkDeliveredAt(current.state.lastDeliveredAt, rendered.events, rendered.messages);
+      nextMessageSentAtByTalk.set(effect.talkId, nextTalkMessageSentAt(current.state.lastDeliveredAt, baseSentAt));
       current.state.blockDisplayCounts = rendered.blockDisplayCounts;
       current.state.lastMessageSeq = Math.max(current.state.lastMessageSeq, ...rendered.messages.map((message) => message.seq));
       current.state.lastOtherMessageId = [...rendered.messages].reverse().find((message) => message.sender === "other")?.id ?? current.state.lastOtherMessageId;

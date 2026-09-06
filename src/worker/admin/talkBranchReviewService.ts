@@ -402,27 +402,10 @@ function rawClustersFor(events: InputEvent[], ruleId: string) {
   }));
 }
 
-function parsedClusterInputs(raw: string, sourceIds: string[], currentInputs: Map<string, string>) {
-  const savedInputs = new Map<string, string>();
-  try {
-    const value = JSON.parse(raw) as unknown;
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        if (typeof item === "string") {
-          savedInputs.set(sourceIds[index] ?? `${index}`, item);
-          return;
-        }
-        const record = item as { id?: unknown; input?: unknown };
-        const id = typeof record?.id === "string" ? record.id : sourceIds[index] ?? `${index}`;
-        savedInputs.set(id, typeof record?.input === "string" ? record.input : "");
-      });
-    }
-  } catch {
-    // 保存済み本文が壊れていても、代表入力を個別入力だったようには表示しない。
-  }
+function currentClusterInputs(sourceIds: string[], currentInputs: Map<string, string>) {
   return sourceIds.map((id) => ({
     id,
-    input: (currentInputs.get(id) ?? savedInputs.get(id)) || "（本文を確認できません）"
+    input: currentInputs.get(id) || "（本文を確認できません）"
   }));
 }
 
@@ -466,7 +449,7 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
         representativeInput: cluster.representativeInput,
         inputCount: cluster.inputCount,
         sourceEventIds,
-        inputs: parsedClusterInputs(cluster.inputsJson, sourceEventIds, currentInputs)
+        inputs: currentClusterInputs(sourceEventIds, currentInputs)
       };
     });
     const currentRuleEvents = events.filter((event) => currentRuleIds.get(event.id) === rule.id);

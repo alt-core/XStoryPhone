@@ -446,6 +446,7 @@ export async function initializeSearchAgentTalkState(
       blockDisplayCounts: rendered.blockDisplayCounts,
       transcriptKey: crypto.randomUUID(),
       lastMessageSeq: rendered.lastSeq,
+      lastDeliveredAt: "",
       lastOtherMessageId: "",
       historySlots: [],
       initialHistoryLastSeq: 0,
@@ -561,6 +562,7 @@ export function initializeTalkState(
       blockDisplayCounts: {},
       transcriptKey: crypto.randomUUID(),
       lastMessageSeq: rendered.lastMessageSeq,
+      lastDeliveredAt: "",
       lastOtherMessageId: [...visibleMessages].reverse().find((message) => message.sender === "other")?.id ?? "",
       historySlots,
       initialHistoryLastSeq: rendered.lastMessageSeq,
@@ -1348,7 +1350,7 @@ export async function publicPlayerState(
     transcriptRevision: workerScenario.transcriptRevision,
     revision: await playerStateRevision(state),
     stateVersion,
-    nextScenarioWakeAt,
+    nextScenarioWakeAt: visibleIncomingCallId(state) ? null : nextScenarioWakeAt,
     scenarioTime: {
       date: String(stateValues.os_date),
       timeLabel: String(stateValues.os_time_label)

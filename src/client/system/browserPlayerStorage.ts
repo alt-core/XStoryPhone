@@ -7,23 +7,17 @@ import type {
   StoredSmsMessage,
   TranscriptDelta
 } from "./playerApi.ts";
-import { safeLocalStorage } from "./browserStorage.ts";
 import { limitedSearchAgentItems } from "./transcriptLimit.ts";
 
 const DATABASE_VERSION = 2;
 const STORE_NAME = "records";
 const CURRENT_KEY = "current";
-const LEGACY_BROWSER_SAVE_KEY = "xstoryphone.browser-save.v2";
-const LEGACY_PLAYER_STATE_CACHE_KEY = "xstoryphone.player-state-cache";
-const LEGACY_UI_STATE_KEY = "xstoryphone.ui";
-// v3はserver cache修正と同じversion定数を使っていた移行直前版で、browser保存のshapeはv2と同じ。
-const LEGACY_BROWSER_SAVE_VERSIONS = new Set([2, 3]);
 
 export const BROWSER_PLAYER_MARKER = "browser-player";
 export const BROWSER_PLAYER_STORAGE_ERROR_EVENT = "xstoryphone:browser-player-storage-error";
 export const BROWSER_PLAYER_CLEARED_EVENT = "xstoryphone:browser-player-cleared";
 
-export type BrowserPlayerStorageErrorKind = "unavailable" | "conflict" | "corrupt";
+export type BrowserPlayerStorageErrorKind = "unavailable" | "conflict" | "corrupt" | "unauthorized";
 
 export class BrowserPlayerStorageError extends Error {
   readonly kind: BrowserPlayerStorageErrorKind;
@@ -45,7 +39,7 @@ type CurrentRecord = {
   projectId: string;
   schemaVersion: 2;
   progressToken: string;
-  publicState: PublicPlayerState | null;
+  publicState: PublicPlayerState;
 };
 
 type StoredMessage = StoredSmsMessage | StoredChatMessage | SearchAgentMessage;
@@ -173,7 +167,7 @@ function currentRecord(value: unknown): CurrentRecord {
     || value.projectId !== configuredProjectId
     || value.schemaVersion !== DATABASE_VERSION
     || !isNonEmptyString(value.progressToken)
-    || (value.publicState !== null && !validPublicState(value.publicState))
+    || !validPublicState(value.publicState)
     || (isRecord(publicState) && ["progressToken", "transcriptDeltas", "smsMessages", "chatMessages", "searchAgentMessages"]
       .some((key) => key in publicState))) {
     throw corrupt("browser current recordの形式が不正です。");
@@ -227,17 +221,10 @@ async function openDatabase(projectId: string) {
   return new Promise<IDBDatabase>((resolve, reject) => {
     let settled = false;
     const request = idbCall("IndexedDBを開けません。", () => factory.open(name, DATABASE_VERSION));
-    request.onupgradeneeded = (event) => {
-      const store = request.result.objectStoreNames.contains(STORE_NAME)
-        ? request.transaction?.objectStore(STORE_NAME)
-        : request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
-      if (!store || event.oldVersion >= 2) return;
-      store.delete("search");
-      const current = store.get(CURRENT_KEY);
-      current.onsuccess = () => {
-        if (!isRecord(current.result)) return;
-        store.put({ ...current.result, schemaVersion: DATABASE_VERSION, publicState: null });
-      };
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
+      }
     };
     request.onerror = () => {
       settled = true;
@@ -364,7 +351,7 @@ function composePlayerState(state: PublicPlayerState, streams: ReadonlyMap<strin
 }
 
 function playerStateFrom(current: CurrentRecord | null, streams: ReadonlyMap<string, StreamRecord>) {
-  if (!current?.publicState) return null;
+  if (!current) return null;
   validateStateStreams(current.publicState, streams);
   return composePlayerState(current.publicState, streams);
 }
@@ -383,100 +370,6 @@ function mirrorsFromRecords(records: unknown[]) {
   }
   if (!current && streams.size) throw corrupt("browser current recordなしで履歴だけが残っています。");
   return { current, streams };
-}
-
-function legacyStreamRecords(value: unknown) {
-  if (!isRecord(value) || !isRecord(value.talk)) {
-    throw corrupt("旧browser履歴の形式が不正です。");
-  }
-  const streams = new Map<string, StreamRecord>();
-  for (const [talkId, raw] of Object.entries(value.talk)) {
-    if (!isNonEmptyString(talkId) || !isRecord(raw) || (raw.kind !== "sms" && raw.kind !== "chat")) {
-      throw corrupt("旧browser talk履歴の形式が不正です。");
-    }
-    const stream = streamRecord({
-      key: `talk:${talkId}`,
-      kind: raw.kind,
-      transcriptKey: raw.transcriptKey,
-      messages: raw.messages
-    });
-    streams.set(stream.key, stream);
-  }
-  return streams;
-}
-
-function legacySave() {
-  const raw = safeLocalStorage.getItem(LEGACY_BROWSER_SAVE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed)
-      || typeof parsed.version !== "number"
-      || !LEGACY_BROWSER_SAVE_VERSIONS.has(parsed.version)
-      || !isNonEmptyString(parsed.progressToken)) {
-      throw corrupt("旧browser保存の形式が不正です。");
-    }
-    const streams = legacyStreamRecords(parsed.transcripts);
-    const legacy = {
-      current: {
-        key: CURRENT_KEY,
-        projectId: configuredProjectId,
-        schemaVersion: DATABASE_VERSION,
-        progressToken: parsed.progressToken,
-        publicState: null
-      } satisfies CurrentRecord,
-      streams
-    };
-    return legacy;
-  } catch (error) {
-    if (isBrowserPlayerStorageError(error) && error.kind === "corrupt") return "invalid" as const;
-    return "invalid" as const;
-  }
-}
-
-function removeLegacyUiToken() {
-  const raw = safeLocalStorage.getItem(LEGACY_UI_STATE_KEY);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || !("sessionToken" in parsed)) return;
-    delete parsed.sessionToken;
-    safeLocalStorage.setItem(LEGACY_UI_STATE_KEY, JSON.stringify(parsed));
-  } catch {
-    // UI保存は進行の正本ではないため、壊れた旧値は既存の読込側へ任せる。
-  }
-}
-
-function removeLegacyPlayerStorage() {
-  safeLocalStorage.removeItem(LEGACY_BROWSER_SAVE_KEY);
-  safeLocalStorage.removeItem(LEGACY_PLAYER_STATE_CACHE_KEY);
-}
-
-function importLegacyRecords(current: CurrentRecord, streams: ReadonlyMap<string, StreamRecord>) {
-  return new Promise<boolean>((resolve, reject) => {
-    const transaction = storageTransaction("readwrite");
-    const store = idbCall("旧browser保存storeを開けません。", () => transaction.objectStore(STORE_NAME));
-    const currentRead = idbCall("旧browser保存の移行前確認を開始できません。", () => store.get(CURRENT_KEY));
-    let imported = false;
-    let failure: BrowserPlayerStorageError | null = null;
-    currentRead.onsuccess = () => {
-      if (currentRead.result !== undefined) return;
-      try {
-        store.put(current);
-        for (const stream of streams.values()) store.put(stream);
-        imported = true;
-      } catch (error) {
-        failure = normalizeStorageError(error, "旧browser保存の移行に失敗しました。");
-        try { transaction.abort(); } catch { /* transaction側のerrorを使用する。 */ }
-      }
-    };
-    currentRead.onerror = () => {
-      failure = unavailable("旧browser保存の移行前確認に失敗しました。", currentRead.error);
-    };
-    transaction.oncomplete = () => resolve(imported);
-    transaction.onabort = () => reject(failure ?? unavailable("旧browser保存の移行transactionが中断されました。", transaction.error));
-    transaction.onerror = () => undefined;
-  });
 }
 
 export async function initializeBrowserPlayerStorage(options: { enabled: boolean; projectId: string; clientRevision: string }) {
@@ -500,26 +393,40 @@ export async function initializeBrowserPlayerStorage(options: { enabled: boolean
     throw corrupt("IndexedDB records storeがありません。");
   }
 
-  let loaded = mirrorsFromRecords(await storedRecords());
-  if (!loaded.current) {
-    const legacy = legacySave();
-    if (legacy === "invalid") {
-      removeLegacyPlayerStorage();
-    } else if (legacy) {
-      await importLegacyRecords(legacy.current, legacy.streams);
-      removeLegacyPlayerStorage();
-      loaded = mirrorsFromRecords(await storedRecords());
-    }
-  }
-  if (loaded.current) removeLegacyPlayerStorage();
-  removeLegacyUiToken();
-
-  const cached = loaded.current?.publicState?.clientRevision === configuredClientRevision
+  const loaded = mirrorsFromRecords(await storedRecords());
+  const cached = loaded.current?.publicState.clientRevision === configuredClientRevision
     ? playerStateFrom(loaded.current, loaded.streams)
     : null;
   currentMirror = loaded.current;
   streamMirror = loaded.streams;
   cachedPlayerStateMirror = cached;
+}
+
+// 起動前または保存検査に失敗した後の明示初期化用。呼出し側で削除内容の確認を済ませる。
+export async function deleteBrowserPlayerDatabase(projectId: string): Promise<void> {
+  if (!isNonEmptyString(projectId)) throw unavailable("project IDが未設定です。");
+  const factory = idbCall("IndexedDBを参照できません。", () => globalThis.indexedDB);
+  if (!factory) throw unavailable("IndexedDBを利用できません。");
+  if (configuredProjectId === projectId && database) {
+    idbCall("IndexedDB connectionを閉じられません。", () => database?.close());
+    database = null;
+    connectionInvalidated = true;
+    storageEnabled = false;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const request = idbCall("browser保存の初期化を開始できません。", () => factory.deleteDatabase(`xstoryphone-browser-player-${projectId}`));
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(unavailable("browser保存の初期化に失敗しました。", request.error));
+    request.onblocked = () => reject(unavailable("browser保存の初期化が別の画面に阻まれています。他の画面を閉じてから再読み込みしてください。"));
+  });
+  if (configuredProjectId === projectId) {
+    currentMirror = null;
+    streamMirror = new Map();
+    cachedPlayerStateMirror = null;
+    configuredProjectId = "";
+    configuredClientRevision = "";
+    storageEnabled = false;
+  }
 }
 
 export function loadBrowserPlayerMarker() { return currentMirror ? BROWSER_PLAYER_MARKER : undefined; }
@@ -651,7 +558,6 @@ export function commitBrowserPlayerResponse(
         ]));
     let remaining = 1 + streamReads.size;
     let failure: BrowserPlayerStorageError | null = null;
-    let discardedLegacy = false;
     let candidateStreams: Map<string, StreamRecord> | null = null;
 
     const abort = (error: unknown) => {
@@ -667,10 +573,8 @@ export function commitBrowserPlayerResponse(
         if (storedCurrent?.progressToken !== (parentProgressToken ?? undefined)) {
           throw conflict("browser応答の親tokenが現在の進行と一致しません。");
         }
-        if (storedCurrent?.publicState) {
-          if (snapshot.stateVersion < storedCurrent.publicState.stateVersion) {
-            throw corrupt("browser応答のstate versionが保存済み状態より古くなっています。");
-          }
+        if (storedCurrent && snapshot.stateVersion < storedCurrent.publicState.stateVersion) {
+          throw corrupt("browser応答のstate versionが保存済み状態より古くなっています。");
         }
         const nextStreams = options.replaceStreams ? new Map<string, StreamRecord>() : new Map(streamMirror);
         for (const [key, group] of groups) {
@@ -687,18 +591,6 @@ export function commitBrowserPlayerResponse(
         store.put(nextCurrent);
         candidateStreams = nextStreams;
       } catch (error) {
-        const normalized = normalizeStorageError(error, "browser応答の保存に失敗しました。");
-        if (normalized.kind === "corrupt" && storedCurrent?.publicState === null) {
-          try {
-            store.clear();
-            failure = normalized;
-            discardedLegacy = true;
-            return;
-          } catch (clearError) {
-            abort(clearError);
-            return;
-          }
-        }
         abort(error);
       }
     };
@@ -710,13 +602,6 @@ export function commitBrowserPlayerResponse(
       request.onerror = () => abort(unavailable("browser streamの読込に失敗しました。", request.error));
     }
     transaction.oncomplete = () => {
-      if (discardedLegacy && failure) {
-        currentMirror = null;
-        streamMirror = new Map();
-        cachedPlayerStateMirror = null;
-        reject(failure);
-        return;
-      }
       if (!candidateStreams) {
         reject(corrupt("browser保存transactionが結果なしで完了しました。"));
         return;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { ChevronLeft, ChevronRight, Clock3, MapPin } from "@lucide/svelte";
   import { parseStoryDate, storyWeekFor } from "../../shared/storyDate";
   import type { CalendarEvent } from "../scenario-runtime/types";
@@ -9,7 +10,8 @@
   export let currentDate = "";
   export let focusContentId = "";
   export let focusContentRequestId = 0;
-  export let onContentOpen: (contentId: string) => void = () => {};
+  // falseは後続報告の中断指示。個別の開封に成功したかどうかとは区別する。
+  export let onContentOpen: (contentId: string) => boolean | Promise<boolean> = () => true;
   export let onNoise: (durationMs?: number) => void = () => {};
 
   let selectedDate = currentDate;
@@ -18,6 +20,8 @@
   let lastReportedContentSignature = "";
   let lastAppliedFocusContentId = "";
   let lastAppliedFocusContentRequestId = focusContentRequestId;
+  let contentOpenQueue = Promise.resolve();
+  let contentOpenDestroyed = false;
 
   $: if (currentDate && currentDate !== lastAppliedCurrentDate) {
     lastAppliedCurrentDate = currentDate;
@@ -49,7 +53,25 @@
   $: selectedEventContentSignature = selectedEventContentIds.join("\n");
   $: if (selectedEventContentSignature && selectedEventContentSignature !== lastReportedContentSignature) {
     lastReportedContentSignature = selectedEventContentSignature;
-    selectedEventContentIds.forEach((contentId) => onContentOpen(contentId));
+    reportContentOpen(selectedEventContentIds);
+  }
+
+  onDestroy(() => {
+    contentOpenDestroyed = true;
+  });
+
+  function reportContentOpen(contentIds: string[]) {
+    // 日付を切り替えても同じ列を使い、開封hookの更新を自己競合させない。
+    contentOpenQueue = contentOpenQueue.then(async () => {
+      for (const contentId of contentIds) {
+        if (contentOpenDestroyed) {
+          return;
+        }
+        if (await onContentOpen(contentId) === false) {
+          return;
+        }
+      }
+    });
   }
 
   function moveSelectedDate(direction: -1 | 1) {

@@ -317,6 +317,8 @@
 }
 
 .out-game-error-actions {
+  display: grid;
+  gap: 10px;
   width: 100%;
   padding-top: 6px;
 }

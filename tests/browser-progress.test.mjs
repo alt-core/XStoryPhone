@@ -25,6 +25,8 @@ test("ブラウザー進行トークンは同じ作品の更新を引き継ぎ�
   const tamperedCharacter = token[tamperedIndex] === "a" ? "b" : "a";
   const tampered = `${token.slice(0, tamperedIndex)}${tamperedCharacter}${token.slice(tamperedIndex + 1)}`;
   assert.equal(await decodeBrowserProgress("test-secret", "project-a", tampered), null);
+  assert.equal(await decodeBrowserProgress("wrong-secret", "project-a", token), null);
+  // 鍵の設定を戻せば、保存した同じtokenを再び検証できる。
   assert.equal((await decodeBrowserProgress("test-secret", "project-a", token))?.stateVersion, 3);
   assert.equal(await decodeBrowserProgress("test-secret", "project-b", token), null);
 
