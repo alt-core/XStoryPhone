@@ -59,8 +59,10 @@
   export let closeRequestId = 0;
   export let surfaceMessage: AssistantMessage | undefined = undefined;
   export let surfaceMessageMode: SurfaceMessageMode = "dismissOnTap";
+  export let onOpenChange: (open: boolean) => void = () => {};
 
   let expanded = false;
+  let destroyed = false;
   let input = "";
   let transientMessages: SearchAgentMessage[] = [];
   let pending = false;
@@ -186,6 +188,7 @@
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
     expanded = true;
+    onOpenChange(true);
     void scrollMessagesToBottom();
     void focusInput();
   }
@@ -202,6 +205,7 @@
   function closeExpanded() {
     expanded = false;
     expandedFromVisible = false;
+    onOpenChange(false);
   }
 
   function dismissSurfaceMessage() {
@@ -367,6 +371,8 @@
   }
 
   onDestroy(() => {
+    destroyed = true;
+    onOpenChange(false);
     markVisibleMessagesSeen();
     clearMessageDelayTimer();
   });
@@ -437,8 +443,8 @@
     const requestId = closeRequestId;
     try {
       const opened = await onOpenSearchAgentResult(result);
-      // 別画面へ移動した後の応答で、開き直したパネルまで閉じない。
-      if (requestId !== closeRequestId) return;
+      // 破棄後のpropsは更新されないため、新しいパネルへ旧応答の開閉通知を渡さない。
+      if (destroyed || requestId !== closeRequestId) return;
       if (opened) {
         closeExpanded();
         return;

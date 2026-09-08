@@ -169,6 +169,7 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
 
     const rejectedReset = await api.resetPlayerState(storage.BROWSER_PLAYER_MARKER);
     assert.equal(rejectedReset.ok, false);
+    assert.equal(rejectedReset.status, 422);
     assert.deepEqual(rejectedReset.playerState.smsMessages.map((message) => message.seq), [2]);
     assert.equal(await storage.prepareBrowserPlayerRequest(), "token-3");
 
@@ -206,6 +207,7 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
     const alreadyCleared = await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER);
     assert.equal(alreadyCleared.ok, false);
     assert.equal(alreadyCleared.error, "unauthorized");
+    assert.equal(alreadyCleared.status, undefined, "送信していない失敗にはHTTPステータスを付けない");
     assert.equal(requests.length, requestCountAfterClear, "currentが空ならnetworkへ送らない");
 
     responses.push({

@@ -35,6 +35,7 @@
   export let onOpenRadioPlayback: () => void = () => {};
   export let onToggleShade: () => void = () => {};
   export let onCompleteCall: (callId: string) => void = () => {};
+  export let onSearchAgentOpenChange: (open: boolean) => void = () => {};
   export let onSearchAgentSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"
@@ -108,6 +109,7 @@
           surfaceMessage={assistantSurfaceMessage}
           surfaceMessageMode={assistantSurfaceMessageMode}
           onSend={onSearchAgentSend}
+          onOpenChange={onSearchAgentOpenChange}
           onOpenMessageLink={onOpenSearchAgentMessageLink}
           {onOpenSearchAgentResult}
         />

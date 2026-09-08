@@ -48,7 +48,7 @@ PhoneStageの表示は次の3種類です。
 
 作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
 
-`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは従来どおり `clientCallableEvents` へ明示してください。
+`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは従来どおり `clientCallableEvents` へ明示してください。
 
 Stage表示に必要な状態変数だけを、scenario最上位の `publicStateVariables` へ列挙します。指定していない状態変数はクライアントへ公開されません。
 
@@ -57,6 +57,77 @@ Stage表示に必要な状態変数だけを、scenario最上位の `publicState
   "publicStateVariables": ["presentation_started"]
 }
 ```
+
+### イベントが受理されなかった場合
+
+`dispatchScenarioEvent` は成功時に `{ ok: true }`、不受理時に `{ ok: false, error: string }` を返します。Stageからの送信では、次の正常な不受理はゲーム外エラー画面へ移らず、応答のPlayerStateをコアへ適用してから、元の理由を作品側へ返します。
+
+- 着信中、または先に適用した期限到来済み予約で着信が始まった場合の `incoming_call_active`。作品eventのhookは実行されません。
+- hookの `context.form.deny(reason)` または `context.genAudio.reject(reason)`。拒否したhookの変更は採用されませんが、先に適用した予約などの進行は保持されます。
+
+コアは実際のHTTP応答でこれらを識別するため、hookが `conflict` や `unauthorized` を拒否理由にしても、保存競合や認証失効として再試行・停止しません。作品側はHTTP statusを扱う必要がありません。通信障害、実際の認証失効、未許可eventなどは従来の明示エラー処理を維持します。
+
+不受理の作品eventを、コアが通話終了後などに自動再送することはありません。入力の保持、理由の表示、再操作の案内は作品側で行ってください。送信を試しただけでイベントを消費済みにせず、`ok: true` と必要な `projectState` を確認して完了扱いにします。
+
+### 端末の表示状態を使って待機する
+
+`context.deviceView` は次のsnapshotです。UIだけが変わった場合も更新され、DBやtokenには保存されません。
+
+```ts
+type DeviceView = Readonly<{
+  screen: "lock" | "home" | "app" | "search_agent"
+    | "notification_shade" | "incoming_call" | "effect";
+  appId: AppId | null;
+}>;
+```
+
+`screen` は端末の最前面の画面を表します。重なりがあるときは、着信／通話、コア演出、ロック、展開中の検索パネル、通知シェード、アプリ／ホームの順で判定します。`appId` は `screen: "app"` のときだけ表示中アプリのIDを返し、それ以外は `null` です。`effect` は開始待ちを含むコア演出を示し、作品Stage自身の演出は含めません。検索アイコン・小さい吹き出しや通知トーストは独立した閲覧画面として扱いません。
+
+`home` は標準の閲覧画面が閉じているという意味で、無音・読了・進行確定を保証しません。ラジオはホームでも再生を継続できます。また、通話UIは完了eventの応答より先に閉じるため、ホーム復帰だけを進行確定通知として使わないでください。詳細コンテンツの開閉や音声再生状態は公開しません。
+
+たとえばホーム復帰後に作品演出を始める場合は、公開した待機フラグと `deviceView.screen` を組み合わせます。次は `presentation_waiting` と `presentation_started` を `publicStateVariables` に公開し、`start_presentation` のhookが開始済みフラグを立てる作品の、待機判定部分の例です。既存のphone snippetの描画は残して組み込んでください。
+
+```svelte
+<script lang="ts">
+  import type { ProjectStageContext } from "./projectStage";
+
+  export let context: ProjectStageContext;
+  let sending = false;
+  let accepted = false;
+  let started = false;
+  let rejection: string | null = null;
+
+  $: homeReady = context.playerReady && context.deviceView.screen === "home";
+  $: if (homeReady && context.projectState.presentation_waiting === true
+    && !sending && !accepted && !started && rejection === null) {
+    void requestStart();
+  }
+
+  async function requestStart() {
+    sending = true;
+    try {
+      const result = await context.dispatchScenarioEvent("start_presentation");
+      if (result.ok) accepted = true;
+      else rejection = result.error;
+    } finally {
+      sending = false;
+    }
+  }
+
+  $: if (homeReady && accepted && !started
+    && context.projectState.presentation_started === true) {
+    started = true;
+  }
+</script>
+
+{#if started}
+  <section>作品固有の演出</section>
+{:else if rejection !== null}
+  <p>演出の開始は受理されませんでした。作品側で再操作を案内します。</p>
+{/if}
+```
+
+この例では不受理後に `rejection` を自動解除せず、contextが更新されても勝手に再送しません。再試行を提供する場合は、作品側で理由に応じた明示操作を用意してください。`sending`・`accepted`・`started` は同じStage内での重複を防ぐローカルガードです。再読込後の再開方針や演出を一度だけ行う条件は、作品の進行状態とhookで定義します。PhoneStageの `focused`／`embedded`／`hidden` は作品側から指定する表示方法であり、このsnapshotには含めません。
 
 作品固有Stageで復旧不能な例外が起きた場合は、PhoneStageだけへ戻さず、既存のゲーム外エラー画面を表示します。
 

@@ -1849,6 +1849,117 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
   }
 });
 
+test("作品イベントの不受理は両モードで元の理由と予約適用済み状態を返す", async (t) => {
+  const originalMode = workerScenario.playerMode;
+  const originalPublicStateVariables = workerScenario.publicStateVariables;
+  const hooks = [
+    { event: "test_stage_schedule", target: "", handler: "test_stage_schedule", cond: "", llm: false },
+    { event: "scheduled_event", target: "test_stage_due", handler: "test_stage_due", cond: "", llm: false },
+    { event: "test_stage_action", target: "", handler: "test_stage_action", cond: "", llm: false }
+  ];
+  const eventIds = ["test_stage_schedule", "test_stage_action"];
+  const stateIds = ["test_stage_due_applied", "test_stage_action_applied"];
+  workerScenario.hooks.push(...hooks);
+  workerScenario.clientCallableEvents.push(...eventIds);
+  workerScenario.publicStateVariables = [...originalPublicStateVariables, ...stateIds];
+  workerScenario.publicIds.scenarioEvent.test_stage_due = "public_test_stage_due";
+  for (const id of stateIds) workerScenario.stateVariables[id] = false;
+  scenarioHookHandlers.test_stage_schedule = (context) => {
+    context.schedule.after("test_stage_due", 0, {}, "test_stage_due_instance");
+  };
+
+  try {
+    const cases = [
+      { error: "incoming_call_active", incoming: true },
+      ...["wrong_password", "conflict", "invalid_response", "unauthorized", "browser_progress_too_large"]
+        .map((error) => ({ error, incoming: false })),
+      { error: "generated_audio_rejected", incoming: false, generatedAudio: true }
+    ];
+    for (const mode of ["server", "browser"]) {
+      for (const rejection of cases) {
+        await t.test(`${mode}: ${rejection.error}`, async () => {
+          workerScenario.playerMode = mode;
+          let actionHookCalls = 0;
+          let dueHookCalls = 0;
+          scenarioHookHandlers.test_stage_due = (context) => {
+            dueHookCalls += 1;
+            context.state.set("test_stage_due_applied", true);
+            if (rejection.incoming) context.incoming.start("demo_call");
+          };
+          scenarioHookHandlers.test_stage_action = (context) => {
+            actionHookCalls += 1;
+            context.state.set("test_stage_action_applied", true);
+            if (rejection.generatedAudio) context.genAudio.reject(rejection.error);
+            context.form.deny(rejection.error);
+          };
+          const store = new MemoryStore();
+          const app = createApp({
+            store,
+            config: {
+              appEnv: "development",
+              browserStateSecret: "stage-rejection-test-secret",
+              playerInputLogging: false,
+              llm: {}
+            }
+          });
+          const headers = {
+            "content-type": "application/json",
+            ...(mode === "server" ? { authorization: "Bearer memory-token" } : {})
+          };
+          const started = await app.request("http://localhost/api/session/start", {
+            method: "POST", headers, body: JSON.stringify({ serialCode: "1234" })
+          });
+          assert.equal(started.status, 200);
+          let progressToken = (await started.json()).playerState.progressToken;
+          const scheduled = await app.request("http://localhost/api/scenario/event", {
+            method: "POST", headers,
+            body: JSON.stringify({ progressToken, eventId: "test_stage_schedule" })
+          });
+          assert.equal(scheduled.status, 200);
+          const scheduledState = (await scheduled.json()).playerState;
+          progressToken = scheduledState.progressToken;
+          assert.equal(scheduledState.projectState.test_stage_due_applied, false);
+
+          const rejected = await app.request("http://localhost/api/scenario/event", {
+            method: "POST", headers,
+            body: JSON.stringify({ progressToken, eventId: "test_stage_action" })
+          });
+          assert.equal(rejected.status, rejection.incoming ? 409 : 422);
+          const body = await rejected.json();
+          assert.equal(body.ok, false);
+          assert.equal(body.error, rejection.error);
+          assert.equal(actionHookCalls, rejection.incoming ? 0 : 1, "着信による不受理では作品hookを実行しない");
+          assert.equal(dueHookCalls, 1);
+          assert.ok(body.playerState.stateVersion > scheduledState.stateVersion);
+          assert.equal(body.playerState.projectState.test_stage_due_applied, true, "拒否前に適用した予約の進行を残す");
+          assert.equal(body.playerState.projectState.test_stage_action_applied, false, "拒否したhookの変更を採用しない");
+          assert.equal(body.playerState.visibleDeviceState.incomingCall?.id ?? null,
+            rejection.incoming ? workerScenario.publicIds.incomingCall.demo_call : null);
+
+          const restored = await app.request("http://localhost/api/player-state", {
+            method: "POST", headers,
+            body: JSON.stringify({ progressToken: body.playerState.progressToken })
+          });
+          assert.equal(restored.status, 200, "不受理応答の状態で次の状態取得を継続できる");
+          assert.deepEqual((await restored.json()).playerState.projectState, body.playerState.projectState);
+          assert.equal(dueHookCalls, 1, "保存済み予約を再実行しない");
+          assert.equal(actionHookCalls, rejection.incoming ? 0 : 1);
+        });
+      }
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    workerScenario.publicStateVariables = originalPublicStateVariables;
+    delete workerScenario.publicIds.scenarioEvent.test_stage_due;
+    for (const hook of hooks) {
+      workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+      delete scenarioHookHandlers[hook.handler];
+    }
+    for (const eventId of eventIds) workerScenario.clientCallableEvents.splice(workerScenario.clientCallableEvents.indexOf(eventId), 1);
+    for (const id of stateIds) delete workerScenario.stateVariables[id];
+  }
+});
+
 test("完了イベントの保存競合では予約を先に消費せず、再送時に因果順を保つ", async () => {
   const store = new MemoryStore();
   const initialized = await reconcileScenarioState(store.player.state, store.player.id);

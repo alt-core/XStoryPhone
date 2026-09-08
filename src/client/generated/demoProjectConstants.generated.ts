@@ -11,5 +11,5 @@ export const demoProjectConstantsGenerated = {
   "player.mode": "browser",
   "searchAgent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
   "searchAgent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
-  "client.runtime_revision": "client_69a826f2763eda9c"
+  "client.runtime_revision": "client_22f760d6e0f7b7ad"
 } as const;

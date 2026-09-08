@@ -316,6 +316,8 @@ object自体と各項目は省略できます。上記がそれぞれの既定�
 
 複数phaseとdismiss後の遷移を持つ演出は`context.effectSequence.gameOver(reasonMessage?)`または`allClear(appId, contentId, autoplay?)`を使います。effect sequenceは一度のhook実行で最大1件かつ最後の命令です。それ以前のstateやtalk変更はcommitし、同じrequest内の後続hook eventと予約event処理は実行しません。`context.form.deny(error)`だけは入力拒否として全変更と演出を破棄します。`scheduled_event`は応答先が安定しないため、effect、effect sequence、`form.deny`、`genAudio.reject`を使用できません。誤って使用した予定イベントは完了扱いにせず、再実行可能な待機状態へ戻します。
 
+`form.deny`や`genAudio.reject`の理由コードは、認証解除や再試行の命令ではありません。`unauthorized`、`conflict`などと同じ文字列でも、エンジンはHTTPステータスと合わせて区別します。拒否時の表示・終了方法は送信元の仕様に従い、すべての拒否を非致命的に扱うわけではありません。
+
 `content_repaired` と `content_opened` の `target` には、コンテンツID、アプリID、talk IDを指定できます。`content_repaired`は対象が修復された時、`content_opened`は修復hookがeffect sequenceで後続処理を終了した場合を除き、利用可能な対象を開くたびにシナリオで定義したIDで発火します。hookから修復する場合は`context.content.setState(id, "repaired")`を使います。`content_unlocked` は鍵付きコンテンツだけを対象とするため、コンテンツIDを指定します。
 
 同じeventで実行するhookは、dispatch開始時点の状態から先に確定します。先に書いたhookが状態を変更しても、その変更によって同じdispatch内の別hookが新たに発火することはありません。連続処理が必要なら、1つのhookへまとめるか、別のscenario eventを予約してください。

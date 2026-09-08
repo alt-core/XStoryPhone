@@ -11,7 +11,9 @@ function deferred() {
 }
 
 function eventHarness(recordScenarioEvent) {
-  return componentFunctionHarness(appUrl, ["recordBackgroundScenarioEvent", "sendBackgroundScenarioEvent", "PROGRESSION_RETRY_DELAYS_MS"], {
+  return componentFunctionHarness(appUrl, [
+    "recordBackgroundScenarioEvent", "sendBackgroundScenarioEvent", "isUnauthorizedFailure", "PROGRESSION_RETRY_DELAYS_MS"
+  ], {
     backgroundScenarioEventQueue: Promise.resolve(), playerOperationGeneration: 0,
     uiState: { sessionToken: "session", locked: false }, globalErrorVisible: false,
     recordScenarioEvent, applyErrorPlayerState() {},

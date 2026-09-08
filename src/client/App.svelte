@@ -4,6 +4,7 @@
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
   import { formatStoryDateCompact } from "../shared/storyDate";
   import { isAppId, isProjectAppId } from "../shared/appRegistry.ts";
+  import { deviceViewFor } from "./system/deviceView.ts";
   import BrowserApp from "./apps/BrowserApp.svelte";
   import CalendarApp from "./apps/CalendarApp.svelte";
   import ChatApp from "./apps/ChatApp.svelte";
@@ -238,6 +239,7 @@
   let presentationQueue: Promise<void> = Promise.resolve();
   let presentationSequenceResolve: (() => void) | null = null;
   let pendingPresentationSequenceCount = 0;
+  let pendingPresentationCount = 0;
   let incomingCall: IncomingCallItem | undefined;
   let locallyCompletedIncomingCallIds: string[] = [];
   let interruptedIncomingCallId = "";
@@ -297,6 +299,7 @@
   let phoneHistoryReady = false;
   let phoneHistoryNavigationId = 0;
   let searchAgentCloseRequestId = 0;
+  let searchAgentOpen = false;
   let contentNavigationRequestId = 0;
   // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
   let pendingPlayerPasscode = "";
@@ -326,6 +329,7 @@
     playerReady: Boolean(uiState.sessionToken),
     playerState,
     projectState: playerState?.projectState ?? {},
+    deviceView,
     dispatchScenarioEvent: dispatchProjectScenarioEvent
   };
   $: if (displayedTalkTarget && activeAppId !== displayedTalkTarget.appId) {
@@ -353,6 +357,15 @@
     ? deviceState.incomingCall
     : undefined;
   $: activeIncomingCall = incomingCall ?? stateIncomingCall;
+  $: deviceView = deviceViewFor({
+    locked: uiState.locked,
+    appId: activeApp?.id ?? null,
+    searchAgentOpen,
+    notificationShadeOpen: shadeOpen,
+    incomingCallActive: Boolean(activeIncomingCall),
+    effectActive: pendingPresentationCount > 0 || noiseVisible || presentationEffectActive
+      || gameOverVisible || gameOverReturning || allClearVisible || allClearReturning
+  });
   $: if (activeIncomingCall?.id && activeIncomingCall.id !== interruptedIncomingCallId) {
     interruptedIncomingCallId = activeIncomingCall.id;
     requestSearchAgentClose();
@@ -486,7 +499,7 @@
     if (isBrowserPlayerStorageError(reason) && reason.kind === "unauthorized") {
       options = { message: "保存データを確認できません。しばらくしてからリロードをお試しください。", supportCode: "AP-BROWSER-STATE" };
     }
-    if (globalErrorVisible && ["AP-STORAGE", "AP-BROWSER-STATE"].includes(globalErrorSupportCode)) {
+    if (globalErrorVisible && ["AP-STORAGE", "AP-BROWSER-STATE", "AP-PROGRESS-SIZE"].includes(globalErrorSupportCode)) {
       return;
     }
     console.error("XStoryPhone のグローバルエラーです。", reason);
@@ -604,9 +617,18 @@
     return true;
   }
 
-  function applyErrorPlayerState(result: { ok: false; error: string; playerState?: PlayerState }) {
-    showBrowserProgressSizeError(result.error);
-    if (result.error === "unauthorized") {
+  function isUnauthorizedFailure(result: { error: string; status?: number }) {
+    // statusなしは保存が空のときにclient内で合成する失敗。HTTP応答には必ずstatusがある。
+    return result.error === "unauthorized" && (result.status === 401 || result.status === undefined);
+  }
+
+  function isBrowserProgressSizeFailure(result: { error: string; status?: number }) {
+    return result.error === "browser_progress_too_large" && result.status === 500;
+  }
+
+  function applyErrorPlayerState(result: { ok: false; error: string; status?: number; playerState?: PlayerState }) {
+    showBrowserProgressSizeError(result);
+    if (isUnauthorizedFailure(result)) {
       clearUnauthorizedPlayerUi();
       return;
     }
@@ -635,11 +657,11 @@
     });
   }
 
-  function showBrowserProgressSizeError(error: string | undefined) {
-    if (error !== "browser_progress_too_large") {
+  function showBrowserProgressSizeError(result: { error: string; status?: number }) {
+    if (!isBrowserProgressSizeFailure(result)) {
       return false;
     }
-    showGlobalError(error, { supportCode: "AP-PROGRESS-SIZE" });
+    showGlobalError(result.error, { supportCode: "AP-PROGRESS-SIZE" });
     return true;
   }
 
@@ -1684,6 +1706,7 @@
     const resolveSequence = presentationSequenceResolve;
     presentationSequenceResolve = null;
     pendingPresentationSequenceCount = 0;
+    pendingPresentationCount = 0;
     clearTransientPresentationEffects();
     window.clearTimeout(gameOverOverlayTimer);
     window.clearTimeout(allClearOverlayTimer);
@@ -1762,7 +1785,7 @@
   async function refreshPlayerState(sessionToken: string, acceptResult: () => boolean = () => true) {
     lastPlayerStateRefreshRequestedAt = Date.now();
     const result = await loadPlayerState(sessionToken);
-    if (!result.ok && result.error === "unauthorized") {
+    if (!result.ok && isUnauthorizedFailure(result)) {
       applyErrorPlayerState(result);
       return;
     }
@@ -1773,7 +1796,7 @@
       return;
     }
 
-    if (showBrowserProgressSizeError(result.error)) {
+    if (showBrowserProgressSizeError(result)) {
       return;
     }
 
@@ -1923,8 +1946,9 @@
     }
   }
 
-  function entryError(error: string) {
-    return ["invalid", "rate_limited", "browser_progress_too_large"].includes(error) ? error : "server_unavailable";
+  function entryError(result: { error: string; status?: number }) {
+    if (isBrowserProgressSizeFailure(result)) return result.error;
+    return ["invalid", "rate_limited"].includes(result.error) ? result.error : "server_unavailable";
   }
 
   async function openBrowserSession() {
@@ -1933,13 +1957,13 @@
       const loaded = existingBrowserMarker ? await loadPlayerState(existingBrowserMarker) : null;
       const result = loaded?.ok
         ? { ...loaded, sessionToken: existingBrowserMarker ?? "" }
-        : loaded && loaded.error !== "unauthorized"
+        : loaded && !isUnauthorizedFailure(loaded)
           ? loaded
           : await startSession("");
 
       if (!result.ok) {
         applyErrorPlayerState(result);
-        return { ok: false, error: entryError(result.error) };
+        return { ok: false, error: entryError(result) };
       }
       applyStartedSession(result, {
         locked: false,
@@ -1957,7 +1981,7 @@
       const result = await startSession(serialCode);
       if (!result.ok) {
         applyErrorPlayerState(result);
-        return { ok: false, error: entryError(result.error) };
+        return { ok: false, error: entryError(result) };
       }
       applyStartedSession(result, { locked: false });
       trackEvent({ name: "unlock_device" });
@@ -1991,7 +2015,7 @@
     try {
       const verified = await verifyDevicePin(code);
       if (!verified.ok) {
-        return { ok: false, error: entryError(verified.error) };
+        return { ok: false, error: entryError(verified) };
       }
       if (playerMode === "browser") {
         return openBrowserSession();
@@ -2007,7 +2031,7 @@
       const loaded = await loadPlayerState(uiState.sessionToken);
       if (!loaded.ok) {
         applyErrorPlayerState(loaded);
-        return { ok: false, error: entryError(loaded.error) };
+        return { ok: false, error: entryError(loaded) };
       }
       applyStartedSession({ sessionToken: uiState.sessionToken, playerState: loaded.playerState }, { locked: false });
       trackEvent({ name: "unlock_device" });
@@ -2075,6 +2099,8 @@
     const generation = presentationGeneration;
     const hasSequence = presentation.sequence !== undefined;
     if (hasSequence) pendingPresentationSequenceCount += 1;
+    // 作品Stageには、まだ再生を開始していない単発演出も占有中として見せる。
+    pendingPresentationCount += 1;
     presentationQueue = presentationQueue.then(async () => {
       try {
         if (generation !== presentationGeneration || outOfGameVisible || activeIncomingCall) return;
@@ -2111,7 +2137,12 @@
           pendingPresentationSequenceCount = Math.max(0, pendingPresentationSequenceCount - 1);
         }
       }
-    }).catch((error) => showGlobalError(error, { supportCode: "AP-EFFECT" }));
+    }).catch((error) => showGlobalError(error, { supportCode: "AP-EFFECT" })).finally(() => {
+      // 失敗時もエラー画面へ移ってから解除し、一瞬だけhomeを報告しない。
+      if (generation === presentationGeneration) {
+        pendingPresentationCount = Math.max(0, pendingPresentationCount - 1);
+      }
+    });
   }
 
   function stopBackgroundMediaPlayback() {
@@ -2159,7 +2190,7 @@
     sessionToken: string,
     eventId: string,
     payload: Record<string, unknown>,
-    options: { stopWhenLocked?: boolean } = {}
+    options: { stopWhenLocked?: boolean; returnRejection?: boolean } = {}
   ) {
     const generation = playerOperationGeneration;
     // 到達通知は再試行待ちも含めて順番に送る。演出・音声の完了までは待たない。
@@ -2174,7 +2205,7 @@
     sessionToken: string,
     eventId: string,
     payload: Record<string, unknown>,
-    options: { stopWhenLocked?: boolean },
+    options: { stopWhenLocked?: boolean; returnRejection?: boolean },
     generation: number
   ) {
     // 致命的エラー画面へ移った後は、通信結果を適用せず再試行もしない。
@@ -2193,7 +2224,14 @@
         if (shouldStop()) {
           return null;
         }
-        if (!result.ok && result.error === "unauthorized") {
+        if (!result.ok && options.returnRejection && result.playerState && (
+          result.status === 422 || (result.status === 409 && result.error === "incoming_call_active")
+        )) {
+          // 作者の拒否理由を認証・競合エラーと取り違えず、更新済み状態とともに返す。
+          applyPlayerState(result.playerState);
+          return result;
+        }
+        if (!result.ok && isUnauthorizedFailure(result)) {
           applyErrorPlayerState(result);
           return result;
         }
@@ -2202,7 +2240,8 @@
         }
 
         applyErrorPlayerState(result);
-        if ((!result.retryable && result.error !== "conflict") || attempt >= PROGRESSION_RETRY_DELAYS_MS.length) {
+        const retryable = result.retryable === true || (result.status === 409 && result.error === "conflict");
+        if (!retryable || attempt >= PROGRESSION_RETRY_DELAYS_MS.length) {
           showGlobalError(result.error, { supportCode: "AP-EVENT" });
           return result;
         }
@@ -2231,7 +2270,10 @@
     if (!sessionToken) {
       return { ok: false as const, error: "unauthorized" };
     }
-    const result = await recordBackgroundScenarioEvent(sessionToken, eventId, { fields }, { stopWhenLocked: false });
+    const result = await recordBackgroundScenarioEvent(sessionToken, eventId, { fields }, {
+      stopWhenLocked: false,
+      returnRejection: true
+    });
     if (globalErrorVisible) {
       return { ok: false as const, error: "event_unavailable" };
     }
@@ -2675,7 +2717,7 @@
           }
 
           applyErrorPlayerState(result);
-          const retryable = result.retryable === true || result.error === "conflict";
+          const retryable = result.retryable === true || (result.status === 409 && result.error === "conflict");
           if (!retryable) {
             return false;
           }
@@ -2888,7 +2930,7 @@
     }
     if (!result.ok) {
       applyErrorPlayerState(result);
-      if (result.error === "llm_unavailable") {
+      if (result.status === 503 && result.error === "llm_unavailable") {
         showGlobalError(result.error, { supportCode: "AP-LLM" });
       }
       return { ok: false, error: "送信に失敗しました。" };
@@ -3350,7 +3392,7 @@
     if (!result.ok) {
       finishPendingTalkSend(kind, talkId);
       applyErrorPlayerState(result);
-      if (result.error === "llm_unavailable") {
+      if (result.status === 503 && result.error === "llm_unavailable") {
         showGlobalError(result.error, { supportCode: "AP-LLM" });
       }
       return { ok: false, error: "送信に失敗しました。" };
@@ -3634,6 +3676,7 @@
           searchAgentTalk={searchAgentTalkView}
           searchAgentDelayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
           {searchAgentCloseRequestId}
+          onSearchAgentOpenChange={(open) => (searchAgentOpen = open)}
           contentStates={playerState?.contentStates ?? []}
           incomingCall={activeIncomingCall}
           wallpaperUrl={deviceState.wallpaperUrl ?? ""}

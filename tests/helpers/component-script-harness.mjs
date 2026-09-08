@@ -26,9 +26,15 @@ export function componentScriptHarness(fileUrl, props = {}, globals = {}) {
   const initializers = [];
   const reactions = [];
   const derivedNames = new Set();
+  const declaredNames = new Set();
   const propNames = new Set();
   for (const statement of parsed.statements) {
     if (ts.isImportDeclaration(statement)) continue;
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) declaredNames.add(declaration.name.text);
+      }
+    }
     if (ts.isLabeledStatement(statement) && statement.label.text === "$") {
       reactions.push(statement.statement.getText(parsed));
       const expression = ts.isExpressionStatement(statement.statement) ? statement.statement.expression : undefined;
@@ -55,7 +61,8 @@ export function componentScriptHarness(fileUrl, props = {}, globals = {}) {
   const evaluate = (code) => vm.runInContext(ts.transpileModule(code, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
   }).outputText, sandbox);
-  evaluate(`${derivedNames.size ? `let ${[...derivedNames].join(",")};` : ""}\n${initializers.join("\n")}`);
+  const implicitDerivedNames = [...derivedNames].filter((name) => !declaredNames.has(name));
+  evaluate(`${implicitDerivedNames.length ? `let ${implicitDerivedNames.join(",")};` : ""}\n${initializers.join("\n")}`);
   const flush = () => evaluate(reactions.join("\n"));
   flush();
   return {

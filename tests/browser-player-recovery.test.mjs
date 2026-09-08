@@ -87,7 +87,7 @@ test("起動時のcorruptだけに明示初期化の入口を出し、取消・�
   }
 });
 
-test("browser認証失敗のサポートコードを後続catchで上書きせず、Appはbrowser logoutを重ねて実行しない", () => {
+test("browser認証失敗と容量超過のコードを後続catchで上書きせず、Appはbrowser logoutを重ねて実行しない", () => {
   const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), ["showGlobalError", "shouldLogoutFromUrl"], {
     globalErrorVisible: false, globalErrorSupportCode: "AP-CLIENT", globalErrorMessage: "",
     isBrowserPlayerStorageError, stopBackgroundMediaPlayback() {}, cancelPresentations() {}, resetPhoneHistoryBoundary() {},
@@ -99,6 +99,10 @@ test("browser認証失敗のサポートコードを後続catchで上書きせ�
   assert.equal(context.globalErrorSupportCode, "AP-BROWSER-STATE");
   context.showGlobalError("後続catch", { supportCode: "AP-STATE" });
   assert.equal(context.globalErrorSupportCode, "AP-BROWSER-STATE");
+  context.globalErrorVisible = false;
+  context.showGlobalError("browser_progress_too_large", { supportCode: "AP-PROGRESS-SIZE" });
+  context.showGlobalError("背景通知の後続エラー", { supportCode: "AP-EVENT" });
+  assert.equal(context.globalErrorSupportCode, "AP-PROGRESS-SIZE");
   assert.equal(context.shouldLogoutFromUrl(), false);
   context.playerMode = "server";
   assert.equal(context.shouldLogoutFromUrl(), true);

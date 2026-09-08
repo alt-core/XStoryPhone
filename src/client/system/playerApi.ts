@@ -157,7 +157,7 @@ export type PlayerState = PublicPlayerState & {
   searchAgentMessages: SearchAgentMessage[];
 };
 
-type ApiFailure = { ok: false; error: string; playerState?: PlayerState; retryable?: boolean };
+type ApiFailure = { ok: false; error: string; status?: number; playerState?: PlayerState; retryable?: boolean };
 type ApiResult<T extends { ok: true }> = T | ApiFailure;
 export type TalkReadCursorPayload = { talkId: string; messageId: string };
 
@@ -413,15 +413,32 @@ async function runBrowserPlayerOperation<T>(operation: () => Promise<T>) {
   }
 }
 
+function isResponseRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 async function readJson<T extends { ok: true }>(response: Response, options: ReadJsonOptions = {}): Promise<ApiResult<T>> {
   if (response.status === 429) {
-    return { ok: false, error: "rate_limited", retryable: true };
+    return { ok: false, error: "rate_limited", status: response.status, retryable: true };
   }
 
-  const payload = (await response.json().catch(() => ({ ok: false, error: "invalid_response" }))) as ApiResult<T>;
+  const parsed: unknown = await response.json().catch(() => null);
+  if (
+    !isResponseRecord(parsed)
+    || typeof parsed.ok !== "boolean"
+    || (parsed.ok === false && typeof parsed.error !== "string")
+    || (parsed.playerState !== undefined && !isResponseRecord(parsed.playerState))
+  ) {
+    // 不正な応答は作品の拒否理由として扱わず、状態を渡さない既存の再試行経路へ倒す。
+    return { ok: false, error: "invalid_response", status: response.status, retryable: true };
+  }
+  const payload = parsed as ApiResult<T>;
+  // 本文に同名の値があっても、失敗の分類には実際のHTTPステータスだけを使う。
+  if (!payload.ok) payload.status = response.status;
   const mutable = payload as ApiResult<T> & { playerState?: PlayerStateResponse | PlayerState; sessionToken?: string };
   if (
     playerMode === "browser"
+    && response.status === 401
     && !payload.ok
     && payload.error === "unauthorized"
     && options.browserParentToken
@@ -448,7 +465,7 @@ async function readJson<T extends { ok: true }>(response: Response, options: Rea
   }
   if (
     !payload.ok
-    && (payload.error === "invalid_response" || response.status === 408 || response.status === 502 || response.status === 503 || response.status === 504)
+    && (response.status === 408 || response.status === 502 || response.status === 503 || response.status === 504)
   ) {
     return { ...payload, retryable: true };
   }
