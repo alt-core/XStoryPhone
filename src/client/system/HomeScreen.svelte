@@ -2,6 +2,7 @@
   import type { AppId, DeviceState } from "../scenario-runtime/types";
   import type { AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
+  import { staticUrl } from "./resourceUrls";
 
   export let apps: AppCatalogItem[] = [];
   export let deviceState: DeviceState;
@@ -47,7 +48,7 @@
                 <span class="app-unread-dot" aria-hidden="true"></span>
               {/if}
             {:else}
-              <img class="damage-icon-image" src="/system/broken-app-icon-noise.png" alt="" draggable="false" />
+              <img class="damage-icon-image" src={staticUrl("/system/broken-app-icon-noise.png")} alt="" draggable="false" />
             {/if}
           </span>
           <span class="label">{app.label}</span>

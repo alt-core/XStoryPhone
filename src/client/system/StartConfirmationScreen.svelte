@@ -1,9 +1,11 @@
 <script lang="ts">
   import { Check, CircleHelp, Fullscreen, Hash, ShieldCheck, Smartphone } from "@lucide/svelte";
+  import { staticUrl } from "./resourceUrls";
 
   export let variant: "confirmation" | "hold" = "confirmation";
   export let onConfirm: () => void | Promise<{ ok: boolean; error?: string }> = () => {};
   export let browserMode = false;
+  export let memoryMode = false;
 
   let busy = false;
   let errorMessage = "";
@@ -45,7 +47,7 @@
 
       <section class="confirmation-block">
         <Smartphone size={20} strokeWidth={2.1} aria-hidden="true" />
-        <p>{browserMode ? "進行はこのブラウザーに保存されます。ブラウザーのデータを消すと最初からになります。" : "同じパスコードを入力することで、別の環境からプレイを再開できます。"}</p>
+        <p>{memoryMode ? "進行は保存されません。ページを再読み込みしたり、閉じたりすると最初からになります。" : browserMode ? "進行はこのブラウザーに保存されます。ブラウザーのデータを消すと最初からになります。" : "同じパスコードを入力することで、別の環境からプレイを再開できます。"}</p>
       </section>
 
       {#if !browserMode}
@@ -74,7 +76,7 @@
       {#if errorMessage}
         <p class="confirmation-submit-error" role="alert">{errorMessage}</p>
       {/if}
-      <a class="privacy-link" href="/privacy-policy.html" target="_blank" rel="noreferrer">プライバシーポリシー／お問い合わせ</a>
+      <a class="privacy-link" href={staticUrl("/privacy-policy.html")} target="_blank" rel="noreferrer">プライバシーポリシー／お問い合わせ</a>
     </footer>
   {/if}
 </section>

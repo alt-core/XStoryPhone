@@ -3,6 +3,7 @@
   import type { PhotoItem } from "../scenario-runtime/types";
   import ScrollHint from "../system/ScrollHint.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
+  import { resourceUrl } from "../system/resourceUrls";
 
   export let open = false;
   export let photos: PhotoItem[] = [];
@@ -49,7 +50,7 @@
                 {#if isVideoPhoto(photo)}
                   <VideoStillFrame src={photo.imageUrl} square compact />
                 {:else if photo.imageUrl}
-                  <img src={photo.imageUrl} alt="" />
+                  <img src={resourceUrl(photo.imageUrl)} alt="" />
                 {/if}
                 {#if photo.id === selectedPhotoId}
                   <span class="check-mark"><Check size={14} strokeWidth={2.4} /></span>

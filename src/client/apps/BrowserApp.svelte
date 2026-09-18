@@ -2,7 +2,9 @@
   import { onDestroy } from "svelte";
   import { ArrowLeft, Globe2, Layers3, Plus, X } from "@lucide/svelte";
   import type { BrowserTabItem } from "../scenario-runtime/types";
+  import { pathnameKey } from "../../shared/deploymentUrls.ts";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
+  import { resourceUrl } from "../system/resourceUrls";
   import AppShell from "./AppShell.svelte";
 
   export let tabs: BrowserTabItem[] = [];
@@ -72,7 +74,7 @@
     if (historiesByTabId[tab.id]?.length || !tab.url) {
       return;
     }
-    historiesByTabId = { ...historiesByTabId, [tab.id]: [normalizeDisplayUrl(tab.url)] };
+    historiesByTabId = { ...historiesByTabId, [tab.id]: [normalizeDisplayUrl(resourceUrl(tab.url))] };
     historyIndexByTabId = { ...historyIndexByTabId, [tab.id]: 0 };
   }
 
@@ -80,7 +82,7 @@
     ensureTabHistory(tab);
     const history = historiesByTabId[tab.id] ?? [];
     const index = historyIndexByTabId[tab.id] ?? 0;
-    return history[index] ?? tab.url ?? "";
+    return history[index] ?? resourceUrl(tab.url ?? "");
   }
 
   function selectTab(tab: BrowserTabItem) {
@@ -125,14 +127,14 @@
   }
 
   function navigateWithinTab(tab: BrowserTabItem, targetUrl: string) {
-    const nextUrl = normalizeDisplayUrl(targetUrl);
-    if (!browserUrlAllowed(tab, nextUrl)) {
+    if (!browserUrlAllowed(tab, targetUrl)) {
       onNoise();
       return;
     }
-    const history = historiesByTabId[tab.id] ?? [normalizeDisplayUrl(tab.url ?? "")];
+    const nextUrl = normalizeDisplayUrl(targetUrl);
+    const history = historiesByTabId[tab.id] ?? [normalizeDisplayUrl(resourceUrl(tab.url ?? ""))];
     const index = historyIndexByTabId[tab.id] ?? 0;
-    if (history[index] === nextUrl) {
+    if (documentKey(history[index] ?? "", true) === documentKey(nextUrl, true)) {
       return;
     }
     historiesByTabId = {
@@ -174,9 +176,9 @@
         onNoise();
         return;
       }
-      const history = historiesByTabId[selectedTab.id] ?? [normalizeDisplayUrl(selectedTab.url ?? "")];
+      const history = historiesByTabId[selectedTab.id] ?? [normalizeDisplayUrl(resourceUrl(selectedTab.url ?? ""))];
       const index = historyIndexByTabId[selectedTab.id] ?? 0;
-      if (history[index] !== loadedUrl) {
+      if (documentKey(history[index] ?? "", true) !== documentKey(loadedUrl, true)) {
         historiesByTabId = { ...historiesByTabId, [selectedTab.id]: [...history.slice(0, index + 1), loadedUrl] };
         historyIndexByTabId = { ...historyIndexByTabId, [selectedTab.id]: index + 1 };
       }
@@ -209,19 +211,29 @@
 
   function browserUrlAllowed(tab: BrowserTabItem, value: string) {
     const targetKey = documentKey(value);
+    if (!targetKey) {
+      return false;
+    }
     return [tab.url, ...(tab.allowedUrls ?? [])]
       .filter((url): url is string => Boolean(url))
-      .some((url) => documentKey(url) === targetKey);
+      .some((url) => documentKey(resourceUrl(url)) === targetKey);
   }
 
   function normalizeDisplayUrl(value: string) {
     const url = new URL(value, window.location.origin);
-    return `${url.pathname}${url.search}${url.hash}`;
+    return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.href;
   }
 
-  function documentKey(value: string) {
-    const url = new URL(value, window.location.origin);
-    return url.origin === window.location.origin ? `${url.pathname}${url.search}` : "";
+  function documentKey(value: string, includeHash = false) {
+    try {
+      const url = new URL(value, window.location.origin);
+      const path = pathnameKey(url.pathname);
+      return path !== null && url.origin === window.location.origin
+        ? `${path}${url.search}${includeHash ? url.hash : ""}`
+        : "";
+    } catch {
+      return "";
+    }
   }
 
   function tabNoiseStyle(tab: BrowserTabItem) {

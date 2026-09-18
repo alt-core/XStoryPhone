@@ -79,6 +79,7 @@ npm test
 - [作品固有の拡張](docs/xstoryphone/extensions.md)
 - [Cloudflareへの公開](docs/xstoryphone/deployment.md)
 - [AWSへの公開](docs/xstoryphone/deployment-aws.md)
+- [外部静的ホスト・サブパスへの配置](docs/xstoryphone/external-hosting.md)
 
 ## ライセンス
 

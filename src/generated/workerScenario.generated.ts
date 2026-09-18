@@ -3,7 +3,7 @@ import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
   "revision": "b422fcbbbfb2ffe1",
-  "clientRevision": "client_22f760d6e0f7b7ad",
+  "clientRevision": "client_141e05c772560338",
   "transcriptRevision": "transcript_db383c157e4c90d8",
   "playerMode": "browser",
   "project": {
@@ -4522,7 +4522,7 @@ export const workerScenario: WorkerScenario = {
       "title": "生成音声デモ",
       "provider": "static",
       "publicId": "g_aedd90a2a532",
-      "staticUrl": "/api/generated-audio/static/g_aedd90a2a532"
+      "staticUrl": "/api/generated-audio/static/g_aedd90a2a532.wav"
     }
   ],
   "albumMediaAttachmentLinks": [

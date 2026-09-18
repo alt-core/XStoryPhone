@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { resourceUrl } from "./resourceUrls";
 
   export let visible = false;
   export let imageUrl = "";
@@ -50,7 +51,7 @@
   >
     <span class="stage-light" aria-hidden="true"></span>
     {#if imageUrl}
-      <img class="all-clear-logo" src={imageUrl} alt="" aria-hidden="true" />
+      <img class="all-clear-logo" src={resourceUrl(imageUrl)} alt="" aria-hidden="true" />
     {:else if titleText}
       <span class="all-clear-title" aria-hidden="true">{titleText}</span>
     {/if}

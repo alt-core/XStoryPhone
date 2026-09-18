@@ -8,6 +8,8 @@ import {
   isBrowserPlayerStorageError
 } from "./system/browserPlayerStorage.ts";
 import { playerMode } from "./system/playerApi.ts";
+import { isMemoryStorage } from "./system/clientStorage.ts";
+import { appReturnUrl, isAppEntryPath } from "./system/resourceUrls.ts";
 import { clearStartConfirmation, defaultUiState, saveUiState } from "./system/progress.ts";
 import "./styles/global.css";
 import "./styles/out-of-game.css";
@@ -16,13 +18,13 @@ const projectId = String(projectConstants["project.id"] ?? "");
 const resetForTestingEnabled = import.meta.env.DEV || import.meta.env.VITE_XSTORYPHONE_RESET_FOR_TESTING === "true";
 
 async function deleteBrowserProgressForRestart() {
-  if (!resetForTestingEnabled && !window.confirm("このブラウザーの保存データを削除して最初から始めます。この操作は取り消せません。よろしいですか？")) {
+  if (!isMemoryStorage && !resetForTestingEnabled && !window.confirm("このブラウザーの保存データを削除して最初から始めます。この操作は取り消せません。よろしいですか？")) {
     return false;
   }
   await deleteBrowserPlayerDatabase(projectId);
   clearStartConfirmation();
   saveUiState({ ...defaultUiState });
-  window.location.replace("/");
+  window.location.replace(appReturnUrl(window.location.pathname));
   return true;
 }
 
@@ -50,6 +52,7 @@ function renderGlobalError(targetElement: HTMLElement, supportCode = "AP-CLIENT"
             <p>${deletionFailed
               ? "保存データの削除が完了したか確認できません。同じ作品を開いている他の画面を閉じてから、リロードしてください。"
               : "しばらくしてから、ページのリロードをお試しください。"}</p>
+            ${isMemoryStorage ? "<p>進行は保存されていないため、リロードすると最初からになります。</p>" : ""}
             <p class="out-game-support-code">エラーコード: ${supportCode}</p>
             <div class="out-game-error-actions">
               <button class="out-game-primary-button" type="button" data-reload-button>リロード</button>
@@ -81,11 +84,11 @@ async function start(targetElement: HTMLElement) {
   renderLoading(targetElement);
   let deletingBrowserProgress = false;
   try {
-    if (playerMode === "browser" && window.location.pathname.replace(/\/+$/, "").endsWith("/logout")) {
+    if (playerMode === "browser" && isAppEntryPath(window.location.pathname, "/logout")) {
       deletingBrowserProgress = true;
       if (await deleteBrowserProgressForRestart()) return;
       deletingBrowserProgress = false;
-      window.history.replaceState(window.history.state, "", "/");
+      window.history.replaceState(window.history.state, "", appReturnUrl(window.location.pathname));
     }
     await initializeBrowserPlayerStorage({
       enabled: playerMode === "browser",
@@ -100,7 +103,7 @@ async function start(targetElement: HTMLElement) {
     renderGlobalError(
       targetElement,
       isBrowserPlayerStorageError(error) ? "AP-STORAGE" : "AP-CLIENT",
-      playerMode === "browser" && isBrowserPlayerStorageError(error) && error.kind === "corrupt",
+      playerMode === "browser" && !isMemoryStorage && isBrowserPlayerStorageError(error) && error.kind === "corrupt",
       deletingBrowserProgress
     );
   }

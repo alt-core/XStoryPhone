@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { resourceUrl } from "./resourceUrls";
+
   export let src = "";
   export let alt = "";
 
@@ -23,7 +25,7 @@
 </script>
 
 <span class="attachment-image-frame" style={frameStyle}>
-  <img {src} {alt} on:load={updateFrameRatio} />
+  <img src={resourceUrl(src)} {alt} on:load={updateFrameRatio} />
 </span>
 
 <style>

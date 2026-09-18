@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { resourceUrl } from "./resourceUrls";
+
   const defaultVideoStillUrl = "/system/audio-only-video-thumbnail.png";
 
   export let src = "/system/audio-only-video-thumbnail.png";
   export let square = false;
   export let compact = false;
 
-  $: resolvedSrc = src || defaultVideoStillUrl;
+  $: resolvedSrc = resourceUrl(src || defaultVideoStillUrl);
 </script>
 
 <span class="video-still-frame" class:square class:compact role="img" aria-label="動画">

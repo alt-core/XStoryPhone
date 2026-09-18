@@ -55,6 +55,9 @@ test("デモシナリオは検索アプリを作らず、修復対象を保持�
   assert.equal(scenario.deviceState.apps.some((app) => app.initialState === "hidden"), false);
   assert.equal(scenario.deviceState.apps.some((app) => app.id === "chat"), false);
   assert.equal(scenario.worker.apps.find((app) => app.id === "chat")?.cond, "sealed_note_unlocked");
+  for (const audio of scenario.worker.generatedAudio.filter((item) => item.provider === "static")) {
+    assert.equal(audio.staticUrl, `/api/generated-audio/static/${audio.publicId}.wav`, "固定WAVは拡張子から再生形式を判定できるURLを生成する");
+  }
 });
 
 test("アプリregistryはシナリオ検証とクライアントの共通ID一覧になる", () => {

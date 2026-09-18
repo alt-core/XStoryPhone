@@ -46,6 +46,8 @@
   import { trackClientError, trackEvent } from "./system/analytics";
   import { createAppCatalog, type AppCatalogItem } from "./system/appCatalog";
   import { safeLocalStorage, safeSessionStorage } from "./system/browserStorage";
+  import { isMemoryStorage } from "./system/clientStorage.ts";
+  import { appReturnUrl, isAppEntryPath } from "./system/resourceUrls.ts";
   import {
     BROWSER_PLAYER_CLEARED_EVENT,
     BROWSER_PLAYER_STORAGE_ERROR_EVENT,
@@ -55,6 +57,7 @@
   } from "./system/browserPlayerStorage.ts";
   import {
     goBackInPhoneHistory,
+    phoneHistoryMarkerFrom,
     phoneHistoryStateFrom,
     pushPhoneHistoryRoute,
     replacePhoneHistoryRoute,
@@ -584,6 +587,11 @@
   }
 
   function forceReloadForClientRevision(serverRevision: string) {
+    // メモリ専用では自動reloadが進行を消し、reload済みの記録も保持できない。
+    if (isMemoryStorage) {
+      showGlobalError("client_revision_changed", { supportCode: "AP-UPDATE" });
+      return;
+    }
     clearPlayerStateCache();
     const reloadKey = `${CLIENT_RUNTIME_REVISION || "unknown"}:${serverRevision || "unknown"}`;
     if (safeSessionStorage.getItem(FORCE_RELOAD_STORAGE_KEY) === reloadKey) {
@@ -1399,11 +1407,12 @@
 
   function handlePhoneHistoryPop(event: PopStateEvent) {
     const state = phoneHistoryStateFrom(event.state);
-    if (!state || qaMode) {
-      return;
-    }
+    if (qaMode) return;
+    // 新しいページには古いmemory履歴の中身がない。他サイトの履歴には触れない。
+    if (!state && !(isMemoryStorage && phoneHistoryMarkerFrom(event.state))) return;
 
-    if (state.scope !== phoneHistoryScope || uiState.locked || !uiState.sessionToken || outOfGameVisible || gameOverVisible || allClearVisible || activeIncomingCall) {
+    if (!state || state.scope !== phoneHistoryScope || uiState.locked || !uiState.sessionToken || outOfGameVisible || gameOverVisible || allClearVisible || activeIncomingCall) {
+      phoneHistoryNavigationId += 1;
       clearPhoneRoute();
       replaceCurrentPhoneRoute({ kind: "home" });
       return;
@@ -1614,6 +1623,7 @@
     }
 
     clearPlayerStateCache();
+    if (playerMode === "server") clearTranscriptStorage();
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearRuntimeState();
     playerState = null;
@@ -1636,25 +1646,23 @@
   }
 
   function shouldResetPlayerStateFromUrl() {
-    const path = window.location.pathname.replace(/\/+$/, "");
-    return resetForTestingEnabled && path.endsWith(RESET_FOR_TESTING_PATH_SUFFIX);
+    return resetForTestingEnabled && isAppEntryPath(window.location.pathname, RESET_FOR_TESTING_PATH_SUFFIX);
   }
 
   function clearResetPlayerStateUrl() {
     if (shouldResetPlayerStateFromUrl()) {
-      window.history.replaceState(window.history.state, "", "/");
+      window.history.replaceState(window.history.state, "", appReturnUrl(window.location.pathname));
     }
   }
 
   function shouldLogoutFromUrl() {
-    const path = window.location.pathname.replace(/\/+$/, "");
     // browserの保存消去は、保存を読み込めない場合も使えるようmainで処理する。
-    return playerMode === "server" && path.endsWith(LOGOUT_PATH_SUFFIX);
+    return playerMode === "server" && isAppEntryPath(window.location.pathname, LOGOUT_PATH_SUFFIX);
   }
 
   function clearLogoutUrl() {
     if (shouldLogoutFromUrl()) {
-      window.history.replaceState(window.history.state, "", "/");
+      window.history.replaceState(window.history.state, "", appReturnUrl(window.location.pathname));
     }
   }
 
@@ -3641,7 +3649,7 @@
 <div class="stage" class:game-stage={!outOfGameVisible} class:out-game-stage={outOfGameVisible}>
   {#if globalErrorVisible}
     <div class="out-game-dialog out-game-dialog--error">
-      <GlobalErrorScreen message={globalErrorMessage} supportCode={globalErrorSupportCode} />
+      <GlobalErrorScreen message={globalErrorMessage} supportCode={globalErrorSupportCode} memoryMode={isMemoryStorage} />
     </div>
   {:else if holdScreenRequired}
     <div class="out-game-dialog out-game-dialog--hold">
@@ -3649,7 +3657,7 @@
     </div>
   {:else if startConfirmationRequired}
     <div class="out-game-dialog">
-      <StartConfirmationScreen browserMode={playerMode === "browser"} onConfirm={confirmStart} />
+      <StartConfirmationScreen browserMode={playerMode === "browser"} memoryMode={isMemoryStorage} onConfirm={confirmStart} />
     </div>
   {:else if playerPasscodeEntryRequired}
     <div class="out-game-dialog">

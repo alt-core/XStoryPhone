@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { resourceUrl } from "./resourceUrls";
+
   export let name = "";
   export let src = "";
   export let size = 32;
@@ -12,7 +14,7 @@
 
 <span class={`user-avatar ${tone}`} style={`--avatar-size:${size}px`} aria-label={name ? `${name}のアイコン` : "ユーザーアイコン"}>
   {#if usableSrc}
-    <img src={usableSrc} alt="" on:error={() => (failedSrc = usableSrc)} />
+    <img src={resourceUrl(usableSrc)} alt="" on:error={() => (failedSrc = usableSrc)} />
   {:else}
     <span>{initial}</span>
   {/if}

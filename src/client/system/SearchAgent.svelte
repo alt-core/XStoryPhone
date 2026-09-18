@@ -24,6 +24,7 @@
   } from "../apps/talkDelaySeenStorage";
   import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
   import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
+  import { resourceUrl, staticUrl } from "./resourceUrls";
 
   type SurfaceMessageMode = "search" | "dismissOnTap";
 
@@ -578,7 +579,7 @@
                           {/if}
                         </span>
                         {#if result.thumbnailUrl}
-                          <img src={result.thumbnailUrl} alt="" />
+                          <img src={resourceUrl(result.thumbnailUrl)} alt="" />
                         {:else if title}
                           <strong>{title}</strong>
                         {/if}
@@ -645,7 +646,7 @@
 
   <button class="agent-float" type="button" aria-expanded={expanded} aria-label={`${name}を開く`} title={name} on:click={toggleExpanded}>
     <span class="sprite-window" aria-hidden="true">
-      <img src="/search-agent/search-agent-spritesheet.svg" alt="" />
+      <img src={staticUrl("/search-agent/search-agent-spritesheet.svg")} alt="" />
     </span>
   </button>
 </section>

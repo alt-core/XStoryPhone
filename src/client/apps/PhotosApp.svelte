@@ -8,6 +8,7 @@
   import ScrollHint from "../system/ScrollHint.svelte";
   import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
+  import { resourceUrl } from "../system/resourceUrls";
   import AppShell from "./AppShell.svelte";
 
   export let photos: PhotoItem[] = [];
@@ -304,7 +305,7 @@
               on:click={() => openExpandedPhoto(selectedPhoto)}
             >
               <span class="photo-art large hasImage">
-                <img src={selectedPhoto.imageUrl} alt="" />
+                <img src={resourceUrl(selectedPhoto.imageUrl ?? "")} alt="" />
               </span>
             </button>
           {:else}
@@ -313,7 +314,7 @@
                 {#if isVideoContent(selectedPhoto)}
                   <VideoStillFrame src={selectedPhoto.imageUrl} square />
                 {:else}
-                  <img src={selectedPhoto.imageUrl} alt="" />
+                  <img src={resourceUrl(selectedPhoto.imageUrl)} alt="" />
                 {/if}
               {:else}
                 <span class="land-mark"></span>
@@ -374,7 +375,7 @@
               {#if isVideoContent(photo) && !photo.corrupted}
                 <VideoStillFrame src={photo.imageUrl} square compact />
               {:else if photo.imageUrl && !photo.corrupted}
-                <img src={photo.imageUrl} alt="" />
+                <img src={resourceUrl(photo.imageUrl)} alt="" />
               {:else if !photo.corrupted}
                 <span class="land-mark"></span>
               {/if}
@@ -412,7 +413,7 @@
             on:keydown={handleLightboxKeydown}
           >
             <img
-              src={enlargedPhoto.imageUrl}
+              src={resourceUrl(enlargedPhoto.imageUrl ?? "")}
               alt=""
               draggable="false"
               style={`--lightbox-offset-x: ${lightboxOffsetX}px`}

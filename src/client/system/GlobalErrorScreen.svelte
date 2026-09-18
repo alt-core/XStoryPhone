@@ -1,8 +1,10 @@
 <script lang="ts">
   import { AlertTriangle, RotateCcw } from "@lucide/svelte";
+  import { staticUrl } from "./resourceUrls";
 
   export let message = "";
   export let supportCode = "AP-CLIENT";
+  export let memoryMode = false;
 
   function reload() {
     window.location.reload();
@@ -21,6 +23,9 @@
     {:else}
       <p>しばらくしてから、ページのリロードをお試しください。</p>
     {/if}
+    {#if memoryMode}
+      <p>進行は保存されていないため、リロードすると最初からになります。</p>
+    {/if}
     <p class="out-game-support-code">エラーコード: {supportCode}</p>
     <div class="out-game-error-actions">
       <button class="out-game-primary-button" type="button" on:click={reload}>
@@ -28,6 +33,6 @@
         <span>リロード</span>
       </button>
     </div>
-    <a class="privacy-link" href="/privacy-policy.html" target="_blank" rel="noreferrer">プライバシーポリシー</a>
+    <a class="privacy-link" href={staticUrl("/privacy-policy.html")} target="_blank" rel="noreferrer">プライバシーポリシー</a>
   </div>
 </section>

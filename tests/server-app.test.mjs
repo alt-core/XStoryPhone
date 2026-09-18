@@ -183,6 +183,26 @@ function searchResultsFrom(body) {
     .flatMap((item) => item.results);
 }
 
+test("browserのJSONだけHTTP cacheを禁止し、監修・音声・serverの方針は変えない", async () => {
+  const previousMode = workerScenario.playerMode;
+  try {
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      const app = createApp({ store: new MemoryStore(), config: { appEnv: "development", llm: {} } });
+      app.get("/api/cache-probe", (c) => c.json({ ok: true }));
+      app.get("/api/admin/cache-probe", (c) => c.json({ ok: true }));
+      app.get("/api/media-probe", () => new Response("audio", {
+        headers: { "content-type": "audio/wav", "cache-control": "public, max-age=3600" }
+      }));
+      assert.equal((await app.request("http://localhost/api/cache-probe")).headers.get("cache-control"), mode === "browser" ? "no-store" : null);
+      assert.equal((await app.request("http://localhost/api/admin/cache-probe")).headers.get("cache-control"), null);
+      assert.equal((await app.request("http://localhost/api/media-probe")).headers.get("cache-control"), "public, max-age=3600");
+    }
+  } finally {
+    workerScenario.playerMode = previousMode;
+  }
+});
+
 test("共通HonoアプリはStoreを注入してセッション開始と状態取得を処理する", async () => {
   const store = new MemoryStore();
   const app = createApp({
@@ -569,6 +589,7 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
     });
     const started = await app.request("http://localhost/api/session/start", { method: "POST" });
     assert.equal(started.status, 200);
+    assert.equal(started.headers.get("cache-control"), "no-store");
     const startBody = await started.json();
     let firstToken = startBody.playerState.progressToken;
     assert.equal(typeof firstToken, "string");
@@ -582,6 +603,7 @@ test("browserモードはDBを使わず署名済み進行トークンと差分�
       body: JSON.stringify({ progressToken: firstToken })
     });
     assert.equal(refreshedAfterUpdate.status, 200);
+    assert.equal(refreshedAfterUpdate.headers.get("cache-control"), "no-store");
     const refreshedAfterUpdateBody = await refreshedAfterUpdate.json();
     assert.equal(refreshedAfterUpdateBody.playerState.progressToken, firstToken);
     firstToken = refreshedAfterUpdateBody.playerState.progressToken;
@@ -1132,6 +1154,7 @@ test("browserモードの進行データ上限超過は専用エラーで切り�
       console.error = originalConsoleError;
     }
     assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal((await response.json()).error, "browser_progress_too_large");
   } finally {
     workerScenario.playerMode = originalMode;

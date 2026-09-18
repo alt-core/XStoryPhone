@@ -1,4 +1,5 @@
 import { Howl, Howler } from "howler";
+import { resourceUrl } from "./resourceUrls.ts";
 
 const audioUnlockEvents = ["touchstart", "touchend", "pointerdown", "click", "keydown"] as const;
 const resumeTimeoutMs = 650;
@@ -241,7 +242,7 @@ async function loadPlaybackSegments(segments: AudioPlaybackSegment[]) {
   const loadedSegments: LoadedPlaybackSegment[] = [];
 
   for (const segment of segments) {
-    const howl = await loadHowl(segment.url);
+    const howl = await loadHowl(resourceUrl(segment.url));
     loadedSegments.push({
       ...segment,
       howl,

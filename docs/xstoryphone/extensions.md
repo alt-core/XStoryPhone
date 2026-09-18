@@ -30,6 +30,8 @@ export const projectGeneratedAudioProviders = [myTtsProvider];
 
 外部の音声生成サービスに固有の認証、payload、polling、音声保存はprovider内だけに置けます。
 
+組み込みの`static` providerは固定音声を返すため、完了済みjobがあっても現在のシナリオ定義の音声URLを使います。外部providerのプレイヤー固有の完了済み音声URLは、そのjobの成果物を維持します。
+
 ## 作品固有API
 
 `src/project/routes.ts` の `registerProjectRoutes` へHono routeを追加します。外部処理のcallbackや、作品固有データの取得などに使えます。

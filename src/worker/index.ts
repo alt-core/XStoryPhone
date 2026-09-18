@@ -13,6 +13,7 @@ export default {
         store: new D1Store(env.DB),
         config: {
           appEnv: env.APP_ENV,
+          allowedOrigins: env.ALLOWED_ORIGINS,
           adminReviewSecret: env.ADMIN_REVIEW_SECRET,
           browserStateSecret: env.BROWSER_STATE_SECRET,
           accessCodeSecret: env.ACCESS_CODE_SECRET,

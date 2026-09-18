@@ -11,6 +11,7 @@
   import UserAvatar from "../system/UserAvatar.svelte";
   import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
+  import { resourceUrl } from "../system/resourceUrls";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
   import {
     queuedTalkMessageDelayMs,
@@ -1037,7 +1038,7 @@
                 {#if isVideoPhoto(selectedPhoto)}
                   <VideoStillFrame src={selectedPhoto.imageUrl} square compact />
                 {:else}
-                  <img src={selectedPhoto.imageUrl ?? ""} alt="" />
+                  <img src={resourceUrl(selectedPhoto.imageUrl ?? "")} alt="" />
                 {/if}
                 <span>{isVideoPhoto(selectedPhoto) ? "動画" : "写真"}</span>
                 <button type="button" aria-label="写真を外す" title="写真を外す" on:click={() => (composer.photoId = "")}>

@@ -1,5 +1,6 @@
 import type { AppId } from "../scenario-runtime/types";
 import { isAppId } from "../../shared/appRegistry.ts";
+import { isMemoryStorage } from "./clientStorage.ts";
 
 export type PhoneHistoryRoute =
   | { kind: "home" }
@@ -15,6 +16,11 @@ export type PhoneHistoryState = {
 };
 
 type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
+type PhoneHistoryMarker = Pick<PhoneHistoryState, "owner" | "version" | "scope" | "index">;
+
+// 画面詳細は現在のページ・スコープだけで保持し、History APIには識別子だけ渡す。
+let memoryScope: string | undefined;
+const memoryStates = new Map<number, PhoneHistoryState>();
 
 function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -39,24 +45,19 @@ function routeFrom(value: unknown): PhoneHistoryRoute | null {
   };
 }
 
-export function phoneHistoryStateFrom(value: unknown, scope?: string): PhoneHistoryState | null {
+export function phoneHistoryMarkerFrom(value: unknown): PhoneHistoryMarker | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  const state = value as Partial<PhoneHistoryState>;
-  const route = routeFrom(state.route);
-  const previousRoute = state.previousRoute === undefined ? undefined : routeFrom(state.previousRoute);
+  const state = value as Partial<PhoneHistoryMarker>;
   if (
     state.owner !== "xstoryphone"
     || state.version !== 1
     || typeof state.scope !== "string"
     || !state.scope
-    || (scope !== undefined && state.scope !== scope)
     || !Number.isInteger(state.index)
     || (state.index ?? -1) < 0
-    || !route
-    || (state.previousRoute !== undefined && !previousRoute)
   ) {
     return null;
   }
@@ -65,10 +66,51 @@ export function phoneHistoryStateFrom(value: unknown, scope?: string): PhoneHist
     owner: "xstoryphone",
     version: 1,
     scope: state.scope,
-    index: state.index as number,
+    index: state.index as number
+  };
+}
+
+export function phoneHistoryStateFrom(value: unknown, scope?: string): PhoneHistoryState | null {
+  const marker = phoneHistoryMarkerFrom(value);
+  if (!marker || (scope !== undefined && marker.scope !== scope)) {
+    return null;
+  }
+  const state = isMemoryStorage
+    ? (marker.scope === memoryScope ? memoryStates.get(marker.index) : undefined)
+    : value as Partial<PhoneHistoryState>;
+  if (!state) {
+    return null;
+  }
+  const route = routeFrom(state.route);
+  const previousRoute = state.previousRoute === undefined ? undefined : routeFrom(state.previousRoute);
+  if (!route || (state.previousRoute !== undefined && !previousRoute)) {
+    return null;
+  }
+
+  return {
+    ...marker,
     route,
     ...(previousRoute ? { previousRoute } : {})
   };
+}
+
+function writePhoneHistoryState(history: HistoryLike, next: PhoneHistoryState, method: "pushState" | "replaceState") {
+  if (!isMemoryStorage) {
+    history[method](next, "");
+    return;
+  }
+
+  const { owner, version, scope, index } = next;
+  history[method]({ owner, version, scope, index }, "");
+  if (memoryScope !== scope) {
+    memoryStates.clear();
+    memoryScope = scope;
+  } else if (method === "pushState") {
+    for (const previousIndex of memoryStates.keys()) {
+      if (previousIndex >= index) memoryStates.delete(previousIndex);
+    }
+  }
+  memoryStates.set(index, next);
 }
 
 export function samePhoneHistoryRoute(left: PhoneHistoryRoute, right: PhoneHistoryRoute) {
@@ -86,7 +128,7 @@ export function replacePhoneHistoryRoute(history: HistoryLike, scope: string, ro
     route,
     ...(current?.previousRoute ? { previousRoute: current.previousRoute } : {})
   };
-  history.replaceState(next, "");
+  writePhoneHistoryState(history, next, "replaceState");
   return next;
 }
 
@@ -107,7 +149,7 @@ export function pushPhoneHistoryRoute(history: HistoryLike, scope: string, route
     route,
     previousRoute: current.route
   };
-  history.pushState(next, "");
+  writePhoneHistoryState(history, next, "pushState");
   return next;
 }
 

@@ -6,6 +6,36 @@ import { publicGeneratedAudioStates } from "../src/worker/services/generatedAudi
 import { reconcileGeneratedAudio } from "../src/worker/services/generatedAudio.ts";
 import { createStructuredOutputProvider } from "../src/worker/providers/structuredOutput.ts";
 
+test("固定音声のreadyジョブは現行URLへ追従し、外部providerの成果物と保存済みjobは書き換えない", async () => {
+  const fixed = { id: "fixed_update", publicId: "fixed-public", title: "固定音声", provider: "static", staticUrl: "/api/generated-audio/static/fixed-public.wav" };
+  const external = { id: "external_update", publicId: "external-public", title: "外部音声", provider: "custom-provider", staticUrl: "/fallback.wav" };
+  const jobs = [fixed, external].map((definition) => ({
+    id: `${definition.id}-job`, audioId: definition.id, provider: definition.provider,
+    inputHash: "hash", inputText: null, externalJobId: null, status: "ready", errorCode: null,
+    outputKey: definition === fixed ? "/api/generated-audio/static/fixed-public" : "https://audio.example/player-voice.wav",
+    createdAt: "2026-09-15T00:00:00.000Z", completedAt: "2026-09-15T00:00:01.000Z"
+  }));
+  const originalJobs = structuredClone(jobs);
+  const store = {
+    async generatedAudioJobs() { return jobs; },
+    async saveGeneratedAudioJob() { assert.fail("表示URL更新だけでDBへ書き込まない"); }
+  };
+  workerScenario.generatedAudio.push(fixed, external);
+  try {
+    for (const url of [fixed.staticUrl, "/updated-fixed.wav"]) {
+      fixed.staticUrl = url;
+      const states = await publicGeneratedAudioStates(store, "player-1");
+      assert.equal(states.find((item) => item.id === fixed.publicId).publicAudioUrl, url);
+      assert.equal(states.find((item) => item.id === fixed.publicId).status, "ready");
+      assert.equal(states.find((item) => item.id === external.publicId).publicAudioUrl, jobs[1].outputKey);
+    }
+    assert.deepEqual(jobs, originalJobs);
+  } finally {
+    workerScenario.generatedAudio.splice(workerScenario.generatedAudio.indexOf(fixed), 1);
+    workerScenario.generatedAudio.splice(workerScenario.generatedAudio.indexOf(external), 1);
+  }
+});
+
 test("生成音声providerの照会失敗は保存済み状態を保ち、PlayerState生成を止めない", async () => {
   const definition = {
     id: "test_audio",

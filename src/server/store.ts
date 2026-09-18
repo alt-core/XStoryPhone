@@ -355,6 +355,7 @@ export interface AppStore {
 
 export type AppConfig = {
   appEnv?: string;
+  allowedOrigins?: string;
   adminReviewSecret?: string;
   browserStateSecret?: string;
   accessCodeSecret?: string;

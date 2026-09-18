@@ -8,6 +8,8 @@ import type {
   TranscriptDelta
 } from "./playerApi.ts";
 import { limitedSearchAgentItems } from "./transcriptLimit.ts";
+import { prefixStorageKey, type ClientStorageSettings } from "../../shared/clientStorage.ts";
+import { clientStorageSettings } from "./clientStorage.ts";
 
 const DATABASE_VERSION = 2;
 const STORE_NAME = "records";
@@ -54,6 +56,7 @@ type GroupedDelta = StreamRecord;
 let database: IDBDatabase | null = null;
 let configuredProjectId = "";
 let configuredClientRevision = "";
+let configuredStorage: ClientStorageSettings | null = null;
 let storageEnabled = false;
 let connectionInvalidated = false;
 let currentMirror: CurrentRecord | null = null;
@@ -214,10 +217,14 @@ function requestValue<T>(request: IDBRequest<T>) {
   });
 }
 
-async function openDatabase(projectId: string) {
+function databaseName(projectId: string, storage: ClientStorageSettings) {
+  return prefixStorageKey(`xstoryphone-browser-player-${projectId}`, storage.prefix);
+}
+
+async function openDatabase(projectId: string, storage: ClientStorageSettings) {
   const factory = idbCall("IndexedDBを参照できません。", () => globalThis.indexedDB);
   if (!factory) throw unavailable("IndexedDBを利用できません。");
-  const name = `xstoryphone-browser-player-${projectId}`;
+  const name = databaseName(projectId, storage);
   return new Promise<IDBDatabase>((resolve, reject) => {
     let settled = false;
     const request = idbCall("IndexedDBを開けません。", () => factory.open(name, DATABASE_VERSION));
@@ -244,10 +251,15 @@ async function openDatabase(projectId: string) {
   });
 }
 
-function readyDatabase() {
-  if (!storageEnabled || !database || connectionInvalidated) {
+function readyStorage() {
+  if (!storageEnabled || connectionInvalidated || !configuredStorage) {
     throw unavailable("browser player storageが初期化されていません。");
   }
+}
+
+function readyDatabase() {
+  readyStorage();
+  if (!database) throw unavailable("browser player storageが初期化されていません。");
   return database;
 }
 
@@ -372,19 +384,41 @@ function mirrorsFromRecords(records: unknown[]) {
   return { current, streams };
 }
 
-export async function initializeBrowserPlayerStorage(options: { enabled: boolean; projectId: string; clientRevision: string }) {
+function selectedStorage(storage?: ClientStorageSettings) {
+  const selected = storage ?? configuredStorage ?? clientStorageSettings;
+  if (configuredStorage && (selected.mode !== configuredStorage.mode || selected.prefix !== configuredStorage.prefix)) {
+    throw unavailable("browser storageの保存方針・prefixは実行中に変更できません。");
+  }
+  return selected;
+}
+
+function clearMirrors() {
+  currentMirror = null;
+  streamMirror = new Map();
+  cachedPlayerStateMirror = null;
+}
+
+export async function initializeBrowserPlayerStorage(options: {
+  enabled: boolean;
+  projectId: string;
+  clientRevision: string;
+  storage?: ClientStorageSettings;
+}) {
   if (!options.enabled) return;
   if (!isNonEmptyString(options.projectId)) throw unavailable("project IDが未設定です。");
-  if (database) {
-    if (configuredProjectId !== options.projectId) throw unavailable("異なるprojectのbrowser storageを再初期化できません。");
-    return;
+  const storage = selectedStorage(options.storage);
+  if (configuredProjectId && configuredProjectId !== options.projectId) {
+    throw unavailable("異なるprojectのbrowser storageを再初期化できません。");
   }
+  if (storageEnabled && (storage.mode === "memory" || database)) return;
 
   storageEnabled = true;
   configuredProjectId = options.projectId;
   configuredClientRevision = options.clientRevision;
+  configuredStorage = Object.freeze({ ...storage });
   connectionInvalidated = false;
-  database = await openDatabase(options.projectId);
+  if (storage.mode === "memory") return;
+  database = await openDatabase(options.projectId, storage);
   database.onversionchange = () => {
     connectionInvalidated = true;
     database?.close();
@@ -403,8 +437,16 @@ export async function initializeBrowserPlayerStorage(options: { enabled: boolean
 }
 
 // 起動前または保存検査に失敗した後の明示初期化用。呼出し側で削除内容の確認を済ませる。
-export async function deleteBrowserPlayerDatabase(projectId: string): Promise<void> {
+export async function deleteBrowserPlayerDatabase(projectId: string, settings?: ClientStorageSettings): Promise<void> {
   if (!isNonEmptyString(projectId)) throw unavailable("project IDが未設定です。");
+  const storage = selectedStorage(settings);
+  if (storage.mode === "memory") {
+    if (configuredProjectId === projectId) {
+      clearMirrors();
+      storageEnabled = false;
+    }
+    return;
+  }
   const factory = idbCall("IndexedDBを参照できません。", () => globalThis.indexedDB);
   if (!factory) throw unavailable("IndexedDBを利用できません。");
   if (configuredProjectId === projectId && database) {
@@ -414,16 +456,13 @@ export async function deleteBrowserPlayerDatabase(projectId: string): Promise<vo
     storageEnabled = false;
   }
   await new Promise<void>((resolve, reject) => {
-    const request = idbCall("browser保存の初期化を開始できません。", () => factory.deleteDatabase(`xstoryphone-browser-player-${projectId}`));
+    const request = idbCall("browser保存の初期化を開始できません。", () => factory.deleteDatabase(databaseName(projectId, storage)));
     request.onsuccess = () => resolve();
     request.onerror = () => reject(unavailable("browser保存の初期化に失敗しました。", request.error));
     request.onblocked = () => reject(unavailable("browser保存の初期化が別の画面に阻まれています。他の画面を閉じてから再読み込みしてください。"));
   });
   if (configuredProjectId === projectId) {
-    currentMirror = null;
-    streamMirror = new Map();
-    cachedPlayerStateMirror = null;
-    configuredProjectId = "";
+    clearMirrors();
     configuredClientRevision = "";
     storageEnabled = false;
   }
@@ -433,6 +472,8 @@ export function loadBrowserPlayerMarker() { return currentMirror ? BROWSER_PLAYE
 export function loadCachedBrowserPlayerState() { return cachedPlayerStateMirror; }
 
 export async function prepareBrowserPlayerRequest() {
+  readyStorage();
+  if (configuredStorage?.mode === "memory") return currentMirror?.progressToken ?? null;
   const transaction = storageTransaction("readonly");
   const request = idbCall("browser currentの読込を開始できません。", () => transaction.objectStore(STORE_NAME).get(CURRENT_KEY));
   const complete = transactionDone(transaction);
@@ -522,6 +563,43 @@ function mergedStream(
   });
 }
 
+// 保存先に依存しない検証を終えてから、current・履歴・表示stateをまとめて確定する。
+function responseCandidate(
+  parentProgressToken: string | null,
+  nextCurrent: CurrentRecord,
+  groups: ReadonlyMap<string, GroupedDelta>,
+  storedCurrentValue: unknown,
+  storedStreams: ReadonlyMap<string, unknown>,
+  replaceStreams: boolean
+) {
+  const storedCurrent = storedCurrentValue === undefined ? null : currentRecord(storedCurrentValue);
+  if (storedCurrent?.progressToken !== (parentProgressToken ?? undefined)) {
+    throw conflict("browser応答の親tokenが現在の進行と一致しません。");
+  }
+  const snapshot = nextCurrent.publicState;
+  if (storedCurrent && snapshot.stateVersion < storedCurrent.publicState.stateVersion) {
+    throw corrupt("browser応答のstate versionが保存済み状態より古くなっています。");
+  }
+  const nextStreams = replaceStreams ? new Map<string, StreamRecord>() : new Map(streamMirror);
+  for (const [key, group] of groups) {
+    const merged = mergedStream(replaceStreams ? undefined : storedStreams.get(key), group, snapshot);
+    if (merged) nextStreams.set(key, merged);
+  }
+  validateStateStreams(snapshot, nextStreams);
+  return {
+    current: nextCurrent,
+    streams: nextStreams,
+    playerState: composePlayerState(snapshot, nextStreams)
+  };
+}
+
+function commitMirrors(candidate: ReturnType<typeof responseCandidate>) {
+  currentMirror = candidate.current;
+  streamMirror = candidate.streams;
+  cachedPlayerStateMirror = candidate.playerState;
+  return candidate.playerState;
+}
+
 export function commitBrowserPlayerResponse(
   parentProgressToken: string | null,
   state: PlayerStateResponse,
@@ -534,7 +612,7 @@ export function commitBrowserPlayerResponse(
   let groups: Map<string, GroupedDelta>;
   try {
     snapshot = publicStateSnapshot(state);
-    groups = groupedDeltas(state.transcriptDeltas);
+    groups = groupedDeltas(structuredClone(state.transcriptDeltas));
   } catch (error) {
     return Promise.reject(normalizeStorageError(error, "browser応答の保存準備に失敗しました。"));
   }
@@ -547,6 +625,19 @@ export function commitBrowserPlayerResponse(
   };
 
   return new Promise<PlayerState>((resolve, reject) => {
+    if (configuredStorage?.mode === "memory") {
+      try {
+        readyStorage();
+        const candidate = responseCandidate(
+          parentProgressToken, nextCurrent, groups, currentMirror ?? undefined, streamMirror, Boolean(options.replaceStreams)
+        );
+        // awaitを挟まず、一度だけmirrorを差し替える。
+        resolve(commitMirrors(candidate));
+      } catch (error) {
+        reject(normalizeStorageError(error, "browser応答の保存に失敗しました。"));
+      }
+      return;
+    }
     const transaction = storageTransaction("readwrite");
     const store = idbCall("browser保存storeを開けません。", () => transaction.objectStore(STORE_NAME));
     const currentRead = idbCall("browser currentの読込を開始できません。", () => store.get(CURRENT_KEY));
@@ -558,7 +649,7 @@ export function commitBrowserPlayerResponse(
         ]));
     let remaining = 1 + streamReads.size;
     let failure: BrowserPlayerStorageError | null = null;
-    let candidateStreams: Map<string, StreamRecord> | null = null;
+    let candidate: ReturnType<typeof responseCandidate> | null = null;
 
     const abort = (error: unknown) => {
       failure = normalizeStorageError(error, "browser応答の保存に失敗しました。");
@@ -567,29 +658,23 @@ export function commitBrowserPlayerResponse(
     const finishReads = () => {
       remaining -= 1;
       if (remaining > 0 || failure) return;
-      let storedCurrent: CurrentRecord | null = null;
       try {
-        storedCurrent = currentRead.result === undefined ? null : currentRecord(currentRead.result);
-        if (storedCurrent?.progressToken !== (parentProgressToken ?? undefined)) {
-          throw conflict("browser応答の親tokenが現在の進行と一致しません。");
-        }
-        if (storedCurrent && snapshot.stateVersion < storedCurrent.publicState.stateVersion) {
-          throw corrupt("browser応答のstate versionが保存済み状態より古くなっています。");
-        }
-        const nextStreams = options.replaceStreams ? new Map<string, StreamRecord>() : new Map(streamMirror);
-        for (const [key, group] of groups) {
-          const merged = mergedStream(streamReads.get(key)?.result, group, snapshot);
-          if (merged) nextStreams.set(key, merged);
-        }
-        validateStateStreams(snapshot, nextStreams);
+        const next = responseCandidate(
+          parentProgressToken,
+          nextCurrent,
+          groups,
+          currentRead.result,
+          new Map([...streamReads].map(([key, request]) => [key, request.result])),
+          Boolean(options.replaceStreams)
+        );
 
         if (options.replaceStreams) store.clear();
         for (const [key] of groups) {
-          const stream = nextStreams.get(key);
+          const stream = next.streams.get(key);
           if (stream) store.put(stream);
         }
-        store.put(nextCurrent);
-        candidateStreams = nextStreams;
+        store.put(next.current);
+        candidate = next;
       } catch (error) {
         abort(error);
       }
@@ -602,19 +687,11 @@ export function commitBrowserPlayerResponse(
       request.onerror = () => abort(unavailable("browser streamの読込に失敗しました。", request.error));
     }
     transaction.oncomplete = () => {
-      if (!candidateStreams) {
+      if (!candidate) {
         reject(corrupt("browser保存transactionが結果なしで完了しました。"));
         return;
       }
-      try {
-        const candidatePlayerState = composePlayerState(snapshot, candidateStreams);
-        currentMirror = nextCurrent;
-        streamMirror = candidateStreams;
-        cachedPlayerStateMirror = candidatePlayerState;
-        resolve(candidatePlayerState);
-      } catch (error) {
-        reject(normalizeStorageError(error, "保存済みbrowser PlayerStateの再構成に失敗しました。"));
-      }
+      resolve(commitMirrors(candidate));
     };
     transaction.onabort = () => reject(failure ?? unavailable("browser保存transactionが中断されました。", transaction.error));
     transaction.onerror = () => undefined;
@@ -623,9 +700,18 @@ export function commitBrowserPlayerResponse(
 
 export function clearBrowserPlayerStorage(options: { expectedProgressToken?: string | null } = {}) {
   return new Promise<void>((resolve, reject) => {
+    const conditional = Object.prototype.hasOwnProperty.call(options, "expectedProgressToken");
+    if (configuredStorage?.mode === "memory") {
+      readyStorage();
+      if (conditional && currentMirror?.progressToken !== (options.expectedProgressToken ?? undefined)) {
+        throw conflict("browser保存を消去する親tokenが現在の進行と一致しません。");
+      }
+      clearMirrors();
+      resolve();
+      return;
+    }
     const transaction = storageTransaction("readwrite");
     const store = idbCall("browser保存storeを開けません。", () => transaction.objectStore(STORE_NAME));
-    const conditional = Object.prototype.hasOwnProperty.call(options, "expectedProgressToken");
     const currentRead = conditional
       ? idbCall("browser currentの読込を開始できません。", () => store.get(CURRENT_KEY))
       : null;
@@ -654,9 +740,7 @@ export function clearBrowserPlayerStorage(options: { expectedProgressToken?: str
       clear();
     }
     transaction.oncomplete = () => {
-      currentMirror = null;
-      streamMirror = new Map();
-      cachedPlayerStateMirror = null;
+      clearMirrors();
       resolve();
     };
     transaction.onabort = () => reject(failure ?? unavailable("browser保存の消去transactionが中断されました。", transaction.error));

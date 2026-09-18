@@ -1,7 +1,9 @@
+import { clientStorageKey, isMemoryStorage } from "../system/clientStorage.ts";
+
 export type SeenMessageIdsByThread = Record<string, Set<string>>;
 type TalkDelayScope = "messages" | "chat" | "search_agent";
 
-const STORAGE_KEY = "xstoryphone.talk-delay-seen";
+const STORAGE_KEY = clientStorageKey("xstoryphone.talk-delay-seen");
 const STORAGE_VERSION = 1;
 const MAX_SCOPES = 24;
 const MAX_THREADS_PER_SCOPE = 120;
@@ -16,6 +18,7 @@ let memoryStore: StoredTalkDelaySeen = { version: STORAGE_VERSION, scopes: {} };
 const clearedScopeKeys = new Set<string>();
 
 function availableStorage() {
+  if (isMemoryStorage) return undefined;
   try {
     return typeof localStorage === "undefined" ? undefined : localStorage;
   } catch {

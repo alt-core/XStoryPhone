@@ -128,8 +128,8 @@ function transactionDone(transaction) {
   });
 }
 
-async function openDatabase(projectId, version = 2) {
-  const request = globalThis.indexedDB.open(`xstoryphone-browser-player-${projectId}`, version);
+async function openDatabase(projectId, version = 2, prefix = "") {
+  const request = globalThis.indexedDB.open(`${prefix ? `${prefix}:` : ""}xstoryphone-browser-player-${projectId}`, version);
   const database = await new Promise((resolve, reject) => {
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("records")) {
@@ -142,8 +142,8 @@ async function openDatabase(projectId, version = 2) {
   return database;
 }
 
-async function recordsFor(projectId) {
-  const database = await openDatabase(projectId);
+async function recordsFor(projectId, prefix = "") {
+  const database = await openDatabase(projectId, 2, prefix);
   const transaction = database.transaction("records", "readonly");
   const done = transactionDone(transaction);
   const request = transaction.objectStore("records").getAll();
@@ -168,6 +168,191 @@ async function replaceCurrentToken(projectId, token) {
 }
 
 test("browser player storage", async (suite) => {
+  for (const mode of ["persistent", "memory"]) {
+    await suite.test(`${mode}: 検証・履歴merge・rollback・条件付きclearの共通契約`, async () => {
+      globalThis.indexedDB = new IDBFactory();
+      installBrowserStorage();
+      const storage = await freshStorageModule();
+      await storage.initializeBrowserPlayerStorage({
+        enabled: true, projectId: `shared-${mode}`, clientRevision: "client-current", storage: { mode, prefix: "" }
+      });
+      const delta = (...messages) => ({ kind: "sms", talkId: "guide", transcriptKey: "talk-key", messages });
+      await assert.rejects(storage.commitBrowserPlayerResponse(null, playerState({
+        token: "token-1", talkLastSeq: 3, deltas: [delta(smsMessage(3))]
+      }), { replaceStreams: true }), (error) => (
+        error instanceof storage.BrowserPlayerStorageError && error.kind === "corrupt"
+      ));
+      assert.equal(await storage.prepareBrowserPlayerRequest(), null);
+      assert.equal(storage.loadCachedBrowserPlayerState(), null);
+      await storage.commitBrowserPlayerResponse(null, playerState({
+        token: "token-2", talkLastSeq: 2, deltas: [delta(smsMessage(2))]
+      }), { replaceStreams: true });
+      const before = structuredClone(storage.loadCachedBrowserPlayerState());
+      for (const [parent, response, kind] of [
+        ["old-token", playerState({ token: "token-3", talkLastSeq: 2 }), "conflict"],
+        ["token-2", playerState({ token: "token-1", talkLastSeq: 2 }), "corrupt"],
+        ["token-2", playerState({ token: "token-3", talkLastSeq: 4, deltas: [delta(smsMessage(4))] }), "corrupt"],
+        ["token-2", playerState({ token: "token-3", talkLastSeq: 2, deltas: [delta(smsMessage(2, "異なる本文"))] }), "corrupt"],
+        ["token-2", playerState({ token: "token-3", talkLastSeq: 4, deltas: [delta(smsMessage(3))] }), "corrupt"],
+        ["token-2", playerState({ token: "token-3", talkLastSeq: 3, deltas: [delta({ ...smsMessage(3), talkId: "別の会話" })] }), "corrupt"]
+      ]) {
+        await assert.rejects(storage.commitBrowserPlayerResponse(parent, response), (error) => (
+          error instanceof storage.BrowserPlayerStorageError && error.kind === kind
+        ));
+        assert.equal(await storage.prepareBrowserPlayerRequest(), "token-2");
+        assert.deepEqual(storage.loadCachedBrowserPlayerState(), before);
+        if (mode === "persistent") {
+          const records = await recordsFor(`shared-${mode}`);
+          assert.equal(records.find((record) => record.key === "current").progressToken, "token-2");
+          assert.deepEqual(records.find((record) => record.key === "talk:guide").messages.map((message) => message.seq), [2]);
+        }
+      }
+      await assert.rejects(
+        storage.clearBrowserPlayerStorage({ expectedProgressToken: "old-token" }),
+        (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "conflict"
+      );
+      assert.deepEqual(storage.loadCachedBrowserPlayerState(), before);
+      const incoming = smsMessage(3);
+      const merged = await storage.commitBrowserPlayerResponse("token-2", {
+        ...playerState({ token: "token-3", talkLastSeq: 3, deltas: [delta(smsMessage(2)), delta(incoming)] }),
+        transcriptRevision: "transcript-updated",
+        revision: "scenario-updated"
+      });
+      assert.deepEqual(merged.smsMessages.map((message) => message.seq), [2, 3]);
+      assert.equal(merged.transcriptRevision, "transcript-updated");
+      incoming.body = "呼出し元で変更";
+      assert.equal(storage.loadCachedBrowserPlayerState().smsMessages.at(-1).body, "メッセージ3");
+      await assert.rejects(
+        storage.commitBrowserPlayerResponse("token-3", playerState({ token: "token-4", talkLastSeq: 3 }), { replaceStreams: true }),
+        (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "corrupt"
+      );
+      assert.equal(await storage.prepareBrowserPlayerRequest(), "token-3");
+      assert.deepEqual(storage.loadCachedBrowserPlayerState().smsMessages.map((message) => message.seq), [2, 3]);
+      const replaced = await storage.commitBrowserPlayerResponse("token-3", playerState({ token: "token-4" }), { replaceStreams: true });
+      assert.deepEqual(replaced.smsMessages, []);
+      await storage.clearBrowserPlayerStorage({ expectedProgressToken: "token-4" });
+      assert.equal(await storage.prepareBrowserPlayerRequest(), null);
+      assert.equal(storage.loadBrowserPlayerMarker(), undefined);
+      assert.equal(storage.loadCachedBrowserPlayerState(), null);
+      await assert.rejects(
+        storage.commitBrowserPlayerResponse("token-4", playerState({ token: "token-5" })),
+        (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "conflict"
+      );
+      await storage.commitBrowserPlayerResponse(null, playerState({ token: "token-5" }), { replaceStreams: true });
+      assert.deepEqual(storage.loadCachedBrowserPlayerState().smsMessages, []);
+    });
+  }
+
+  await suite.test("memoryは初期化前の削除・通常処理・終了でも既存の永続保存へ触れない", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    installBrowserStorage();
+    const persistent = await freshStorageModule();
+    await persistent.initializeBrowserPlayerStorage({ enabled: true, projectId: "untouched", clientRevision: "client-current" });
+    await persistent.commitBrowserPlayerResponse(null, playerState({ token: "token-1" }));
+    const retained = await recordsFor("untouched");
+    const descriptors = [
+      [globalThis, "indexedDB"], [globalThis.window, "localStorage"], [globalThis.window, "sessionStorage"]
+    ].map(([object, key]) => ({ object, key, descriptor: Object.getOwnPropertyDescriptor(object, key) }));
+    let accesses = 0;
+    for (const { object, key } of descriptors) {
+      Object.defineProperty(object, key, {
+        configurable: true,
+        get() { accesses += 1; throw new Error(`${key}へ触れました`); }
+      });
+    }
+    try {
+      const memory = await freshStorageModule();
+      const settings = { mode: "memory", prefix: "" };
+      await memory.deleteBrowserPlayerDatabase("untouched", settings);
+      await memory.initializeBrowserPlayerStorage({
+        enabled: true, projectId: "untouched", clientRevision: "client-current", storage: settings
+      });
+      assert.equal(await memory.prepareBrowserPlayerRequest(), null);
+      await memory.commitBrowserPlayerResponse(null, playerState({ token: "token-2" }));
+      await memory.clearBrowserPlayerStorage();
+      await memory.commitBrowserPlayerResponse(null, playerState({ token: "token-3" }));
+      await memory.deleteBrowserPlayerDatabase("untouched");
+      assert.equal(memory.loadBrowserPlayerMarker(), undefined);
+      assert.equal(memory.loadCachedBrowserPlayerState(), null);
+      await memory.initializeBrowserPlayerStorage({ enabled: true, projectId: "untouched", clientRevision: "client-current" });
+      assert.equal(await memory.prepareBrowserPlayerRequest(), null);
+      assert.equal(accesses, 0);
+    } finally {
+      for (const { object, key, descriptor } of descriptors) {
+        if (descriptor) Object.defineProperty(object, key, descriptor);
+        else delete object[key];
+      }
+    }
+    assert.deepEqual(await recordsFor("untouched"), retained);
+    assert.equal(await persistent.prepareBrowserPlayerRequest(), "token-1");
+  });
+
+  await suite.test("memoryの別ページ・通常reloadは独立し、設定とprojectは実行中に切り替わらない", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    installBrowserStorage();
+    const first = await freshStorageModule();
+    const second = await freshStorageModule();
+    const settings = { mode: "memory", prefix: "shared-prefix" };
+    const options = { enabled: true, projectId: "independent", clientRevision: "client-current", storage: settings };
+    await first.initializeBrowserPlayerStorage(options);
+    await second.initializeBrowserPlayerStorage(options);
+    await first.commitBrowserPlayerResponse(null, playerState({ token: "first-1" }));
+    assert.equal(await second.prepareBrowserPlayerRequest(), null);
+    await second.commitBrowserPlayerResponse(null, playerState({ token: "second-2" }));
+    await first.clearBrowserPlayerStorage();
+    assert.equal(await second.prepareBrowserPlayerRequest(), "second-2");
+    await first.deleteBrowserPlayerDatabase("independent");
+    assert.equal(await second.prepareBrowserPlayerRequest(), "second-2");
+    const reload = await freshStorageModule();
+    await reload.initializeBrowserPlayerStorage(options);
+    assert.equal(await reload.prepareBrowserPlayerRequest(), null);
+    for (const changed of [
+      { ...options, projectId: "other-project" },
+      { ...options, storage: { mode: "persistent", prefix: "shared-prefix" } },
+      { ...options, storage: { mode: "memory", prefix: "other-prefix" } }
+    ]) {
+      await assert.rejects(first.initializeBrowserPlayerStorage(changed), (error) => (
+        error instanceof first.BrowserPlayerStorageError && error.kind === "unavailable"
+      ));
+    }
+    await assert.rejects(
+      second.deleteBrowserPlayerDatabase("independent", { mode: "persistent", prefix: "shared-prefix" }),
+      (error) => error instanceof second.BrowserPlayerStorageError && error.kind === "unavailable"
+    );
+    settings.mode = "persistent";
+    settings.prefix = "mutated";
+    assert.equal(await second.prepareBrowserPlayerRequest(), "second-2");
+    assert.deepEqual(await globalThis.indexedDB.databases(), []);
+  });
+
+  await suite.test("prefix付きDBのopen・削除は旧保存と別prefixを読み込まず消さない", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    installBrowserStorage();
+    const old = await freshStorageModule();
+    await old.initializeBrowserPlayerStorage({ enabled: true, projectId: "namespaced", clientRevision: "client-current" });
+    await old.commitBrowserPlayerResponse(null, playerState({ token: "old-1" }));
+    const modules = new Map();
+    for (const prefix of ["author-A", "author-B"]) {
+      const storage = await freshStorageModule();
+      await storage.initializeBrowserPlayerStorage({
+        enabled: true, projectId: "namespaced", clientRevision: "client-current", storage: { mode: "persistent", prefix }
+      });
+      assert.equal(await storage.prepareBrowserPlayerRequest(), null);
+      await storage.commitBrowserPlayerResponse(null, playerState({ token: `${prefix}-2` }));
+      modules.set(prefix, storage);
+    }
+    await modules.get("author-A").deleteBrowserPlayerDatabase("namespaced");
+    assert.equal(await modules.get("author-B").prepareBrowserPlayerRequest(), "author-B-2");
+    assert.equal(await old.prepareBrowserPlayerRequest(), "old-1");
+    assert.deepEqual((await globalThis.indexedDB.databases()).map((database) => database.name).sort(), [
+      "author-B:xstoryphone-browser-player-namespaced", "xstoryphone-browser-player-namespaced"
+    ]);
+    const recovery = await freshStorageModule();
+    await recovery.deleteBrowserPlayerDatabase("namespaced", { mode: "persistent", prefix: "author-B" });
+    assert.deepEqual((await globalThis.indexedDB.databases()).map((database) => database.name), ["xstoryphone-browser-player-namespaced"]);
+    assert.equal((await recordsFor("namespaced")).find((record) => record.key === "current").progressToken, "old-1");
+  });
+
   await suite.test("serverモードではIndexedDBへ触れない", async () => {
     installBrowserStorage();
     const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");

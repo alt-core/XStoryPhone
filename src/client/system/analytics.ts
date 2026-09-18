@@ -1,5 +1,6 @@
 import type { AppId } from "../scenario-runtime/types";
 import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated";
+import { isMemoryStorage } from "./clientStorage.ts";
 
 type AnalyticsEvent =
   | { name: "app_open"; appId: AppId }
@@ -34,7 +35,7 @@ const MAX_ERROR_REPORTS_PER_PAGE = 20;
 const reportedErrorKeys = new Set<string>();
 
 function analyticsEnabled() {
-  return /^G-[A-Z0-9]+$/i.test(GA4_MEASUREMENT_ID);
+  return !isMemoryStorage && /^G-[A-Z0-9]+$/i.test(GA4_MEASUREMENT_ID);
 }
 
 function ensureGoogleTag() {

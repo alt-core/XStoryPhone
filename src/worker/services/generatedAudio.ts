@@ -146,12 +146,14 @@ export async function publicGeneratedAudioStates(
   const jobById = new Map(reconciledJobs.map((row) => [row.audioId, row]));
   return workerScenario.generatedAudio.map((definition) => {
     const job = jobById.get(definition.id);
+    // 固定音声はジョブ固有の成果物ではないので、保存時のURLでなく現行定義を使う。
+    const outputUrl = job?.provider === "static" && definition.provider === "static" ? definition.staticUrl : job?.outputKey;
     return {
       id: definition.publicId,
       status: job?.status ?? "idle",
       requestedAt: job?.createdAt ?? null,
       completedAt: job?.completedAt ?? null,
-      publicAudioUrl: job?.status === "ready" ? job.outputKey : null,
+      publicAudioUrl: job?.status === "ready" ? outputUrl ?? null : null,
       fallbackAudioUrl: definition.staticUrl
     };
   });

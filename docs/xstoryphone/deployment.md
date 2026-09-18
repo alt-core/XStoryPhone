@@ -2,6 +2,8 @@
 
 XStoryPhoneは、Cloudflare Workers、Static Assets、D1を使います。
 
+ゲーム画面だけを別の静的ホストへ置く場合は、[外部静的ホスト・サブパスへの配置](external-hosting.md)を参照してください。既存WorkerのAPIを外部画面から利用でき、WorkerとStatic Assetsの一体配備は維持します。専用API-only Workerへの置換は行いません。
+
 ## 環境
 
 ゲームAPIは `wrangler.jsonc` の `env.dev`、`env.stg`、`env.prod` に分けています。top-levelは誤デプロイ防止用Workerであり、ゲームAPIやD1を含みません。
@@ -48,7 +50,7 @@ npx wrangler secret put ADMIN_REVIEW_SECRET --env prod
 npx wrangler secret put BROWSER_STATE_SECRET --env prod
 ```
 
-`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保存済みの進行tokenを検証できなくなります。誤って変更した場合は元の値へ戻してください。クライアントは401で保存を自動削除せず、`AP-BROWSER-STATE` を表示するため、設定復旧後にリロードして再開できます。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
+`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保持中の進行tokenを検証できなくなります。誤って変更した場合は元の値へ戻してください。クライアントは401で状態を自動削除せず、`AP-BROWSER-STATE` を表示します。persistentでは設定復旧後にリロードして再開できますが、memoryではリロードすると進行を失います。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
 
 LLMを使う場合は `LLM_API_KEY` もsecretへ登録し、model、base URL、timeoutを対象環境のvarsへ設定します。
 
@@ -76,7 +78,9 @@ LLM_PROFILE_ULTRA_MODEL / REASONING_EFFORT / TIMEOUT_MS
 
 `LLM_ANALYTICS_ENABLED=true`は本文を含まないusage logを有効にします。`LLM_DEBUG_LOGS=true`は入力と応答を含むため、調査中だけ有効にし、調査後はfalseへ戻してください。hook LLM cacheの保持日数は`LLM_RESULT_RETENTION_DAYS`で指定し、未指定時は30日です。D1は期限切れ行を少数ずつbest-effort削除します。
 
-GA4による任意の計測を使う場合だけ、ビルド実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
+プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser専用で、serverとの組合せや不正値はクライアントビルドで拒否します。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
+
+GA4による任意の計測を使う場合だけ、ビルド実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定または `VITE_XSTORYPHONE_CLIENT_STORAGE=memory` なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 
 実プレイ入力を分岐監修へ利用する場合だけ、対象環境のvarsへ `PLAYER_INPUT_LOGGING=true` を設定します。未設定または`false`では、検索語・会話入力を追加しません。既存ログは自動削除されません。ゲーム進行と監修画面の試行入力・監修指示には影響しません。
 

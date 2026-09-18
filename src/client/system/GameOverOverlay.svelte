@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { resourceUrl } from "./resourceUrls";
 
   type GlitchBand = {
     id: number;
@@ -136,7 +137,7 @@
   >
     <span class="game-over-content">
       {#if imageUrl}
-        <img class="game-over-logo" src={imageUrl} alt="" aria-hidden="true" />
+        <img class="game-over-logo" src={resourceUrl(imageUrl)} alt="" aria-hidden="true" />
       {:else if titleText}
         <span class="game-over-title" aria-hidden="true">{titleText}</span>
       {/if}

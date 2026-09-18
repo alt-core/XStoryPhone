@@ -8,6 +8,7 @@
     type AudioPlaybackSegment
   } from "../system/audioEngine";
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
+  import { resourceUrl } from "../system/resourceUrls";
   import ScrollHint from "../system/ScrollHint.svelte";
   import { captionAt } from "../system/timedTranscript";
   import AppShell from "./AppShell.svelte";
@@ -608,7 +609,7 @@
           <iframe
             bind:this={broadcastFrameElement}
             class="broadcast-frame"
-            src={selectedRadioForm.url}
+            src={resourceUrl(selectedRadioForm.url)}
             title={selectedRadioForm.label}
             sandbox="allow-forms allow-scripts"
           ></iframe>

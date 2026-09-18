@@ -38,6 +38,7 @@ const app = createApp({
   store: new DynamoStore(transport, tableName),
   config: {
     appEnv: process.env.APP_ENV,
+    allowedOrigins: process.env.ALLOWED_ORIGINS,
     adminReviewSecret: process.env.ADMIN_REVIEW_SECRET,
     browserStateSecret: process.env.BROWSER_STATE_SECRET,
     accessCodeSecret: process.env.ACCESS_CODE_SECRET,

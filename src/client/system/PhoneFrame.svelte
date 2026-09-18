@@ -5,6 +5,7 @@
   import SearchAgent from "./SearchAgent.svelte";
   import IncomingCallScreen from "./IncomingCallScreen.svelte";
   import StatusBar from "./StatusBar.svelte";
+  import { resourceUrl } from "./resourceUrls";
 
   type SurfaceMessageMode = "search" | "dismissOnTap";
 
@@ -48,7 +49,7 @@
     linkId?: string
   ) => void | Promise<void> = () => {};
 
-  $: wallpaperStyle = wallpaperUrl ? `--phone-wallpaper-image: url("${wallpaperUrl}");` : "";
+  $: wallpaperStyle = wallpaperUrl ? `--phone-wallpaper-image: url("${resourceUrl(wallpaperUrl)}");` : "";
 </script>
 
 <div class="phone-shell" class:frame-only={frameOnly} aria-label={osName} data-phone-shell>

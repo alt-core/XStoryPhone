@@ -3,6 +3,7 @@
   import type { NotificationItem } from "../scenario-runtime/types";
   import { appCatalog, type AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
+  import { staticUrl } from "./resourceUrls";
 
   export let notifications: NotificationItem[] = [];
   export let apps: AppCatalogItem[] = appCatalog;
@@ -62,9 +63,9 @@
       {/each}
     </div>
     <nav class="shade-utility-links" aria-label="システム情報">
-      <a href="/privacy-policy.html#contact" target="_blank" rel="noreferrer">システムへのお問い合わせ</a>
+      <a href={staticUrl("/privacy-policy.html#contact")} target="_blank" rel="noreferrer">システムへのお問い合わせ</a>
       <span aria-hidden="true">／</span>
-      <a href="/privacy-policy.html#privacy" target="_blank" rel="noreferrer">プライバシーポリシー</a>
+      <a href={staticUrl("/privacy-policy.html#privacy")} target="_blank" rel="noreferrer">プライバシーポリシー</a>
     </nav>
   </section>
 {/if}

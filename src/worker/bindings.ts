@@ -7,6 +7,7 @@ export type Bindings = LlmProviderEnv & {
   BROWSER_STATE_SECRET?: string;
   ACCESS_CODE_SECRET?: string;
   APP_ENV?: string;
+  ALLOWED_ORIGINS?: string;
   PLAYER_INPUT_LOGGING?: string;
   LLM_RESULT_RETENTION_DAYS?: string;
 };

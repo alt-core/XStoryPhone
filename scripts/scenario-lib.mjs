@@ -1439,7 +1439,7 @@ export function loadAndValidateScenario() {
   const normalizedAudio = generatedAudio.map((audio) => ({
     ...audio,
     publicId: publicIds.generatedAudio[audio.id],
-    staticUrl: audio.provider === "static" ? `/api/generated-audio/static/${publicIds.generatedAudio[audio.id]}` : ""
+    staticUrl: audio.provider === "static" ? `/api/generated-audio/static/${publicIds.generatedAudio[audio.id]}.wav` : ""
   }));
   const normalizedIncomingCalls = incomingCalls.map((call) => ({
     ...call,

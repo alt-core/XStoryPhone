@@ -5,8 +5,10 @@ import ts from "typescript";
 import test from "node:test";
 import { BrowserPlayerStorageError, isBrowserPlayerStorageError } from "../src/client/system/browserPlayerStorage.ts";
 import { componentFunctionHarness } from "./helpers/component-script-harness.mjs";
+import { isStaticEntryPath } from "../src/shared/deploymentUrls.ts";
+import { clearTranscriptStorage } from "../src/client/system/playerApi.ts";
 
-function startupHarness({ mode = "browser", pathname = "/", testing = false, confirmed = true, initializationError, deletionError } = {}) {
+function startupHarness({ mode = "browser", memory = false, base = "/", pathname = "/", testing = false, confirmed = true, initializationError, deletionError } = {}) {
   const calls = [];
   const buttons = new Map();
   const target = {
@@ -20,7 +22,9 @@ function startupHarness({ mode = "browser", pathname = "/", testing = false, con
     }
   };
   const context = {
-    playerMode: mode, projectId: "test-project", resetForTestingEnabled: testing,
+    playerMode: mode, isMemoryStorage: memory, projectId: "test-project", resetForTestingEnabled: testing,
+    appReturnUrl: (pathname) => pathname.endsWith("/index.html") ? `${base}index.html` : base,
+    isAppEntryPath: (pathname, entry) => isStaticEntryPath(pathname, entry, base),
     projectConstants: { "client.runtime_revision": "test-revision" },
     defaultUiState: { version: 5, locked: true, lastContentByAppId: {}, localTalkReadCursors: {}, pendingTalkReadCursors: {} },
     isBrowserPlayerStorageError,
@@ -63,6 +67,56 @@ test("dev/stgの明示logoutは確認なし、serverのlogoutはAppへ渡してD
   assert.deepEqual(server.calls, ["initialize:false", "clear-loading", "mount"]);
 });
 
+test("serverのlogoutは会話cacheに残る認証tokenも消し、無関係な保存は残す", () => {
+  const originalWindow = globalThis.window;
+  const values = new Map([
+    ["xstoryphone.transcripts.v2", JSON.stringify({ credential: "session-token", transcripts: { talk: {} } })],
+    ["another-work", "keep"]
+  ]);
+  globalThis.window = { localStorage: { removeItem: (key) => values.delete(key) } };
+  const calls = [];
+  const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), ["clearLocalAuthenticationForLogout"], {
+    qaMode: false, playerMode: "server", initialDeviceLocked: true,
+    uiState: { sessionToken: "session-token" }, playerState: {},
+    localPlayerMemoryKey: (_mode, token) => token, clearTranscriptStorage,
+    clearPlayerStateCache() { calls.push("clear-state-cache"); },
+    clearTalkDelaySeenMessagesForMemoryKey() {}, clearRuntimeState() {},
+    persist(value) { context.uiState = { ...context.uiState, ...value }; }
+  });
+  try {
+    context.clearLocalAuthenticationForLogout();
+    assert.equal(context.uiState.sessionToken, undefined);
+    assert.equal(context.playerState, null);
+    assert.equal(values.has("xstoryphone.transcripts.v2"), false);
+    assert.equal(values.get("another-work"), "keep");
+    assert.deepEqual(calls, ["clear-state-cache"]);
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
+test("memoryのlogoutは永続保存の削除確認を出さず、起動エラーは進行消失を案内する", async () => {
+  const logout = startupHarness({ memory: true, pathname: "/logout" });
+  await logout.context.start(logout.target);
+  assert.deepEqual(logout.calls, ["delete:test-project", "clear-confirmation", "clear-ui", "replace:/"]);
+
+  const failed = startupHarness({ memory: true, initializationError: new BrowserPlayerStorageError("corrupt", "検証用") });
+  await failed.context.start(failed.target);
+  assert.match(failed.target.innerHTML, /リロードすると最初から/u);
+  assert.equal(failed.buttons.has("data-restart-button"), false);
+});
+
+test("サブパスのlogout実体からは当該index.htmlへ戻り、取消でもサイトのルートへ移らない", async () => {
+  for (const confirmed of [false, true]) {
+    const entry = startupHarness({ base: "/works/demo/", pathname: "/works/demo/logout/index.html", confirmed });
+    await entry.context.start(entry.target);
+    assert.deepEqual(entry.calls, confirmed
+      ? ["confirm", "delete:test-project", "clear-confirmation", "clear-ui", "replace:/works/demo/index.html"]
+      : ["confirm", "history:/works/demo/index.html", "initialize:true", "clear-loading", "mount"]);
+  }
+});
+
 test("起動時のcorruptだけに明示初期化の入口を出し、取消・削除失敗では画面を開始しない", async () => {
   const corrupted = startupHarness({ initializationError: new BrowserPlayerStorageError("corrupt", "検査失敗"), confirmed: false });
   await corrupted.context.start(corrupted.target);
@@ -92,6 +146,7 @@ test("browser認証失敗と容量超過のコードを後続catchで上書き�
     globalErrorVisible: false, globalErrorSupportCode: "AP-CLIENT", globalErrorMessage: "",
     isBrowserPlayerStorageError, stopBackgroundMediaPlayback() {}, cancelPresentations() {}, resetPhoneHistoryBoundary() {},
     console: { error() {}, warn() {} }, playerMode: "browser", LOGOUT_PATH_SUFFIX: "/logout",
+    isAppEntryPath: (pathname, entry) => isStaticEntryPath(pathname, entry, "/"),
     window: { location: { pathname: "/logout/" } }
   });
   context.showGlobalError(new BrowserPlayerStorageError("unauthorized", "署名検証失敗"));

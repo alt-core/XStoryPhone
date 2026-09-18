@@ -48,7 +48,7 @@ export ADMIN_REVIEW_SECRET='十分に長いランダム値'
 npm run deploy:aws:dev
 ```
 
-`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持し、毎回のデプロイで同じ値を渡してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保存済みの進行tokenを検証できなくなります。誤って変更した場合は元の値で再デプロイしてください。クライアントは401で保存を自動削除せず、`AP-BROWSER-STATE` を表示するため、設定復旧後にリロードして再開できます。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
+`BROWSER_STATE_SECRET` は公開後も環境ごとに同じ値を維持し、毎回のデプロイで同じ値を渡してください。通常の再デプロイやシナリオ更新のたびに生成し直す値ではありません。変更すると、その環境で保持中の進行tokenを検証できなくなります。誤って変更した場合は元の値で再デプロイしてください。クライアントは401で状態を自動削除せず、`AP-BROWSER-STATE` を表示します。persistentでは設定復旧後にリロードして再開できますが、memoryではリロードすると進行を失います。プレイヤーへサイトデータの削除を案内しないでください。サポート用の明示初期化は[保存モードの運用説明](player-modes.md#サポート用のログアウトとローカル初期化)を参照してください。
 
 環境ごとのコマンドは次のとおりです。
 
@@ -60,9 +60,23 @@ npm run deploy:aws:prod
 
 スクリプトは公開境界監査、静的ビルド、SAM build/deploy、S3同期、CloudFront invalidation、ヘルスチェックを順番に行います。リソース定義の正本は `infra/aws/template.yaml` です。
 
+### 外部静的ホストを使う場合
+
+ゲーム画面を別のホストへ置く場合は、[外部静的ホスト・サブパスへの配置](external-hosting.md)に従って `dist/static` を作成します。API側へは静的ホストのoriginを `ALLOWED_ORIGINS` で渡します。次は既存の秘密値等を設定済みのdev環境で、静的公開工程を省略する例です。
+
+```sh
+ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
+```
+
+`--api-only` は静的クライアントのビルド、S3同期、CloudFront invalidationを省略し、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、SAM build/deployを維持します。ヘルスチェックは `ApiEndpoint` の `/api/health` を使います。既存S3・CloudFront資源は削除せず、外部ホストへのアップロードも行いません。stg・prodでも同じオプションを使えます。
+
+`ALLOWED_ORIGINS` は配備処理の開始前に検証し、SAMの `AllowedOrigins` へ渡します。未指定・空文字での配備は許可設定を空へ戻すため、継続して利用するoriginは毎回渡してください。クライアントを作らないAPI-onlyでは、クライアント用の保存設定や `VITE_XSTORYPHONE_API_BASE_URL` は使用・検証しません。初回導入や `clientRevision` が変わる更新はAPI-onlyだけでは完了しないため、[APIと画面を揃える更新手順](external-hosting.md#更新とclientrevision)も確認してください。
+
 ## 環境設定
 
 環境名、スタック名、同時実行上限、ログ保持日数は `scripts/deploy-aws.mjs` で管理します。`infra/aws/samconfig.toml` はリージョン、変更確認、CloudFormation用S3の解決など、SAM CLIの設定を持ちます。秘密値はどちらのファイルにも記録しません。
+
+プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser専用で、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
 実プレイ入力を分岐監修へ保存する場合だけ、デプロイ時に `PLAYER_INPUT_LOGGING=true` を設定してください。未設定または `false` の場合は保存しません。入力本文をCloudWatch Logsへ出力する処理はありません。
 
@@ -98,7 +112,7 @@ npm run deploy:aws:prod
 
 hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。
 
-GA4による任意の計測を使う場合だけ、デプロイ実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
+GA4による任意の計測を使う場合だけ、デプロイ実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定または `VITE_XSTORYPHONE_CLIENT_STORAGE=memory` なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 
 ## 更新とロールバック
 

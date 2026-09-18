@@ -1,5 +1,6 @@
 <script lang="ts">
   import { stopAudioPlayback } from "./audioEngine";
+  import { resourceUrl } from "./resourceUrls";
 
   export let src: string;
   export let poster = "";
@@ -21,8 +22,8 @@
   controls
   playsinline
   preload="metadata"
-  {src}
-  {poster}
+  src={resourceUrl(src)}
+  poster={resourceUrl(poster)}
   aria-label={label}
   on:play={handlePlay}
   on:ended={onComplete}

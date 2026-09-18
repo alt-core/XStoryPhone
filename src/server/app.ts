@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
 import { registerProjectRoutes } from "../project/routes.ts";
 import { isAppId } from "../shared/appRegistry.ts";
 import { evaluateCondition } from "../shared/condition.ts";
@@ -79,6 +80,7 @@ import { applyCompactStateAssignments, effectiveStateValues } from "../worker/st
 import { registerTalkBranchReviewRoutes } from "../worker/admin/talkBranchReviewRoutes.ts";
 import { BrowserProgressTooLargeError, decodeBrowserProgress, encodeBrowserProgress } from "./browserProgress.ts";
 import { accessCodeCheckDigits } from "./accessCode.ts";
+import { parseAllowedOrigins } from "./cors.ts";
 import { isProductionEnvironment, isResetForTestingAllowed } from "./environment.ts";
 import { isCompletionScenarioEvent, isCoreClientScenarioEvent } from "../shared/scenarioHookEvents.ts";
 
@@ -729,9 +731,30 @@ async function applyDueScheduledEvents(c: AppContext, player: PlayerRecord) {
 
 export function createApp(appDependencies: AppDependencies) {
   const app = new Hono<ServerEnv>();
+  const allowedOrigins = parseAllowedOrigins(appDependencies.config.allowedOrigins);
+  if (allowedOrigins.length) {
+    const playerCors = cors({
+      origin: allowedOrigins,
+      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowHeaders: ["Authorization", "Content-Type"],
+      credentials: false,
+      maxAge: 600
+    });
+    app.use("/api/*", (c, next) => {
+      // 監修画面と監修APIはAPIサーバー自身のoriginだけで利用する。
+      if (c.req.path === "/api/admin" || c.req.path.startsWith("/api/admin/")) return next();
+      return playerCors(c, next);
+    });
+  }
   app.use("*", async (c, next) => {
     c.set("dependencies", appDependencies);
     await next();
+    // browserの進行応答は保存先にかかわらずHTTP cacheへ残さない。素材と監修は対象外。
+    if (browserMode() && c.req.path.startsWith("/api/")
+      && c.req.path !== "/api/admin" && !c.req.path.startsWith("/api/admin/")
+      && c.res.headers.get("content-type")?.startsWith("application/json")) {
+      c.header("Cache-Control", "no-store");
+    }
   });
 
   registerTalkBranchReviewRoutes(app);
@@ -752,8 +775,8 @@ app.onError((error, c) => {
 
 app.get("/api/health", (c) => c.json({ ok: true, version: APP_VERSION, clientRevision: workerScenario.clientRevision }));
 
-app.get("/api/generated-audio/static/:id", (c) => {
-  const definition = workerScenario.generatedAudio.find((audio) => audio.provider === "static" && audio.publicId === c.req.param("id"));
+app.get("/api/generated-audio/static/:filename", (c) => {
+  const definition = workerScenario.generatedAudio.find((audio) => audio.provider === "static" && `${audio.publicId}.wav` === c.req.param("filename"));
   if (!definition) return c.json({ ok: false, error: "not_found" }, 404);
   const sampleRate = 8_000;
   const sampleCount = 2_000;

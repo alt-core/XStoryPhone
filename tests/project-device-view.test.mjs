@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { resourceUrl } from "../src/client/system/resourceUrls.ts";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
@@ -211,6 +212,7 @@ function renderedSearchAgentProps(props) {
         default(_renderer, childProps) { children.push(childProps); }
       };
       if (["./IncomingCallScreen.svelte", "./StatusBar.svelte"].includes(name)) return { __esModule: true, default() {} };
+      if (name === "./resourceUrls") return { resourceUrl };
       throw new Error(`想定外の依存: ${name}`);
     }
   };

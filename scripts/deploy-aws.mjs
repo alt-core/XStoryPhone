@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
+import { parseAllowedOrigins } from "../src/server/cors.ts";
 
 const environments = {
   dev: { stackName: "xstoryphone-dev", concurrency: "3", logDays: "7" },
@@ -8,12 +9,19 @@ const environments = {
   prod: { stackName: "xstoryphone-prod", concurrency: "10", logDays: "14" }
 };
 const environment = process.argv[2];
-const settings = environments[environment];
+const options = process.argv.slice(3);
+if (options.some((option) => option !== "--api-only") || new Set(options).size !== options.length) {
+  console.error("未知または重複した引数です。環境の後には --api-only だけを指定できます。");
+  process.exit(1);
+}
+const apiOnly = options.includes("--api-only");
+const settings = Object.hasOwn(environments, environment) ? environments[environment] : undefined;
 if (!settings) {
   console.error("環境はdev、stg、prodのいずれかを指定してください。");
   process.exit(1);
 }
 const resetForTesting = environment === "prod" ? "false" : "true";
+const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS).join(",");
 
 const adminReviewSecret = process.env.ADMIN_REVIEW_SECRET?.trim();
 if (!adminReviewSecret) {
@@ -65,10 +73,16 @@ function run(command, args, capture = false, extraEnvironment = {}) {
 }
 
 run("npm", ["run", "audit:public"]);
-run("npm", ["run", "build:aws"], false, {
-  VITE_XSTORYPHONE_RESET_FOR_TESTING: resetForTesting
-});
-run("npm", ["run", "audit:client:aws"]);
+if (apiOnly) {
+  run("npm", ["run", "scenario:build"]);
+  run("npm", ["run", "audit:aws:scenario"]);
+  run("npm", ["run", "audit:client"]);
+} else {
+  run("npm", ["run", "build:aws"], false, {
+    VITE_XSTORYPHONE_RESET_FOR_TESTING: resetForTesting
+  });
+  run("npm", ["run", "audit:client:aws"]);
+}
 run("sam", ["build", "--template-file", "infra/aws/template.yaml"]);
 run("sam", [
   "deploy",
@@ -83,6 +97,8 @@ run("sam", [
   `ReservedConcurrency=${settings.concurrency}`,
   `LogRetentionDays=${settings.logDays}`,
   `PlayerInputLogging=${playerInputLogging}`,
+  // SAMへ引用符ごと渡し、CSVだけでなく未設定の空文字も明示的に反映する。
+  `AllowedOrigins="${allowedOrigins}"`,
   `AdminReviewSecret=${adminReviewSecret}`,
   ...(browserStateSecret ? [`BrowserStateSecret=${browserStateSecret}`] : []),
   ...(accessCodeSecret ? [`AccessCodeSecret=${accessCodeSecret}`] : []),
@@ -96,25 +112,28 @@ const outputJson = run("aws", [
   "--output", "json"
 ], true);
 const outputs = Object.fromEntries(JSON.parse(outputJson).map((entry) => [entry.OutputKey, entry.OutputValue]));
-if (!outputs.StaticBucketName || !outputs.DistributionId || !outputs.SiteUrl) {
+const healthEndpoint = apiOnly ? outputs.ApiEndpoint : outputs.SiteUrl;
+if (!healthEndpoint || (!apiOnly && (!outputs.StaticBucketName || !outputs.DistributionId))) {
   console.error("CloudFormation outputから公開先を取得できませんでした。");
   process.exit(1);
 }
 
-const destination = `s3://${outputs.StaticBucketName}`;
-run("aws", [
-  "s3", "sync", "dist/aws", destination, "--delete",
-  "--exclude", "assets/*", "--cache-control", "public,max-age=300"
-]);
-run("aws", [
-  "s3", "sync", "dist/aws/assets", `${destination}/assets`, "--delete",
-  "--cache-control", "public,max-age=31536000,immutable"
-]);
-run("aws", ["cloudfront", "create-invalidation", "--distribution-id", outputs.DistributionId, "--paths", "/*"]);
+if (!apiOnly) {
+  const destination = `s3://${outputs.StaticBucketName}`;
+  run("aws", [
+    "s3", "sync", "dist/aws", destination, "--delete",
+    "--exclude", "assets/*", "--cache-control", "public,max-age=300"
+  ]);
+  run("aws", [
+    "s3", "sync", "dist/aws/assets", `${destination}/assets`, "--delete",
+    "--cache-control", "public,max-age=31536000,immutable"
+  ]);
+  run("aws", ["cloudfront", "create-invalidation", "--distribution-id", outputs.DistributionId, "--paths", "/*"]);
+}
 
-const response = await fetch(`${outputs.SiteUrl}/api/health`, { signal: AbortSignal.timeout(30_000) });
+const response = await fetch(`${healthEndpoint.replace(/\/$/u, "")}/api/health`, { signal: AbortSignal.timeout(30_000) });
 if (!response.ok) {
   console.error(`ヘルスチェックに失敗しました: HTTP ${response.status}`);
   process.exit(1);
 }
-console.log(`AWSへの公開が完了しました: ${outputs.SiteUrl}`);
+console.log(`AWSへの${apiOnly ? "APIのみの" : ""}公開が完了しました: ${healthEndpoint}`);

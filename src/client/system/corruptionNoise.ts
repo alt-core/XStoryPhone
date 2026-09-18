@@ -1,3 +1,5 @@
+import { staticUrl } from "./resourceUrls.ts";
+
 const corruptionNoiseUrls = [
   "/system/album-corruption-noise-01.webp",
   "/system/album-corruption-noise-02.webp",
@@ -22,7 +24,7 @@ function hashString(value: string) {
 
 export function corruptionNoiseUrl(sourceId: string) {
   const stableId = sourceId.trim() || "unknown";
-  return corruptionNoiseUrls[hashString(stableId) % corruptionNoiseUrls.length];
+  return staticUrl(corruptionNoiseUrls[hashString(stableId) % corruptionNoiseUrls.length]);
 }
 
 export function corruptionNoiseStyle(sourceId: string) {

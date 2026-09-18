@@ -7,6 +7,8 @@ import * as serverRuntime from "svelte/internal/server";
 import { render } from "svelte/server";
 import ts from "typescript";
 import { corruptionNoiseStyle } from "../src/client/system/corruptionNoise.ts";
+import { resourceUrl } from "../src/client/system/resourceUrls.ts";
+import { pathnameKey } from "../src/shared/deploymentUrls.ts";
 import { componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
 const browserUrl = new URL("../src/client/apps/BrowserApp.svelte", import.meta.url);
@@ -28,6 +30,8 @@ function renderBrowser(props) {
       if (name === "svelte") return { onDestroy() {} };
       if (name === "@lucide/svelte") return Object.fromEntries(["ArrowLeft", "Globe2", "Layers3", "Plus", "X"].map((key) => [key, () => {}]));
       if (name === "../system/corruptionNoise") return { corruptionNoiseStyle };
+      if (name === "../system/resourceUrls") return { resourceUrl };
+      if (name === "../../shared/deploymentUrls.ts") return { pathnameKey };
       if (name === "./AppShell.svelte") return { __esModule: true, default(renderer, shellProps) { shellProps.children(renderer); } };
       throw new Error(`想定外の依存: ${name}`);
     }
@@ -74,7 +78,7 @@ test("同じcomponentの次のfocus要求は引き続きタブを切り替える
   const harness = componentScriptHarness(browserUrl, {
     tabs, focusContentId: "second", focusContentRequestId: 8,
     onContentOpen(id) { opened.push(id); }
-  }, { URL, window: windowStub, corruptionNoiseStyle });
+  }, { URL, pathnameKey, window: windowStub, corruptionNoiseStyle, resourceUrl });
   assert.equal(harness.evaluate("frameSourceUrl"), "/second.html");
   harness.update({ focusContentId: "first", focusContentRequestId: 9 });
   harness.flush();

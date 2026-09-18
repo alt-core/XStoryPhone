@@ -6,6 +6,9 @@ Parameters:
   EnvironmentName:
     Type: String
     AllowedValues: [dev, stg, prod]
+  AllowedOrigins:
+    Type: String
+    Default: ""
   AdminReviewSecret:
     Type: String
     NoEcho: true
@@ -154,6 +157,7 @@ Resources:
       Environment:
         Variables:
           APP_ENV: !Ref EnvironmentName
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
           TABLE_NAME: !Ref AppTable
           ADMIN_REVIEW_SECRET: !Ref AdminReviewSecret
           BROWSER_STATE_SECRET: !Ref BrowserStateSecret

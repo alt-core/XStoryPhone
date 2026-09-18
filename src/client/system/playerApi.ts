@@ -26,6 +26,8 @@ import {
   prepareBrowserPlayerRequest
 } from "./browserPlayerStorage.ts";
 import { safeLocalStorage } from "./browserStorage.ts";
+import { isMemoryStorage } from "./clientStorage.ts";
+import { apiUrl } from "./resourceUrls.ts";
 import { browserPlayerRequestInit } from "./playerTransport.ts";
 import { limitedSearchAgentItems } from "./transcriptLimit.ts";
 import { transcriptCacheCompatible, transcriptCacheVersion } from "./transcriptCachePolicy.ts";
@@ -308,11 +310,15 @@ function serverAuthHeaders(sessionToken: string): Record<string, string> {
   return { authorization: `Bearer ${sessionToken}` };
 }
 
+function fetchPlayerApi(url: string, init: RequestInit = {}) {
+  return fetch(apiUrl(url), isMemoryStorage ? { ...init, credentials: "omit", cache: "no-store" } : init);
+}
+
 async function fetchTranscriptDelta(credential: string, stream: string, after: number) {
   let lastError: unknown = new Error("transcript_unavailable");
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(`/api/transcript/${encodeURIComponent(stream)}?after=${after}`, {
+      const response = await fetchPlayerApi(`/api/transcript/${encodeURIComponent(stream)}?after=${after}`, {
         headers: serverAuthHeaders(credential)
       });
       const payload = await response.json().catch(() => null) as { ok?: boolean; delta?: TranscriptDelta } | null;
@@ -485,14 +491,14 @@ async function playerRequest<T extends { ok: true }>(
         notifyBrowserPlayerCleared();
         return { ok: false as const, error: "unauthorized" };
       }
-      const response = await fetch(url, browserPlayerRequestInit(init, parentToken));
+      const response = await fetchPlayerApi(url, browserPlayerRequestInit(init, parentToken));
       return readJson<T>(response, {
         browserParentToken: parentToken,
         replaceBrowserStreamsOnSuccess: options.replaceBrowserStreamsOnSuccess
       });
     }
     const requestInit = { ...init, headers: { ...init.headers, ...serverAuthHeaders(sessionToken) } };
-    const response = await fetch(url, requestInit);
+    const response = await fetchPlayerApi(url, requestInit);
     return readJson<T>(response, { credential: sessionToken });
   };
   if (playerMode !== "browser") return execute();
@@ -504,7 +510,7 @@ export async function startSession(serialCode: string) {
     if (playerMode === "browser" && await prepareBrowserPlayerRequest()) {
       throw new BrowserPlayerStorageError("conflict", "開始済みのbrowser playerがあります。");
     }
-    const response = await fetch("/api/session/start", {
+    const response = await fetchPlayerApi("/api/session/start", {
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -524,7 +530,7 @@ export async function startSession(serialCode: string) {
 }
 
 export async function verifyDevicePin(pin: string) {
-  const response = await fetch("/api/device-pin/verify", {
+  const response = await fetchPlayerApi("/api/device-pin/verify", {
     method: "POST",
     headers: {
       "content-type": "application/json"
