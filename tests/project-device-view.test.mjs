@@ -8,6 +8,7 @@ import * as serverRuntime from "svelte/internal/server";
 import { render } from "svelte/server";
 import ts from "typescript";
 import { deviceViewFor } from "../src/client/system/deviceView.ts";
+import { latestQuickReplyPlacement, resolvedTalkInputState } from "../src/client/system/talkInputState.ts";
 import { componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
 const baseViewInput = {
@@ -57,7 +58,7 @@ test("snapshotは読み取り専用の2項目だけで、以前の値を後か�
 
 const searchAgentUrl = new URL("../src/client/system/SearchAgent.svelte", import.meta.url);
 
-function searchAgentHarness(props = {}) {
+function searchAgentHarness(props = {}, dependencies = {}) {
   return componentScriptHarness(searchAgentUrl, {
     deviceState: { apps: [] },
     talk: { talkId: "search", messages: [] },
@@ -69,7 +70,8 @@ function searchAgentHarness(props = {}) {
     loadTalkDelaySeenMessages: () => ({}),
     saveTalkDelaySeenMessages() {},
     resolvedTalkInputState: () => ({ visible: true, canSubmit: true }),
-    latestQuickReplyPlacement: () => undefined
+    latestQuickReplyPlacement: () => undefined,
+    ...dependencies
   });
 }
 
@@ -148,6 +150,45 @@ test("検索結果を開けた場合は閉じた状態を通知する", async ()
   await harness.evaluate('openResult({ appId: "notes", contentId: "note" })');
   assert.equal(harness.evaluate("expanded"), false);
   assert.deepEqual(opened, [true, false]);
+});
+
+test("入力欄を隠した検索会話でも、開封失敗後にQuick Replyで続行できる", async () => {
+  const menu = { kind: "message", id: "menu", seq: 1, talkId: "search", sender: "other", body: "選んでください", sentAt: "2026-01-01T00:00:00Z", quickReplies: ["続ける"] };
+  const talk = { talkId: "search", messages: [menu], inputVisible: false, inputEnabled: true, inputVisibleAfterSeq: 0, inputEnabledAfterSeq: 0, canPost: true };
+  let sentText, complete;
+  const harness = searchAgentHarness({
+    talk, onOpenSearchAgentResult: async () => false,
+    onSend: (text) => { sentText = text; return new Promise(resolve => { complete = resolve; }); }
+  }, {
+    crypto: globalThis.crypto, MAX_SEARCH_AGENT_QUERY_LENGTH: 500,
+    loadTalkDelaySeenMessages: () => ({ search: new Set([menu.id]) }),
+    latestQuickReplyPlacement, resolvedTalkInputState, shouldQueueTalkMessage: () => false
+  });
+  try {
+    harness.evaluate("openExpanded()");
+    harness.flush();
+    assert.equal(harness.evaluate("composerVisible"), false);
+    assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける");
+    await harness.evaluate('openResult({ appId: "messages", contentId: "unavailable" })');
+    harness.flush();
+    assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "このデータはまだ開けないみたい。");
+    assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける");
+    harness.evaluate("closeExpanded(); openExpanded()");
+    harness.flush();
+    assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける");
+    const pending = harness.evaluate('sendQuickReply("続ける")');
+    harness.flush();
+    assert.equal(sentText, "続ける");
+    assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "送信中は二重選択を防ぐ");
+    complete({ ok: false, error: "通信エラー" });
+    await pending;
+    harness.flush();
+    assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける", "送信失敗後は再試行できる");
+    harness.update({ talk: { ...talk, inputEnabled: false } });
+    assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "disable中は表示しない");
+    harness.update({ talk: { ...talk, messages: [...talk.messages, { ...menu, id: "next", seq: 2, quickReplies: undefined }] } });
+    assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "新しい台本メッセージに選択肢がなければ旧選択肢は残さない");
+  } finally { harness.destroy(); }
 });
 
 test("強制閉じ後に届いた古い検索結果は開き直した状態を上書きしない", async () => {

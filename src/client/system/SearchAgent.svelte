@@ -124,7 +124,8 @@
   $: resolvedInput = resolvedTalkInputState(talk ?? undefined, messages, visibleMessageIds);
   $: composerVisible = resolvedInput.visible;
   $: composerEnabled = resolvedInput.canSubmit;
-  $: quickReplyPlacement = pending || transientMessages.length
+  // 開封失敗の一時案内は会話を進めないため、台本の選択肢を無効にしない。
+  $: quickReplyPlacement = pending
     ? undefined
     : latestQuickReplyPlacement(messages, visibleMessageIds, composerEnabled);
   $: quickReplySignature = quickReplyPlacement?.messageId ?? "";

@@ -25,6 +25,8 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 | `updated_at` | 監修画面で使う更新日（`YYYY-MM-DD`） |
 | `source` | `human`、`ai`、`ai_edited`。省略時は未分類 |
 
+`talk_people.role`は`owner`、`npc`、`system`を指定できます。`system`は`npc`と同じ相手側の発話として表示し、専用のシステム通知UIにはなりません。
+
 本文には `[表示名](open:notes:content_id)` のような内部リンクと、HTTPSの外部リンクを書けます。内部リンクへhookを結び付ける場合は、`open:app_id:content_id;action:action_id` とし、`message_link_opened`のtargetへaction IDを指定します。`{{state_id}}` templateは通常の本文で使い、リンクの表示名には使用しないでください。リンク表示名はtemplate展開されません。
 
 `attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `content / password` に書きます。平文・判定hashはクライアントへ出力しません。

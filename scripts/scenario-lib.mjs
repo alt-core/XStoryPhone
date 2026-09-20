@@ -334,6 +334,9 @@ function validateProject(project, playerMode, errors) {
     }
     validateTextLength(`project.${key}`, project?.[key], 1_200, errors);
   }
+  if (typeof project?.id === "string" && project.id !== project.id.trim()) {
+    errors.push("project.id の前後に空白を含めないでください。保存先が変わるため、自動では除去しません。");
+  }
   if (!Number.isInteger(project?.batteryLevel) || project.batteryLevel < 0 || project.batteryLevel > 100) {
     errors.push("project.batteryLevel は0から100の整数にしてください。");
   }

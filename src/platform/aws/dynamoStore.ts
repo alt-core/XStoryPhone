@@ -726,9 +726,14 @@ export class DynamoStore implements AppStore {
       const result = await this.transport.execute("Query", {
         TableName: this.tableName,
         IndexName: "GSI2",
-        KeyConditionExpression: "#pk = :pk AND begins_with(#sk, :sk)",
+        KeyConditionExpression: "#pk = :pk AND #sk BETWEEN :lo AND :hi",
         ExpressionAttributeNames: { "#pk": "GSI2PK", "#sk": "GSI2SK" },
-        ExpressionAttributeValues: item({ ":pk": "INPUT_REVIEW", ":sk": prefix }),
+        // 日時直後に#とIDが続くため、上限に日時だけを置けば同時刻の全行を除外できる。
+        ExpressionAttributeValues: item({
+          ":pk": "INPUT_REVIEW",
+          ":lo": prefix + (filters.after ?? ""),
+          ":hi": prefix + (filters.before || "\uffff")
+        }),
         ScanIndexForward: false,
         Limit: Math.max(50, Math.min(500, filters.limit * 2)),
         ...(startKey ? { ExclusiveStartKey: startKey } : {})

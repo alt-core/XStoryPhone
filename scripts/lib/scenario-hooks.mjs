@@ -1,4 +1,26 @@
 import ts from "typescript";
+import { hookLlmResponseSchema } from "../../src/worker/services/hookLlm.ts";
+
+// spread・計算key等は評価せず、確定できるliteralだけをruntimeと同じ検査へ渡す。
+function literalProperties(node) {
+  if (!node || !ts.isObjectLiteralExpression(node)) return null;
+  const entries = [];
+  for (const property of node.properties) {
+    if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return null;
+    const name = property.name.text;
+    if (typeof name !== "string" || name === "__proto__") return null;
+    entries.push([name, property.initializer]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function validateLiteralHookSchema(api, options) {
+  if (api !== "llm.extract" && api !== "llm.screen") return;
+  const properties = literalProperties(options);
+  const schema = properties && literalProperties(properties.schema);
+  if (!schema || Object.values(schema).some((node) => !ts.isStringLiteralLike(node))) return;
+  hookLlmResponseSchema(Object.fromEntries(Object.entries(schema).map(([key, node]) => [key, node.text])));
+}
 
 // 元のhooks.scriptと同様、セル本文を同期handlerの中へそのまま埋め込む。
 export function buildScenarioHooksModule(scripts) {
@@ -39,6 +61,11 @@ export function validateHookReferences(scripts, source, blocks) {
     function visit(node) {
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
         const api = node.expression.getText(parsed).replace(/^context\./u, "");
+        try {
+          validateLiteralHookSchema(api, node.arguments[1]);
+        } catch (error) {
+          throw new Error(`hooks.${id}: ${api}: ${error.message}`);
+        }
         const arg = node.arguments[0];
         if (ids[api] && arg && ts.isStringLiteralLike(arg) && !ids[api].has(arg.text)) throw new Error(`hooks.${id}: ${api}のIDが未定義です: ${arg.text}`);
         const block = node.arguments[1];

@@ -109,7 +109,7 @@ export function normalizeHookLlmRequest(
   if (!taskId.trim() || !options.instructions?.trim() || !options.schema || !Object.keys(options.schema).length) {
     throw new Error(`hook LLM taskが不正です: ${taskId}`);
   }
-  simpleSchema(options.schema);
+  hookLlmResponseSchema(options.schema);
   if (options.fallback !== undefined && !validateSimpleOutput(options.fallback, options.schema)) {
     throw new Error(`hook LLM fallbackがschemaと一致しません: ${taskId}`);
   }
@@ -154,7 +154,8 @@ export function normalizeHookLlmMatchRequest(
   };
 }
 
-function simpleSchema(schema: Record<string, string>) {
+export function hookLlmResponseSchema(schema: Record<string, string>) {
+  if (!Object.keys(schema).length) throw new Error("hook LLM schemaは1項目以上必要です。");
   const properties = Object.fromEntries(Object.entries(schema).map(([key, rule]) => {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/u.test(key)) throw new Error(`hook LLM schemaのkeyが不正です: ${key}`);
     const fields = schemaFields(rule).map(({ kind, ...constraints }) => ({ type: kind, ...constraints }));
@@ -193,7 +194,7 @@ async function resolveSchemaRequest(provider: StructuredOutputProvider, request:
       `種別: ${request.kind}`, `指示: ${request.instructions}`
     ].join("\n"),
     input: { input: request.input },
-    schema: simpleSchema(request.schema),
+    schema: hookLlmResponseSchema(request.schema),
     maxTokens: request.maxTokens,
     temperature: 0,
     observation: { source: "hook_llm", ...hashes }

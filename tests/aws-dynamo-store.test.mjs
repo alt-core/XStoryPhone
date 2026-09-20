@@ -91,7 +91,8 @@ test("DynamoDBの入力ログ確認はGSI2を時系列降順でQueryする", asy
   assert.equal(fake.calls[0].input.IndexName, "GSI2");
   assert.equal(fake.calls[0].input.ScanIndexForward, false);
   const values = dynamoDocument.valueFromItem(fake.calls[0].input.ExpressionAttributeValues);
-  assert.equal(values[":sk"], "INPUT#talk_send#");
+  assert.equal(values[":lo"], "INPUT#talk_send#");
+  assert.equal(values[":hi"], "INPUT#talk_send#\uffff");
 });
 
 test("同じパスコードの初回作成競合は先に作られたプレイヤーへ収束する", async () => {

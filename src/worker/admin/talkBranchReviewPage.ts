@@ -688,6 +688,22 @@ export function talkBranchReviewPageHtml() {
       return [...root.querySelectorAll('.trial-row input[type="checkbox"]:checked')].map((item) => item.value);
     }
 
+    function renderUnassignedJudgments(items) {
+      const section = document.createElement('section');
+      section.className = 'comment-box';
+      const heading = document.createElement('h3');
+      heading.textContent = '現行分岐に対応しない指示（' + items.length + '件）';
+      section.appendChild(heading);
+      for (const item of items) {
+        section.appendChild(ruleMeta('元の分岐ID: ' + (item.actualRuleId || '未設定')));
+        section.appendChild(renderJudgments([item]));
+        for (const source of item.sourceInputs || []) {
+          section.appendChild(ruleMeta('根拠 (' + source.id + '): ' + source.input));
+        }
+      }
+      return section;
+    }
+
     function renderRight(detail, branch) {
       const pane = document.createElement('section');
       pane.className = 'pane right';
@@ -696,10 +712,13 @@ export function talkBranchReviewPageHtml() {
       context.textContent = detail.context || '';
       pane.appendChild(context);
       if (detail.totalInputCount > detail.inputPreviewLimit) {
-        pane.appendChild(ruleMeta('分岐件数は保存済み全入力。未集計のプレビューは直近' + detail.inputPreviewLimit + '件です。保存済みクラスタの根拠は期間にかかわらず取得します。'));
+        pane.appendChild(ruleMeta('分岐件数は保存済み全入力。未集計のプレビューはこの会話地点の直近' + detail.inputPreviewLimit + '件です。分岐によってプレビューが0件でも件数は全件分です。保存済みクラスタの根拠は期間にかかわらず取得します。'));
       }
       if (detail.unassignedInputCount) {
-        pane.appendChild(ruleMeta('現行rule IDに一致しない過去入力: ' + detail.unassignedInputCount + '件。現行分岐へ推定で混ぜず、入力レビューに保持しています。'));
+        pane.appendChild(ruleMeta('現行rule IDに一致しない過去入力: ' + detail.unassignedInputCount + '件。現行分岐へ推定で混ぜません。実入力は入力レビューのCSVでfrom_id・rule_idを確認できます。'));
+      }
+      if (detail.unassignedJudgments?.length) {
+        pane.appendChild(renderUnassignedJudgments(detail.unassignedJudgments));
       }
       if (branch.cond) {
         pane.appendChild(ruleMeta('cond: ' + branch.cond));

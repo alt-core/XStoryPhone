@@ -61,6 +61,8 @@ npm run scenario:build
 
 Sheet IDは `--spreadsheet-id`、環境変数、manifestの順に優先します。credentialは `--credentials`、`GOOGLE_APPLICATION_CREDENTIALS`の順です。別のmanifestは`--scenario path/to/scenario.source.json`で指定できます。
 
+作品のリポジトリを公開する場合は、実運用のSheet IDをmanifestへ記録せず、環境変数または引数で渡すことを推奨します。Sheet ID自体は認証情報ではありませんが、共有先の公開範囲も確認してください。service accountの秘密鍵は別に管理します。
+
 必要な表だけ取得する場合、論理表名をカンマ区切りで指定できます。
 
 ```sh
@@ -83,10 +85,14 @@ npm run scenario:sheets:put -- --yes-overwrite-google-sheets-with-local-tsv
 - A列は`comment`。空欄の行がデータで、コメントが入った行は生成しません。完全な空行は無視します。
 - `talk_blocks`だけは、A列の`*talk_id`、block名、`---`を宣言として解釈します。
 - 本文やscriptはセル内改行を使えます。取得時にTSVの引用符・改行を保ちます。
-- ID・参照・enumは前後空白を除去します。本文の改行や途中の空白は保持します。
+- ID・参照・enumは前後空白を除去します。ただし`project_constants`の`project.id`は保存先を識別する値のため、前後空白を自動除去せずエラーにします。本文の改行や途中の空白は保持します。
 - PIN、時刻、先頭ゼロのある文字列はSheetsでプレーンテキストにします。取得はSheetの表示値です。
 - `search`はセル内改行がOR、一行内の空白区切りがANDです。
 - `hooks.script`へ非同期処理や外部通信を書きません。状態操作・予約・会話追加等の同期APIを使います。
+
+hookのscriptは信頼する作者が書くコードであり、sandboxではありません。Sheetの編集者は、取得・ビルド・配備を経てWorker/Lambda上で実行されるコードを変更できます。同期APIの制限は、悪意あるscriptを安全に実行するための隔離機構ではありません。
+
+`llm.extract`/`llm.screen`へ直接書いた文字列のschemaは、ビルド時にも実行時と同じ語彙・key規則で検査します。変数・spread等で組み立てたschemaや、eventに依存する`source`、fallbackの値は実行時の検査も必要です。該当eventを配備前にローカルで確認してください。作品独自のevent fieldを`source`へ指定する機能は維持しています。
 
 空欄継承は次に限定します。継承値を明示的に空へ戻す場合は`-`です。
 
@@ -97,9 +103,15 @@ npm run scenario:sheets:put -- --yes-overwrite-google-sheets-with-local-tsv
 | attachments | type |
 | calendar_items | date |
 
+`-`は行を無効にする指定ではありません。解除結果が必須セルの空欄になれば検証エラーになります。行を無効にしたい場合はcomment欄を使います。
+
 `project_constants`にはkey/value/exposureを記述します。`public`は初期clientへ配布してよい値だけにし、それ以外は`private`です。任意定数も扱えます。`client.runtime_revision`等の自動生成キーと固定PINの公開指定は拒否します。
 
-列の用途は[シナリオ作成](scenario.md)、会話は[会話エンジン](conversation.md)、制作検査は[制作テスト](authoring-tests.md)を参照してください。分岐IDは定義内容から生成し、行の挿入やメモの変更では変えません。条件・返答先等の定義が変わると別IDになり、過去ログを推定で新分岐へ混ぜません。
+標準設定には`project.*`、`device.*`、`search_agent.*`、`player.*`、`features.*`、`chat_auth.*`、`event.*`等を使います。未知のkeyは任意定数になり得るため、標準設定の誤記を全て検出するわけではありません。標準keyはデモと[端末設定](scenario.md#端末設定)を確認し、作品独自定数は区別できる名前にしてください。
+
+作品名・OS名・背景等の初期画面に必要な標準設定は、表示用データにも使います。秘密情報を入れないでください。`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`は初期clientで使う案内文なので、exposureに`public`を指定する必要があります。
+
+列の用途は[シナリオ作成](scenario.md)、会話は[会話エンジン](conversation.md)、制作検査は[制作テスト](authoring-tests.md)を参照してください。分岐IDは定義内容から生成し、行の挿入やメモの変更では変えません。条件・返答先等の定義が変わると別IDになり、過去ログを推定で新分岐へ混ぜません。条件文字列の内部空白だけを変えた場合も別IDになることがあります。論理的に同じ式かを推定して統合する方式ではありません。
 
 ## ローカルで確認する範囲
 

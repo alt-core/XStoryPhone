@@ -439,10 +439,23 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
     store.reviewInputCounts(talkId, fromId)
   ]);
   const incomingMessages = incomingPreviewMessages(talk, fromId);
-  const sourceIds = [...new Set(savedClusters.flatMap((cluster) => cluster.sourceEventIds))];
-  const sourceEvents = sourceIds.length ? await loadInputEvents(store, talkId, fromId, { ids: sourceIds }) : [];
+  const rules = rulesFor(talk, fromId);
+  const unassignedJudgments = judgments.filter((judgment) => !rules.some((rule) => rule.id === judgment.actualRuleId));
+  const loadedEventIds = new Set(events.map((event) => event.id));
+  const loadedSourceIds = new Set([...loadedEventIds, ...trials.map((trial) => trial.id)]);
+  // 一覧で取得済みの本文を使い、過去の根拠だけ追加取得する。
+  const judgmentSourceIds = [...new Set(unassignedJudgments.flatMap((judgment) => judgment.sourceEventIds))]
+    .filter((id) => !loadedSourceIds.has(id));
+  const sourceIds = [...new Set([...savedClusters.flatMap((cluster) => cluster.sourceEventIds), ...judgmentSourceIds])]
+    .filter((id) => !loadedEventIds.has(id));
+  const [sourceEvents, sourceTrials] = await Promise.all([
+    sourceIds.length ? loadInputEvents(store, talkId, fromId, { ids: sourceIds }) : [],
+    judgmentSourceIds.length ? store.reviewTrialInputs(talkId, fromId, judgmentSourceIds) : []
+  ]);
   const currentInputs = new Map([...events, ...sourceEvents].map((event) => [event.id, event.userInput]));
-  const branches = rulesFor(talk, fromId).map((rule) => {
+  const judgmentInputs = new Map([...trials, ...sourceTrials].map((trial) => [trial.id, trial.userInput]));
+  for (const [id, input] of currentInputs) judgmentInputs.set(id, input);
+  const branches = rules.map((rule) => {
     const regexCriteria = parseRegexCriteria(rule.criteria);
     const savedSourceIds = new Set<string>();
     const ruleSavedClusters = savedClusters.filter((cluster) => cluster.actualRuleId === rule.id).map((cluster) => {
@@ -494,14 +507,18 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
   return {
     talkId,
     fromId,
-    context: rulesFor(talk, fromId).find((rule) => rule.isDefault && rule.from === fromId)?.criteria
+    context: rules.find((rule) => rule.isDefault && rule.from === fromId)?.criteria
       || `${talk.label}（${talk.kind === "sms" ? "メッセージ" : talk.kind === "chat" ? "チャット" : "検索AI"}） / ${shortBlockLabel(fromId)}`,
     incomingMessages,
     inputPreviewLimit: 1000,
     totalInputCount: Object.values(inputCounts).reduce((sum, count) => sum + count, 0),
     unassignedInputCount: Object.entries(inputCounts)
-      .filter(([ruleId]) => !rulesFor(talk, fromId).some((rule) => rule.id === ruleId))
+      .filter(([ruleId]) => !rules.some((rule) => rule.id === ruleId))
       .reduce((sum, [, count]) => sum + count, 0),
+    unassignedJudgments: unassignedJudgments.map((judgment) => ({
+      ...judgment,
+      sourceInputs: currentClusterInputs(judgment.sourceEventIds, judgmentInputs)
+    })),
     branches,
     judgments
   };

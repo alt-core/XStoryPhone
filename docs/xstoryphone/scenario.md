@@ -38,7 +38,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 追加5表の`mail_items`、`browser_items`、`talk_history`、`schedules`、`project_items`は、未使用ならmanifestから省略できます。それ以外は表を用意し、使わない表はheaderだけ残します。検索AIは通常のtalkへ統合されており、専用の検索返答表はありません。
 
-各表のA列は`comment`です。通常表はcommentが空の行だけを読み、`notes`は制作メモです。`talk_blocks`だけは`*talk_id`、block名、`---`等をcomment列の構造として使います。空欄継承は`talk_flow`のtalk/from、`hooks`のevent、`attachments`のtype、`calendar_items`のdateだけです。継承値を消すときは`-`を指定します。必要なheader、未知列、参照先、型はビルド時に検証します。
+各表のA列は`comment`です。通常表はcommentが空の行だけを読み、`notes`は制作メモです。`talk_blocks`だけは`*talk_id`、block名、`---`等をcomment列の構造として使います。空欄継承は`talk_flow`のtalk/from、`hooks`のevent、`attachments`のtype、`calendar_items`のdateだけです。継承値を消すときは`-`を指定しますが、解除結果が必須セルの空欄ならエラーになります。行を無効にする指定ではありません。必要なheader、未知列、参照先、型はビルド時に検証します。
 
 以下の表やコード例はSheetsのセル内容を表します。TSVを直接編集する場合、改行・タブ・引用符を含むセルはTSV規則でquote/escapeしてください。
 

@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import ts from "typescript";
+import { talkBranchReviewPageHtml } from "../src/worker/admin/talkBranchReviewPage.ts";
 import { D1Store } from "../src/platform/cloudflare/d1Store.ts";
 import { DynamoStore, dynamoDocument } from "../src/platform/aws/dynamoStore.ts";
 import { workerScenario } from "../src/worker/scenario.ts";
@@ -123,6 +125,125 @@ databaseTest("500件より古い現存試行も指示IDから取得し、snapsho
   } finally { database.close(); }
 });
 
+databaseTest("旧分岐の未対応指示と古い根拠を別枠で返し、既存APIで編集・削除できる", async () => {
+  const { database, store } = localStore();
+  const { talk, rule } = talkFixture();
+  try {
+    insertEvent(database, { id: "old-source", talkId: talk.id, fromId: rule.from, ruleId: "removed-rule", at: "1970-01-01T00:00:00.000Z", body: "旧分岐の実入力" });
+    insertEvent(database, { id: "other-source", talkId: talk.id, fromId: "other-from", ruleId: "removed-rule", body: "別地点の本文" });
+    for (let index = 0; index < 1001; index++) insertEvent(database, {
+      id: `recent-${index}`, talkId: talk.id, fromId: rule.from, ruleId: rule.id
+    });
+    for (let index = 0; index < 501; index++) await store.saveReviewTrialInput({
+      id: `trial-${index}`, talkId: talk.id, fromId: rule.from, actualRuleId: "removed-rule",
+      userInput: `試行${index}`, nextFromId: rule.from, responseSnapshot: {}, createdAt: new Date(index * 1000).toISOString()
+    });
+    await store.saveReviewJudgment(judgment(talk, rule, []));
+    await store.saveReviewJudgment({
+      ...judgment(talk, rule, ["old-source", "trial-0", "other-source", "deleted-source"]),
+      id: "old-judgment", actualRuleId: "removed-rule"
+    });
+    await store.saveReviewJudgment({ ...judgment(talk, rule, []), id: "applied-old", actualRuleId: "removed-rule", status: "applied" });
+    const app = createApp({ store, config: { appEnv: "development", llm: {} } });
+    const params = new URLSearchParams({ talkId: talk.id, fromId: rule.from });
+    const response = await app.request(`http://localhost/api/admin/talk-branch-review/from?${params}`);
+    assert.equal(response.status, 200);
+    const detail = (await response.json()).detail;
+    assert.equal(detail.unassignedJudgments.length, 1);
+    const old = detail.unassignedJudgments[0];
+    assert.equal(old.id, "old-judgment");
+    assert.equal(old.actualRuleId, "removed-rule");
+    assert.deepEqual(old.sourceInputs, [
+      { id: "old-source", input: "旧分岐の実入力" },
+      { id: "trial-0", input: "試行0" },
+      { id: "other-source", input: "（本文を確認できません）" },
+      { id: "deleted-source", input: "（本文を確認できません）" }
+    ]);
+    assert(!detail.branches.some(branch => branch.judgments.some(item => item.id === old.id)));
+    assert.equal(detail.branches.find(branch => branch.ruleId === rule.id).judgments[0].id, "judgment-1");
+    const request = (suffix, body) => app.request(`http://localhost/api/admin/talk-branch-review/judgments/old-judgment${suffix}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ talkId: talk.id, fromId: rule.from, ...body })
+    });
+    assert.equal((await request("", { comment: "旧指示を確認", reviewerLabel: "確認担当" })).status, 200);
+    const updated = (await store.reviewJudgments({ status: "open" })).find(item => item.id === old.id);
+    assert.equal(updated.comment, "旧指示を確認");
+    assert.equal(updated.actualRuleId, "removed-rule");
+    assert.equal((await request("/dismiss", {})).status, 200);
+    const refreshed = await talkBranchReviewFromDetail(store, talk.id, rule.from);
+    assert.deepEqual(refreshed.unassignedJudgments, []);
+  } finally { database.close(); }
+});
+
+test("監修詳細は一覧で取得済みの根拠を再取得せず、実入力と試行を両方表示する", async () => {
+  const { talk, rule } = talkFixture();
+  let inputReads = 0, trialReads = 0;
+  const store = {
+    async reviewInputEvents(_talk, _from, query) {
+      inputReads++;
+      assert.equal(query, undefined, "取得済みeventへID指定の追加Queryをしない");
+      return [
+        { id: "event", ruleId: "retired", userInput: "実入力", normalizedInput: "実入力" },
+        { id: "current", ruleId: rule.id, userInput: "現行入力", normalizedInput: "現行入力" }
+      ];
+    },
+    async reviewTrialInputs(_talk, _from, ids) {
+      trialReads++;
+      assert.equal(ids, undefined, "取得済みtrialへID指定の追加Queryをしない");
+      return [{ id: "trial", actualRuleId: "retired", userInput: "試行入力" }];
+    },
+    async reviewJudgments() { return [{ ...judgment(talk, rule, ["event", "trial"]), actualRuleId: "retired" }]; },
+    async reviewClusters() { return [{ id: "saved", actualRuleId: rule.id, sourceEventIds: ["current"], fit: "blue", representativeInput: "現行入力", inputCount: 1 }]; },
+    async reviewInputCounts() { return { [rule.id]: 1, retired: 1 }; }
+  };
+  const detail = await talkBranchReviewFromDetail(store, talk.id, rule.from);
+  assert.deepEqual(detail.unassignedJudgments[0].sourceInputs, [{ id: "event", input: "実入力" }, { id: "trial", input: "試行入力" }]);
+  assert.equal(detail.branches.find(branch => branch.ruleId === rule.id).clusters[0].inputs[0].input, "現行入力");
+  assert.equal(inputReads, 1);
+  assert.equal(trialReads, 1);
+});
+
+test("旧指示の描画は本文をtextで扱い、同じ指示の編集・削除へ接続する", () => {
+  const script = talkBranchReviewPageHtml().match(/<script>([\s\S]*?)<\/script>/u)[1];
+  const parsed = ts.createSourceFile("review.js", script, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const names = new Set(["renderUnassignedJudgments", "renderJudgments", "ruleMeta", "judgmentText", "judgmentTargetLabel", "editableJudgmentText"]);
+  const functions = [];
+  function visit(node) {
+    if (ts.isFunctionDeclaration(node) && names.has(node.name?.text)) functions.push(node.getText(parsed));
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.equal(functions.length, names.size);
+  class Element {
+    children = []; listeners = {}; textContent = "";
+    constructor(tag) { this.tag = tag; }
+    append(...nodes) { this.children.push(...nodes); }
+    appendChild(node) { this.append(node); return node; }
+    addEventListener(event, callback) { this.listeners[event] = callback; }
+  }
+  let refreshed = 0, saved, dismissed;
+  const render = new Function("document", "state", "renderDetail", "updateJudgment", "dismissJudgment", "confirm", `${functions.join("\n")}\nreturn renderUnassignedJudgments;`)(
+    { createElement: tag => new Element(tag) }, { detail: { branches: [] } }, () => refreshed++,
+    (item, comment) => { saved = [item.id, comment]; }, item => { dismissed = item.id; }, () => true
+  );
+  const item = { id: "old", actualRuleId: "retired", judgment: "comment_only", comment: "<script>作品の入力</script>", sourceInputs: [{ id: "source", input: "<img src=x>" }] };
+  const flatten = node => [node, ...node.children.flatMap(flatten)];
+  let nodes = flatten(render([item]));
+  assert(nodes.some(node => node.textContent === "根拠 (source): <img src=x>"));
+  assert(nodes.some(node => node.textContent.includes("<script>作品の入力</script>")));
+  assert(nodes.every(node => !Object.hasOwn(node, "innerHTML")));
+  nodes.find(node => node.textContent === "編集").listeners.click();
+  assert.equal(item.__editing, true);
+  assert.equal(refreshed, 1);
+  nodes = flatten(render([item]));
+  assert.equal(nodes.find(node => node.className === "judgment-edit").hidden, false);
+  nodes.find(node => node.tag === "textarea").value = "修正した指示";
+  nodes.find(node => node.textContent === "保存").listeners.click();
+  assert.deepEqual(saved, ["old", "修正した指示"]);
+  nodes.find(node => node.textContent === "削除").listeners.click();
+  assert.equal(dismissed, "old");
+});
+
 databaseTest("applied指示は通常編集・dismiss・根拠整理から保護し、status専用変更は許可する", async () => {
   const { database, store } = localStore();
   const { talk, rule } = talkFixture();
@@ -180,6 +301,45 @@ test("DynamoDBの入力cursorは同時刻でも最後に表示した実キーか
   const third = await store.playerInputEvents({ limit: 2, cursor: second.nextCursor });
   assert.deepEqual([...first.items, ...second.items, ...third.items].map((item) => item.id), ["e", "d", "c", "b", "a"]);
   assert.equal(third.nextCursor, null);
+});
+
+test("DynamoDBの期間はQuery自体で絞り、境界日時・絞込み・cursorを両立する", async () => {
+  const after = "2026-09-01T00:00:00.000Z", before = "2026-09-02T00:00:00.000Z";
+  const rows = [
+    ["older", "2026-08-31T23:59:59.999Z"], ["lower_a", after], ["lower_b", after],
+    ["middle", "2026-09-01T12:00:00.000Z"], ["reject", "2026-09-01T13:00:00.000Z"],
+    ["upper_a", before], ["upper_b", before], ["future", "2026-09-03T00:00:00.000Z"]
+  ].map(([id, occurredAt]) => ({
+    PK: "PLAYER#p", SK: `INPUT#${id}`, GSI2PK: "INPUT_REVIEW", GSI2SK: `INPUT#talk_send#${occurredAt}#${id}`,
+    id, occurredAt, userInput: id, status: id === "reject" ? "rejected" : "completed"
+  })).sort((a, b) => a.GSI2SK < b.GSI2SK ? 1 : -1);
+  for (const [range, expected] of [
+    [{ after, before }, ["middle", "lower_b", "lower_a"]],
+    [{ after }, ["future", "upper_b", "upper_a", "middle", "lower_b", "lower_a"]],
+    [{ before }, ["middle", "lower_b", "lower_a", "older"]],
+    [{}, ["future", "upper_b", "upper_a", "middle", "lower_b", "lower_a", "older"]],
+    [{ after: "", before: "" }, ["future", "upper_b", "upper_a", "middle", "lower_b", "lower_a", "older"]]
+  ]) {
+    const store = new DynamoStore({ async execute(operation, input) {
+      assert.equal(operation, "Query");
+      assert.equal(input.KeyConditionExpression, "#pk = :pk AND #sk BETWEEN :lo AND :hi");
+      const values = dynamoDocument.valueFromItem(input.ExpressionAttributeValues);
+      assert.equal(values[":lo"], "INPUT#talk_send#" + (range.after ?? ""));
+      assert.equal(values[":hi"], "INPUT#talk_send#" + (range.before || "\uffff"));
+      const previous = input.ExclusiveStartKey && dynamoDocument.valueFromItem(input.ExclusiveStartKey).GSI2SK;
+      const matching = rows.filter(row => row.GSI2SK >= values[":lo"] && row.GSI2SK <= values[":hi"] && (!previous || row.GSI2SK < previous));
+      const page = matching.slice(0, 2), last = page.at(-1);
+      return { Items: page.map(dynamoDocument.item), ...(matching.length > page.length ? { LastEvaluatedKey: dynamoDocument.item({ PK: last.PK, SK: last.SK, GSI2PK: last.GSI2PK, GSI2SK: last.GSI2SK }) } : {}) };
+    } }, "table");
+    let cursor;
+    const actual = [];
+    do {
+      const page = await store.playerInputEvents({ ...range, status: "completed", limit: 2, cursor });
+      actual.push(...page.items.map(item => item.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    assert.deepEqual(actual, expected);
+  }
 });
 
 test("DynamoDBの絞込みページはbackendの継続取得を跨いでも対象入力を欠落させない", async () => {
