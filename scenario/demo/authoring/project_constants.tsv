@@ -1,0 +1,22 @@
+comment	key	value	exposure	notes
+	project.id	demo	public	
+	project.name	XStoryPhone Demo	public	
+	device.os_name	StoryOS	public	
+	search_agent.name	ナビ	public	
+	device.accent_color	#8fd2ff	public	
+	device.date	2026-08-12	public	
+	device.time_label	20:14	public	
+	device.battery_level	72	public	
+	device.signal_label	4G	public	
+	device.wallpaper_url	/demo/wallpaper.svg	public	
+	player.mode	browser	public	
+	features.llm	false	private	
+	device.lock_method	none	public	
+	search_agent.broken_link_tutorial_body	ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。	public	
+	search_agent.broken_link_body	リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。	public	
+	event.client_callable	chat_auth_link_requested	private	
+	chat_auth.cond	sealed_note_unlocked && !chat_auth_verified	private	
+	chat_auth.link_sent_cond	chat_auth_link_sent	private	
+	search_agent.start	"/input hide
+intro
+/input show"	private

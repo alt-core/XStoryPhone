@@ -5,15 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseTalkOutputSteps } from "../scripts/lib/talk-output-steps.mjs";
+import { readScenarioFixture } from "./helpers/authoring-fixture.mjs";
 
-const scenarioLibUrl = new URL("../scripts/scenario-lib.mjs", import.meta.url).href;
+const scenarioLibUrl = new URL("./helpers/authoring-fixture.mjs", import.meta.url).href;
 
 function copiedScenario() {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "xstoryphone-talk-input-authoring-"));
-  fs.mkdirSync(path.join(target, "authoring"));
-  fs.copyFileSync("scenario/demo/scenario.json", path.join(target, "scenario.json"));
-  fs.copyFileSync("scenario/demo/authoring/talk_blocks.tsv", path.join(target, "authoring/talk_blocks.tsv"));
-  fs.copyFileSync("scenario/demo/authoring/talk_flow.tsv", path.join(target, "authoring/talk_flow.tsv"));
+  fs.cpSync("scenario/demo", target, { recursive: true });
   return target;
 }
 
@@ -96,8 +94,8 @@ test("Quick Replyは14件以上かつ20文字超でも500文字以内なら許�
 test("talk sourceのfalseと通常talkの/inputを維持する", () => {
   const target = copiedScenario();
   try {
-    const sourcePath = path.join(target, "scenario.json");
-    const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+    const sourcePath = path.join(target, "scenario.fixture.json");
+    const source = readScenarioFixture(sourcePath);
     const guide = source.talks.find((talk) => talk.id === "guide");
     guide.inputVisible = false;
     guide.inputEnabled = false;
@@ -136,8 +134,8 @@ test("通常talkの検索commandと入力状態の反復を拒否する", () => 
 
   const blinkTarget = copiedScenario();
   try {
-    const sourcePath = path.join(blinkTarget, "scenario.json");
-    const source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+    const sourcePath = path.join(blinkTarget, "scenario.fixture.json");
+    const source = readScenarioFixture(sourcePath);
     source.talks.find((talk) => talk.id === "search_agent").startSteps = ["/input hide", "/input show", "intro"];
     fs.writeFileSync(sourcePath, `${JSON.stringify(source, null, 2)}\n`);
     const result = validateScenario(blinkTarget);

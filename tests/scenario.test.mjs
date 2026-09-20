@@ -7,6 +7,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateScenario } from "../scripts/scenario-lib.mjs";
+import { loadScenarioAuthoring } from "../scripts/lib/scenario-authoring.mjs";
+import { readScenarioFixture } from "./helpers/authoring-fixture.mjs";
 import { clientRevisionFor, transcriptRevisionFor } from "../scripts/lib/scenario-revisions.mjs";
 import { parseRegexCriteria, resolveTalkRule } from "../src/shared/conversation.ts";
 import { formatStoryDateCompact, formatStoryDateLabel, parseStoryDate, storyWeekFor } from "../src/shared/storyDate.ts";
@@ -350,7 +352,7 @@ test("デモの各案内は実際の進行状態で次の操作と復帰メニ�
 });
 
 test("デモhookが追加する全blockは存在し、advance後だけ返信可能な位置を要求する", () => {
-  const hookSource = fs.readFileSync("scenario/demo/hooks.ts", "utf8");
+  const hookSource = Object.values(loadScenarioAuthoring("scenario/demo").hookScripts).join("\n");
   const targets = [...hookSource.matchAll(/context\.talk\.addBlock\("([^"]+)", "([^"]+)"(?:, \{ mode: "(stay|advance)" \})?\)/gu)]
     .map((match) => ({ talkId: match[1], blockKey: match[2], mode: match[3] ?? "advance" }));
   assert.ok(targets.length > 0);
@@ -1343,17 +1345,10 @@ test("シナリオディレクトリを明示してデモと別の原本を選�
   try {
     fs.mkdirSync(path.join(temporaryRoot, "scenario"), { recursive: true });
     fs.cpSync("scenario/demo", path.join(temporaryRoot, "scenario/my-story"), { recursive: true });
-    const customScenarioPath = path.join(temporaryRoot, "scenario/my-story/scenario.json");
-    const customScenario = JSON.parse(fs.readFileSync(customScenarioPath, "utf8"));
-    customScenario.project.name = "選択された作品";
-    customScenario.hooks.push({
-      event: "content_opened",
-      target: "notes",
-      handler: "mark_session_started",
-      cond: "",
-      llm: false
-    });
-    fs.writeFileSync(customScenarioPath, JSON.stringify(customScenario));
+    const constantsPath = path.join(temporaryRoot, "scenario/my-story/authoring/project_constants.tsv");
+    fs.writeFileSync(constantsPath, fs.readFileSync(constantsPath, "utf8").replace("XStoryPhone Demo", "選択された作品"));
+    const hooksPath = path.join(temporaryRoot, "scenario/my-story/authoring/hooks.tsv");
+    fs.appendFileSync(hooksPath, '\n\tcontent_opened\tnotes\t\tstate.set("session_started", true);\t\ttest_app_target\tfalse\n');
     const scenarioLibUrl = new URL("../scripts/scenario-lib.mjs", import.meta.url).href;
     const result = spawnSync(process.execPath, [
       "--input-type=module",
@@ -1375,9 +1370,9 @@ test("talk単位initialStateを生成し、初期block単位condは明示拒否�
   const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-talk-initial-state-"));
   try {
     fs.cpSync("scenario", path.join(temporaryRoot, "scenario"), { recursive: true });
-    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.json");
-    const scenario = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
-    const validator = fileURLToPath(new URL("../scripts/scenario-validate.mjs", import.meta.url));
+    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.fixture.json");
+    const scenario = readScenarioFixture(scenarioPath);
+    const validator = fileURLToPath(new URL("./helpers/validate-authoring-fixture.mjs", import.meta.url));
     const repairableTalk = scenario.talks.find((talk) => talk.id === "sms_receiver");
     const invalidBlockTalk = scenario.talks.find((talk) => talk.id === "sms_media_receiver");
     repairableTalk.initialState = "repairable";
@@ -1403,7 +1398,7 @@ test("talk単位initialStateを生成し、初期block単位condは明示拒否�
     const generated = spawnSync(process.execPath, [
       "--input-type=module",
       "--eval",
-      `import(${JSON.stringify(new URL("../scripts/scenario-lib.mjs", import.meta.url).href)}).then(({ loadAndValidateScenario }) => {
+      `import(${JSON.stringify(new URL("./helpers/authoring-fixture.mjs", import.meta.url).href)}).then(({ loadAndValidateScenario }) => {
         const talk = loadAndValidateScenario().worker.talks.find((item) => item.id === "sms_receiver");
         console.log(JSON.stringify(talk));
       })`
@@ -1430,9 +1425,9 @@ test("シナリオ検証は不正なcondと未定義変数を実行前に拒否�
   const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-scenario-"));
   try {
     fs.cpSync("scenario", path.join(temporaryRoot, "scenario"), { recursive: true });
-    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.json");
-    const scenario = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
-    const validator = fileURLToPath(new URL("../scripts/scenario-validate.mjs", import.meta.url));
+    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.fixture.json");
+    const scenario = readScenarioFixture(scenarioPath);
+    const validator = fileURLToPath(new URL("./helpers/validate-authoring-fixture.mjs", import.meta.url));
     const historyRepair = scenario.contents.find((content) => content.id === "guide_history_archive_a");
     historyRepair.record.block = "clue_attachments";
     fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
@@ -1496,7 +1491,7 @@ test("シナリオ検証は不正なcondと未定義変数を実行前に拒否�
 
     scenario.project.lockScreen = { method: "fixed-pin", pin: "0420" };
     fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
-    const scenarioLibUrl = new URL("../scripts/scenario-lib.mjs", import.meta.url).href;
+    const scenarioLibUrl = new URL("./helpers/authoring-fixture.mjs", import.meta.url).href;
     const fixedPinGenerationResult = spawnSync(process.execPath, [
       "--input-type=module",
       "--eval",
@@ -1585,13 +1580,13 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
   const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-authoring-validation-"));
   try {
     fs.cpSync("scenario", path.join(temporaryRoot, "scenario"), { recursive: true });
-    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.json");
+    const scenarioPath = path.join(temporaryRoot, "scenario/demo/scenario.fixture.json");
     const flowPath = path.join(temporaryRoot, "scenario/demo/authoring/talk_flow.tsv");
     const blocksPath = path.join(temporaryRoot, "scenario/demo/authoring/talk_blocks.tsv");
-    const baseScenario = fs.readFileSync(scenarioPath, "utf8");
+    const baseScenario = JSON.stringify(readScenarioFixture(scenarioPath));
     const baseFlow = fs.readFileSync(flowPath, "utf8");
     const baseBlocks = fs.readFileSync(blocksPath, "utf8");
-    const validator = fileURLToPath(new URL("../scripts/scenario-validate.mjs", import.meta.url));
+    const validator = fileURLToPath(new URL("./helpers/validate-authoring-fixture.mjs", import.meta.url));
     function run({ scenario: mutateScenario, flow: mutateFlow, blocks: mutateBlocks } = {}) {
       const scenario = JSON.parse(baseScenario);
       if (mutateScenario) mutateScenario(scenario);
@@ -1690,7 +1685,7 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
     const normalizedSearchMessageLink = spawnSync(process.execPath, [
       "--input-type=module",
       "--eval",
-      `import(${JSON.stringify(new URL("../scripts/scenario-lib.mjs", import.meta.url).href)}).then(({ loadAndValidateScenario }) => {
+      `import(${JSON.stringify(new URL("./helpers/authoring-fixture.mjs", import.meta.url).href)}).then(({ loadAndValidateScenario }) => {
         const block = loadAndValidateScenario().worker.talkBlocks.find((item) => item.id === "search_agent::intro");
         console.log(JSON.stringify(block.messages[0].segments));
       })`
@@ -1830,7 +1825,7 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
       }
     });
     assert.equal(validMatchTemplate.status, 0, validMatchTemplate.stderr);
-    const scenarioLibUrl = new URL("../scripts/scenario-lib.mjs", import.meta.url).href;
+    const scenarioLibUrl = new URL("./helpers/authoring-fixture.mjs", import.meta.url).href;
     const hookBlockGeneration = spawnSync(process.execPath, [
       "--input-type=module",
       "--eval",

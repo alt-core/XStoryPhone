@@ -13,7 +13,10 @@ import {
 } from "../product/talkFlowMatchExtraction.ts";
 import { runTalkFlowMatchExtractionSamples } from "../product/llmMatchExtractionRunner.ts";
 import { normalizeHookLlmProfile, resolveHookLlmProfile } from "../product/llmProfiles.ts";
-import type { LlmProviderEnv, StructuredOutputProvider } from "../providers/structuredOutput.ts";
+import {
+  canonicalLlmJson, llmRequestHashes, resolveStructuredOutputConfig,
+  type LlmProviderEnv, type StructuredOutputProvider
+} from "../providers/structuredOutput.ts";
 
 export type HookLlmRequest =
   | {
@@ -49,27 +52,52 @@ export class HookLlmUnavailableError extends Error {
   }
 }
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 export function hookLlmRequestKey(request: HookLlmRequest, modelVersion: string) {
-  return canonical({ version: 2, modelVersion, ...request });
+  return canonicalLlmJson({ version: 2, modelVersion, ...request });
 }
 
 function sourceInput(options: { input?: string; source?: string }, event: ScenarioEventPayload) {
-  if (typeof options.input === "string") return options.input;
+  if (typeof options.input === "string" && options.input.trim()) return options.input.trim();
   const source = options.source?.trim() ?? "";
-  if (source) {
-    const top = event as unknown as Record<string, unknown>;
-    const value = event.fields?.[source] ?? top[source];
-    if (typeof value === "string") return value;
+  if (!source) return "";
+  if (source === "player_message") return event.playerInput?.trim() ?? "";
+  const top = event as unknown as Record<string, unknown>;
+  const value = Object.prototype.hasOwnProperty.call(event.fields ?? {}, source) ? event.fields?.[source]
+    : Object.prototype.hasOwnProperty.call(top, source) ? top[source] : undefined;
+  if (typeof value === "string") return value.trim();
+  throw new Error(`hook LLMのsourceが未定義です: ${source}`);
+}
+
+type SchemaField = { kind: "string" | "boolean" | "integer" | "number" | "null"; maxLength?: number; pattern?: string };
+
+function schemaFields(rule: string): SchemaField[] {
+  if (typeof rule !== "string" || !rule.trim()) throw new Error("hook LLM schemaが空です。");
+  return rule.split("|").map((raw): SchemaField => {
+    const spec = raw.trim();
+    if (["string", "boolean", "integer", "number", "null"].includes(spec)) return { kind: spec as SchemaField["kind"] };
+    if (spec === "hiragana_1_5") return { kind: "string", maxLength: 5, pattern: "^[ぁ-ゖー]{1,5}$" };
+    if (spec === "safe_reading_text") return { kind: "string", maxLength: 240 };
+    const length = /^string_max_(\d+)$/u.exec(spec);
+    if (length && Number.isSafeInteger(Number(length[1]))) return { kind: "string", maxLength: Number(length[1]) };
+    throw new Error(`hook LLM schemaが不正です: ${spec}`);
+  });
+}
+
+function schemaFieldBudget(spec: string) {
+  const field = schemaFields(spec)[0];
+  if (field.kind !== "string") return 12;
+  if (field.pattern) return 18;
+  if (spec.trim() === "safe_reading_text") return 384;
+  return field.maxLength === undefined ? 96 : 18 + Math.ceil(Math.min(field.maxLength, 500) * 1.5);
+}
+
+function schemaTokenBudget(schema: Record<string, string>, explicit?: number) {
+  if (explicit !== undefined) {
+    if (!Number.isFinite(explicit)) throw new Error("hook LLM maxTokensは有限の数値にしてください。");
+    return Math.max(1, Math.min(8_192, Math.round(explicit)));
   }
-  return event.playerInput ?? event.fields?.input ?? JSON.stringify(event.fields ?? {});
+  const estimated = 48 + Object.values(schema).reduce((sum, rule) => sum + Math.max(...rule.split("|").map(schemaFieldBudget)), 0);
+  return Math.max(512, Math.min(4_096, estimated));
 }
 
 export function normalizeHookLlmRequest(
@@ -81,14 +109,18 @@ export function normalizeHookLlmRequest(
   if (!taskId.trim() || !options.instructions?.trim() || !options.schema || !Object.keys(options.schema).length) {
     throw new Error(`hook LLM taskが不正です: ${taskId}`);
   }
+  simpleSchema(options.schema);
+  if (options.fallback !== undefined && !validateSimpleOutput(options.fallback, options.schema)) {
+    throw new Error(`hook LLM fallbackがschemaと一致しません: ${taskId}`);
+  }
   return {
     kind,
     taskId: taskId.trim(),
     input: sourceInput(options, event),
     instructions: options.instructions.trim(),
     schema: options.schema,
-    maxTokens: Math.max(1, Math.min(8_192, Math.round(options.maxTokens ?? 512))),
-    ...(options.fallback ? { fallback: options.fallback } : {})
+    maxTokens: schemaTokenBudget(options.schema, options.maxTokens),
+    ...(options.fallback !== undefined ? { fallback: options.fallback } : {})
   };
 }
 
@@ -102,6 +134,15 @@ export function normalizeHookLlmMatchRequest(
   const rawMatch = typeof options.match === "string" ? options.match : JSON.stringify(options.match);
   const parsed = parseTalkFlowMatchSpec(rawMatch);
   if (!taskId.trim() || !parsed.ok) throw new Error(`hook LLM matchが不正です: ${taskId}`);
+  if (options.mode !== undefined && options.mode !== "stable" && options.mode !== "once") throw new Error("hook LLM modeはstable/onceにしてください。");
+  let fallback: HookLlmMatchResult | undefined;
+  if (options.fallback !== undefined) {
+    const checked = parseTalkFlowMatchOutput(options.fallback, parsed.spec);
+    if (!checked.ok || parsed.spec.items.some((item) => item.nullMode === "no" && checked.output[item.id] === null)) {
+      throw new Error(`hook LLM matchのfallbackが不正です: ${taskId}`);
+    }
+    fallback = checked.output;
+  }
   return {
     kind: "match",
     taskId: taskId.trim(),
@@ -109,33 +150,33 @@ export function normalizeHookLlmMatchRequest(
     rawMatch,
     profile: profile.profile,
     mode: options.mode ?? "stable",
-    ...(options.fallback ? { fallback: options.fallback } : {})
+    ...(fallback !== undefined ? { fallback } : {})
   };
 }
 
 function simpleSchema(schema: Record<string, string>) {
   const properties = Object.fromEntries(Object.entries(schema).map(([key, rule]) => {
-    const types = rule.split("|").map((item) => item.trim()).flatMap((item) => (
-      item === "string" ? ["string"] : item === "boolean" ? ["boolean"] : item === "integer" ? ["integer"]
-        : item === "number" ? ["number"] : item === "null" ? ["null"] : []
-    ));
-    if (!types.length) throw new Error(`hook LLM schemaが不正です: ${key}=${rule}`);
-    return [key, types.length === 1 ? { type: types[0] } : { type: types }];
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/u.test(key)) throw new Error(`hook LLM schemaのkeyが不正です: ${key}`);
+    const fields = schemaFields(rule).map(({ kind, ...constraints }) => ({ type: kind, ...constraints }));
+    return [key, fields.length === 1 ? fields[0] : { anyOf: fields }];
   }));
   return { type: "object", additionalProperties: false, properties, required: Object.keys(properties) };
 }
 
 function validateSimpleOutput(value: Record<string, unknown>, schema: Record<string, string>): HookLlmResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (Object.keys(value).some((key) => !(key in schema))) return null;
   const result: HookLlmResult = {};
   for (const [key, rule] of Object.entries(schema)) {
     const item = value[key];
-    const allowed = new Set(rule.split("|").map((part) => part.trim()));
-    const valid = item === null ? allowed.has("null")
-      : typeof item === "string" ? allowed.has("string")
-        : typeof item === "boolean" ? allowed.has("boolean")
-          : typeof item === "number" && Number.isInteger(item) ? allowed.has("integer") || allowed.has("number")
-            : typeof item === "number" ? allowed.has("number") : false;
+    const valid = schemaFields(rule).some((field) => {
+      if (field.kind === "null") return item === null;
+      if (field.kind === "string") return typeof item === "string"
+        && (field.maxLength === undefined || item.length <= field.maxLength)
+        && (!field.pattern || new RegExp(field.pattern, "u").test(item));
+      if (field.kind === "boolean") return typeof item === "boolean";
+      return typeof item === "number" && Number.isFinite(item) && (field.kind === "number" || Number.isInteger(item));
+    });
     if (!valid) return null;
     result[key] = item as HookLlmResult[string];
   }
@@ -143,13 +184,19 @@ function validateSimpleOutput(value: Record<string, unknown>, schema: Record<str
 }
 
 async function resolveSchemaRequest(provider: StructuredOutputProvider, request: Extract<HookLlmRequest, { kind: "extract" | "screen" }>) {
+  const hashes = await hookLlmRequestHashes(request);
   const result = await provider.completeJson({
     taskId: request.taskId,
-    instructions: request.instructions,
+    instructions: [
+      "あなたはARGシナリオ用の入力フィルタです。出力はJSON objectだけにしてください。",
+      "表示用の本文やNPC返信を自由生成してはいけません。",
+      `種別: ${request.kind}`, `指示: ${request.instructions}`
+    ].join("\n"),
     input: { input: request.input },
     schema: simpleSchema(request.schema),
     maxTokens: request.maxTokens,
-    temperature: 0
+    temperature: 0,
+    observation: { source: "hook_llm", ...hashes }
   });
   if (!result.ok) return request.fallback
     ? { output: request.fallback, status: "fallback" as const, errorCode: result.error }
@@ -169,7 +216,8 @@ async function resolveMatchRequest(provider: StructuredOutputProvider, env: LlmP
     : new HookLlmUnavailableError("provider_unavailable");
   const parsed = parseTalkFlowMatchSpec(request.rawMatch);
   if (!parsed.ok) throw new Error(parsed.error);
-  const result = await runTalkFlowMatchExtractionSamples(parsed.spec, [], async () => {
+  const hashes = await hookLlmRequestHashes(request);
+  const result = await runTalkFlowMatchExtractionSamples(parsed.spec, [], async (sampleIndex) => {
       const messages = buildTalkFlowMatchExtractionMessages({
         talkId: "",
         fromId: request.taskId,
@@ -188,14 +236,17 @@ async function resolveMatchRequest(provider: StructuredOutputProvider, env: LlmP
         temperature: 0,
         model: profile.config.model,
         reasoningEffort: profile.config.reasoningEffort,
-        timeoutMs: profile.config.timeoutMs
+        timeoutMs: profile.config.timeoutMs,
+        observation: { source: "hook_llm", sampleIndex, ...hashes }
       });
       if (!response.ok) return { status: response.error } as const;
       const output = parseTalkFlowMatchOutput(response.value, parsed.spec);
+      provider.observeResult?.({ source: "hook_llm", taskId: request.taskId, sampleIndex, status: output.ok ? "sample_ready" : "invalid_response", ...hashes }, { output: output.ok ? output.output : null });
       return output.ok
         ? { status: "ready" as const, output: output.output }
         : { status: "invalid_response" as const };
     }, { maxSamples: 5, selectionMode: request.mode });
+  provider.observeResult?.({ source: "hook_llm", taskId: request.taskId, status: result.ok ? "ready" : result.reason, sampleCount: result.sampleCount, ...hashes }, { outputs: result.outputs, selected: result.ok ? result.values : null });
   if (result.ok) return { output: result.values, status: "ready" as const };
   const reason = result.reason;
   return request.fallback
@@ -207,15 +258,24 @@ export async function resolveHookLlmRequest(provider: StructuredOutputProvider |
   if (!provider) return request.fallback
     ? { output: request.fallback, status: "fallback" as const, errorCode: "provider_unavailable" as const }
     : new HookLlmUnavailableError("provider_unavailable");
-  return request.kind === "match"
-    ? resolveMatchRequest(provider, env, request)
-    : resolveSchemaRequest(provider, request);
+  const result = request.kind === "match"
+    ? await resolveMatchRequest(provider, env, request)
+    : await resolveSchemaRequest(provider, request);
+  provider.observeResult?.({ source: "hook_llm", taskId: request.taskId, status: result instanceof HookLlmUnavailableError ? result.reason : result.status, ...await hookLlmRequestHashes(request) });
+  return result;
 }
 
 export function hookLlmModelVersion(env: LlmProviderEnv, request: HookLlmRequest) {
+  let overrides = {};
   if (request.kind === "match") {
     const resolved = resolveHookLlmProfile(env, request.profile);
-    return resolved.ok ? resolved.config.modelVersion : `unavailable:${request.profile}`;
+    if (!resolved.ok) return `unavailable:${request.profile}`;
+    overrides = resolved.config;
   }
-  return env.LLM_MODEL?.trim() || "unavailable";
+  return canonicalLlmJson(resolveStructuredOutputConfig(env, overrides));
+}
+
+export function hookLlmRequestHashes(request: HookLlmRequest) {
+  return llmRequestHashes(request.input, request.kind === "match" ? request.rawMatch : request.instructions,
+    request.kind === "match" ? JSON.parse(request.rawMatch) : request.schema);
 }

@@ -2,9 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "b422fcbbbfb2ffe1",
-  "clientRevision": "client_141e05c772560338",
-  "transcriptRevision": "transcript_db383c157e4c90d8",
+  "revision": "0eeb2c5fd105402b",
+  "clientRevision": "client_117077c1b9ad4e16",
+  "transcriptRevision": "transcript_45010aff3c417315",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -12,14 +12,35 @@ export const workerScenario: WorkerScenario = {
     "osName": "StoryOS",
     "assistantName": "ナビ",
     "accentColor": "#8fd2ff",
-    "lockScreen": {
-      "method": "none"
-    },
     "date": "2026-08-12",
     "timeLabel": "20:14",
     "batteryLevel": 72,
     "signalLabel": "4G",
-    "wallpaperUrl": "/demo/wallpaper.svg"
+    "wallpaperUrl": "/demo/wallpaper.svg",
+    "lockScreen": {
+      "method": "none"
+    }
+  },
+  "projectConstants": {
+    "project.id": "demo",
+    "project.name": "XStoryPhone Demo",
+    "device.os_name": "StoryOS",
+    "search_agent.name": "ナビ",
+    "device.accent_color": "#8fd2ff",
+    "device.date": "2026-08-12",
+    "device.time_label": "20:14",
+    "device.battery_level": "72",
+    "device.signal_label": "4G",
+    "device.wallpaper_url": "/demo/wallpaper.svg",
+    "player.mode": "browser",
+    "features.llm": "false",
+    "device.lock_method": "none",
+    "search_agent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
+    "search_agent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
+    "event.client_callable": "chat_auth_link_requested",
+    "chat_auth.cond": "sealed_note_unlocked && !chat_auth_verified",
+    "chat_auth.link_sent_cond": "chat_auth_link_sent",
+    "search_agent.start": "/input hide\nintro\n/input show"
   },
   "apps": [
     {
@@ -28,11 +49,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "phone",
       "accent": "#67d78e",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "電話",
         "着信"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -41,10 +62,10 @@ export const workerScenario: WorkerScenario = {
       "icon": "message_circle",
       "accent": "#5cc8a7",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "メッセージ"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -53,11 +74,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "mail",
       "accent": "#aebcff",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "メール",
         "電子メール"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -66,11 +87,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "notebook_pen",
       "accent": "#8fd2ff",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "メモアプリ",
         "ノートアプリ"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -79,11 +100,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "album",
       "accent": "#f0b35d",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "アルバム",
         "写真"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -92,11 +113,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "calendar_days",
       "accent": "#f07178",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "予定",
         "スケジュール"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -105,11 +126,11 @@ export const workerScenario: WorkerScenario = {
       "icon": "radio",
       "accent": "#f4c86a",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ラジオ",
         "放送"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
@@ -118,18 +139,17 @@ export const workerScenario: WorkerScenario = {
       "icon": "globe_2",
       "accent": "#79b9ff",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ブラウザ",
         "タブ",
         "Web"
       ],
-      "cond": "",
       "badgeCond": ""
     },
     {
       "id": "chat",
       "label": "チャット",
-      "repairLabel": "チャ▗▛▞▐▀",
       "icon": "message_square_text",
       "accent": "#7ee093",
       "initialState": "repairable",
@@ -139,6 +159,7 @@ export const workerScenario: WorkerScenario = {
         "ロビー",
         "掲示板"
       ],
+      "repairLabel": "チャ▗▛▞▐▀",
       "badgeCond": ""
     }
   ],
@@ -237,10 +258,551 @@ export const workerScenario: WorkerScenario = {
     "evening_platform": "夕暮れの駅のホーム。黄色い点字ブロックと遠くの列車が写っている。",
     "rainy_window": "雨粒の付いた窓越しに夜景が見え、右下寄りの青い灯りが最も大きく写っている。",
     "coffee_table": "コーヒーカップと開いたノートが木製の机に置かれている。",
-    "demo_received_image": "メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。",
-    "demo_video": "プログラムで生成したカラーバーが動くデモ動画。"
+    "demo_video": "プログラムで生成したカラーバーが動くデモ動画。",
+    "demo_received_image": "メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。"
   },
   "contents": [
+    {
+      "id": "welcome_note",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "端末",
+        "操作",
+        "案内",
+        "ヒント"
+      ],
+      "record": {
+        "title": "操作ガイド",
+        "body": "ナビ検索とコンテンツ修復を順に試します。右下のナビで「古いメモ」と検索してください。",
+        "tags": [
+          "案内",
+          "操作"
+        ]
+      },
+      "publicId": "c_fbeb27e60040"
+    },
+    {
+      "id": "feature_test_guide",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "機能テスト",
+        "試し方",
+        "着信テスト",
+        "遅延メッセージ"
+      ],
+      "record": {
+        "title": "機能テスト一覧",
+        "body": "ナビで「機能テスト」と入力するか、Quick Replyの「機能テスト」を選ぶと、次の操作を選べます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・ノイズ演出：端末全体にノイズを表示します。\n・フラッシュ演出：端末全体を白く光らせます。\n・暗転演出：端末全体を一時的に暗転します。\n・ゲームオーバー演出：ゲームオーバー画面を表示します。\n・オールクリア演出：オールクリア画面の後、ラジオへ移動します。\n\nメッセージの「デモ連絡先」では、何か送信すると連携先を選ぶQuick Replyが表示されます。\n・別ルームへ送る：別のメッセージルームへ届きます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\nナビで「消えた連絡記録」または「消えた談話記録」と検索すると、会話内の破損した初期履歴を修復できます。各受信では通知も表示されます。繰り返す場合は通知シェードの「最初から」を使ってください。",
+        "tags": [
+          "案内",
+          "機能テスト"
+        ]
+      },
+      "publicId": "c_cefa574e8306"
+    },
+    {
+      "id": "old_note",
+      "appId": "notes",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "古いメモ",
+        "ふるいメモ"
+      ],
+      "repairLabel": "古▚▐▀▜メモ",
+      "record": {
+        "title": "古いメモ",
+        "body": "次は画像を探します。ナビで「雨」と検索し、表示された画像で一番大きく見える灯りの色を確認してください。色が分かったら、そのままナビに色を伝えてください。",
+        "tags": [
+          "操作",
+          "画像"
+        ]
+      },
+      "publicId": "c_32c01e364751"
+    },
+    {
+      "id": "dummy_note_1",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_9963319fe24e"
+    },
+    {
+      "id": "dummy_note_2",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_2d05b2ffd3ce"
+    },
+    {
+      "id": "dummy_note_3",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_e9de14c38b65"
+    },
+    {
+      "id": "dummy_note_4",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_a59b078ce15f"
+    },
+    {
+      "id": "dummy_note_5",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_d5126f33366a"
+    },
+    {
+      "id": "dummy_note_6",
+      "appId": "notes",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "body": "一覧スクロール確認用のダミーデータです。",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_b6d1a7ef235b"
+    },
+    {
+      "id": "sealed_note",
+      "appId": "notes",
+      "initialState": "hidden",
+      "cond": "image_color_reported",
+      "search": [
+        "鍵付き",
+        "添付",
+        "パスワード"
+      ],
+      "record": {
+        "title": "鍵付きメモ",
+        "body": "鍵付き添付とコンテンツ解錠の確認は完了です。次はチャットを修復してください。"
+      },
+      "publicId": "c_bdffc57fcb5c"
+    },
+    {
+      "id": "evening_platform",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "駅",
+        "ホーム",
+        "夕方",
+        "写真"
+      ],
+      "record": {
+        "title": "夕方のホーム",
+        "imageUrl": "/demo/album/evening-platform.webp",
+        "tags": [
+          "駅",
+          "夕方"
+        ]
+      },
+      "publicId": "c_5a463a5eb50a"
+    },
+    {
+      "id": "rainy_window",
+      "appId": "photos",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "雨",
+        "窓",
+        "夜",
+        "写真"
+      ],
+      "repairLabel": "暗▚▞▐化された画像",
+      "record": {
+        "title": "雨の日の窓",
+        "imageUrl": "/demo/album/rainy-window.webp",
+        "tags": [
+          "雨",
+          "窓"
+        ]
+      },
+      "publicId": "c_394e3752c02b"
+    },
+    {
+      "id": "coffee_table",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "コーヒー",
+        "ノート",
+        "机",
+        "写真"
+      ],
+      "record": {
+        "title": "休憩中",
+        "imageUrl": "/demo/album/coffee-table.webp",
+        "tags": [
+          "休憩"
+        ]
+      },
+      "publicId": "c_64fd68903e0a"
+    },
+    {
+      "id": "demo_video",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "動画",
+        "デモ動画",
+        "カラーバー"
+      ],
+      "record": {
+        "title": "デモ動画",
+        "imageUrl": "/demo/dummy-data.svg",
+        "mediaKind": "video",
+        "videoUrl": "/demo/demo-video.mp4",
+        "tags": [
+          "動画",
+          "動作確認"
+        ]
+      },
+      "publicId": "c_5d1be1170cf1"
+    },
+    {
+      "id": "demo_received_image",
+      "appId": "photos",
+      "initialState": "hidden",
+      "cond": "demo_image_received",
+      "search": [
+        "受信画像",
+        "画像受信テスト"
+      ],
+      "record": {
+        "title": "受信したダミー画像",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "受信",
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_1aaf7fdd7a82"
+    },
+    {
+      "id": "dummy_photo_1",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_7229adc1604d"
+    },
+    {
+      "id": "dummy_photo_2",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_fb58b8d23060"
+    },
+    {
+      "id": "dummy_photo_3",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_358b3bcd1b50"
+    },
+    {
+      "id": "dummy_photo_4",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_3a6375761b45"
+    },
+    {
+      "id": "dummy_photo_5",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_a2e7fdc5f793"
+    },
+    {
+      "id": "dummy_photo_6",
+      "appId": "photos",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "imageUrl": "/demo/dummy-data.svg",
+        "tags": [
+          "ダミーデータ"
+        ]
+      },
+      "publicId": "c_ec168fb41748"
+    },
+    {
+      "id": "owner_schedule",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "予定",
+        "8月12日",
+        "20時30分"
+      ],
+      "record": {
+        "title": "端末の写真を整理",
+        "date": "2026-08-12",
+        "time": "20:30",
+        "place": "自宅",
+        "memo": "「雨の日の窓」の写真を確認する。"
+      },
+      "publicId": "c_5ad6b8c27c5f"
+    },
+    {
+      "id": "dummy_schedule_1",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_a37ddcb9ffde"
+    },
+    {
+      "id": "dummy_schedule_2",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_9a7365886b8a"
+    },
+    {
+      "id": "dummy_schedule_3",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_17cc0b436b41"
+    },
+    {
+      "id": "dummy_schedule_4",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_ad8b983cd8fc"
+    },
+    {
+      "id": "dummy_schedule_5",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_cd7b2c42cb24"
+    },
+    {
+      "id": "dummy_schedule_6",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_2e9e5b44006e"
+    },
+    {
+      "id": "dummy_schedule_7",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_3418c04e0c56"
+    },
+    {
+      "id": "dummy_schedule_8",
+      "appId": "calendar",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "date": "2026-08-12",
+        "time": "12:00",
+        "place": "ダミーデータ",
+        "memo": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_a0ec894adce6"
+    },
     {
       "id": "demo_call_history",
       "appId": "phone",
@@ -278,6 +840,7 @@ export const workerScenario: WorkerScenario = {
       "id": "missed_call",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "電話",
         "着信",
@@ -289,13 +852,13 @@ export const workerScenario: WorkerScenario = {
         "at": "20:02",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_0376fabddf4f"
     },
     {
       "id": "demo_voicemail",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "留守番電話",
         "留守電",
@@ -322,13 +885,13 @@ export const workerScenario: WorkerScenario = {
           }
         ]
       },
-      "cond": "",
       "publicId": "c_1587119bb83d"
     },
     {
       "id": "dummy_call_1",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -338,13 +901,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_2026bc4fe74f"
     },
     {
       "id": "dummy_call_2",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -354,13 +917,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_f70177071c48"
     },
     {
       "id": "dummy_call_3",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -370,13 +933,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_e73677fd9822"
     },
     {
       "id": "dummy_call_4",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -386,13 +949,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_8f794be1736f"
     },
     {
       "id": "dummy_call_5",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -402,13 +965,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_7c4385c5b673"
     },
     {
       "id": "dummy_call_6",
       "appId": "phone",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
@@ -418,829 +981,13 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "cond": "",
       "publicId": "c_07c948744931"
-    },
-    {
-      "id": "mail_guide",
-      "appId": "mail",
-      "initialState": "normal",
-      "search": [
-        "メール",
-        "メール機能"
-      ],
-      "record": {
-        "from": "デモ運営",
-        "to": "プレイヤー",
-        "subject": "メール機能の確認",
-        "date": "2026年8月12日 18:30",
-        "body": "メールは、件名と日付の一覧から選んで内容を確認できます。ナビで「未整理メール」と検索すると、破損したメールの修復も試せます。"
-      },
-      "cond": "",
-      "publicId": "c_271fc8c96870"
-    },
-    {
-      "id": "guide_history_archive_a",
-      "appId": "messages",
-      "initialState": "repairable",
-      "repairLabel": "破損した履歴",
-      "search": [
-        "消えた連絡記録",
-        "履歴修復A"
-      ],
-      "record": {
-        "talk": "guide",
-        "block": "guide::history_archive_a"
-      },
-      "cond": "",
-      "publicId": "c_f452f3bfd9c3"
-    },
-    {
-      "id": "guide_history_archive_b",
-      "appId": "messages",
-      "initialState": "repairable",
-      "repairLabel": "破損した履歴",
-      "search": [
-        "連続破損の記録",
-        "履歴修復B"
-      ],
-      "record": {
-        "talk": "guide",
-        "block": "guide::history_archive_b"
-      },
-      "cond": "",
-      "publicId": "c_d2fb1ed4cac6"
-    },
-    {
-      "id": "lobby_history_archive",
-      "appId": "chat",
-      "initialState": "repairable",
-      "repairLabel": "破損した履歴",
-      "cond": "sealed_note_unlocked",
-      "search": [
-        "消えた談話記録",
-        "チャット履歴修復"
-      ],
-      "record": {
-        "talk": "lobby",
-        "block": "lobby::history_archive"
-      },
-      "publicId": "c_ee422a2fa57f"
-    },
-    {
-      "id": "damaged_mail",
-      "appId": "mail",
-      "initialState": "repairable",
-      "repairLabel": "未▚▐▀▜メール",
-      "search": [
-        "未整理メール",
-        "破損メール",
-        "メール修復"
-      ],
-      "record": {
-        "from": "確認担当",
-        "to": "プレイヤー",
-        "cc": "デモ運営",
-        "subject": "修復されたメール",
-        "date": "2026年8月12日 18:45",
-        "body": "メール単位の修復が完了しました。Ccが設定された場合は、宛先情報の中に表示されます。"
-      },
-      "cond": "",
-      "publicId": "c_4a00ef29e36b"
-    },
-    {
-      "id": "dummy_mail_1",
-      "appId": "mail",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "from": "ダミーデータ",
-        "to": "プレイヤー",
-        "subject": "ダミーデータ",
-        "date": "2026年8月12日 12:00",
-        "body": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_451b9414a8da"
-    },
-    {
-      "id": "dummy_mail_2",
-      "appId": "mail",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "from": "ダミーデータ",
-        "to": "プレイヤー",
-        "subject": "ダミーデータ",
-        "date": "2026年8月12日 12:00",
-        "body": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_eb5be853c25d"
-    },
-    {
-      "id": "dummy_mail_3",
-      "appId": "mail",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "from": "ダミーデータ",
-        "to": "プレイヤー",
-        "subject": "ダミーデータ",
-        "date": "2026年8月12日 12:00",
-        "body": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_79ba43a616d2"
-    },
-    {
-      "id": "dummy_mail_4",
-      "appId": "mail",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "from": "ダミーデータ",
-        "to": "プレイヤー",
-        "subject": "ダミーデータ",
-        "date": "2026年8月12日 12:00",
-        "body": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_74bbb653f3aa"
-    },
-    {
-      "id": "welcome_note",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "端末",
-        "操作",
-        "案内",
-        "ヒント"
-      ],
-      "record": {
-        "title": "操作ガイド",
-        "body": "ナビ検索とコンテンツ修復を順に試します。右下のナビで「古いメモ」と検索してください。",
-        "tags": [
-          "案内",
-          "操作"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_fbeb27e60040"
-    },
-    {
-      "id": "feature_test_guide",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "機能テスト",
-        "試し方",
-        "着信テスト",
-        "遅延メッセージ"
-      ],
-      "record": {
-        "title": "機能テスト一覧",
-        "body": "ナビで「機能テスト」と入力するか、Quick Replyの「機能テスト」を選ぶと、次の操作を選べます。\n\n・着信テスト：数秒後に電話が着信します。\n・遅延メッセージ：数秒後に別ルームへ届き、通知が出ます。\n・画像受信テスト：別ルームに画像が届き、開くとアルバムへ自動登録されます。\n・ノイズ演出：端末全体にノイズを表示します。\n・フラッシュ演出：端末全体を白く光らせます。\n・暗転演出：端末全体を一時的に暗転します。\n・ゲームオーバー演出：ゲームオーバー画面を表示します。\n・オールクリア演出：オールクリア画面の後、ラジオへ移動します。\n\nメッセージの「デモ連絡先」では、何か送信すると連携先を選ぶQuick Replyが表示されます。\n・別ルームへ送る：別のメッセージルームへ届きます。\n・チャットへ送る：チャット復旧後、チャットの別ルームへ届きます。\n\nチャットの「サンプルルーム」では、\n・チャット連携：別のチャットルームへ届きます。\n・メッセージへ送る：メッセージの受信箱へ届きます。\n\nナビで「消えた連絡記録」または「消えた談話記録」と検索すると、会話内の破損した初期履歴を修復できます。各受信では通知も表示されます。繰り返す場合は通知シェードの「最初から」を使ってください。",
-        "tags": [
-          "案内",
-          "機能テスト"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_cefa574e8306"
-    },
-    {
-      "id": "old_note",
-      "appId": "notes",
-      "initialState": "repairable",
-      "repairLabel": "古▚▐▀▜メモ",
-      "search": [
-        "古いメモ",
-        "ふるいメモ"
-      ],
-      "record": {
-        "title": "古いメモ",
-        "body": "次は画像を探します。ナビで「雨」と検索し、表示された画像で一番大きく見える灯りの色を確認してください。色が分かったら、そのままナビに色を伝えてください。",
-        "tags": [
-          "操作",
-          "画像"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_32c01e364751"
-    },
-    {
-      "id": "dummy_note_1",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_9963319fe24e"
-    },
-    {
-      "id": "dummy_note_2",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_2d05b2ffd3ce"
-    },
-    {
-      "id": "dummy_note_3",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_e9de14c38b65"
-    },
-    {
-      "id": "dummy_note_4",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_a59b078ce15f"
-    },
-    {
-      "id": "dummy_note_5",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_d5126f33366a"
-    },
-    {
-      "id": "dummy_note_6",
-      "appId": "notes",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "body": "一覧スクロール確認用のダミーデータです。",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_b6d1a7ef235b"
-    },
-    {
-      "id": "sealed_note",
-      "appId": "notes",
-      "initialState": "hidden",
-      "cond": "image_color_reported",
-      "search": [
-        "鍵付き",
-        "添付",
-        "パスワード"
-      ],
-      "record": {
-        "title": "鍵付きメモ",
-        "body": "鍵付き添付とコンテンツ解錠の確認は完了です。次はチャットを修復してください。"
-      },
-      "publicId": "c_bdffc57fcb5c"
-    },
-    {
-      "id": "evening_platform",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "駅",
-        "ホーム",
-        "夕方",
-        "写真"
-      ],
-      "record": {
-        "title": "夕方のホーム",
-        "imageUrl": "/demo/album/evening-platform.webp",
-        "tags": [
-          "駅",
-          "夕方"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_5a463a5eb50a"
-    },
-    {
-      "id": "rainy_window",
-      "appId": "photos",
-      "initialState": "repairable",
-      "repairLabel": "暗▚▞▐化された画像",
-      "search": [
-        "雨",
-        "窓",
-        "夜",
-        "写真"
-      ],
-      "record": {
-        "title": "雨の日の窓",
-        "imageUrl": "/demo/album/rainy-window.webp",
-        "tags": [
-          "雨",
-          "窓"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_394e3752c02b"
-    },
-    {
-      "id": "coffee_table",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "コーヒー",
-        "ノート",
-        "机",
-        "写真"
-      ],
-      "record": {
-        "title": "休憩中",
-        "imageUrl": "/demo/album/coffee-table.webp",
-        "tags": [
-          "休憩"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_64fd68903e0a"
-    },
-    {
-      "id": "demo_video",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "動画",
-        "デモ動画",
-        "カラーバー"
-      ],
-      "record": {
-        "title": "デモ動画",
-        "mediaKind": "video",
-        "imageUrl": "/demo/dummy-data.svg",
-        "videoUrl": "/demo/demo-video.mp4",
-        "tags": [
-          "動画",
-          "動作確認"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_5d1be1170cf1"
-    },
-    {
-      "id": "demo_received_image",
-      "appId": "photos",
-      "initialState": "hidden",
-      "cond": "demo_image_received",
-      "search": [
-        "受信画像",
-        "画像受信テスト"
-      ],
-      "record": {
-        "title": "受信したダミー画像",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "受信",
-          "ダミーデータ"
-        ]
-      },
-      "publicId": "c_1aaf7fdd7a82"
-    },
-    {
-      "id": "dummy_photo_1",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_7229adc1604d"
-    },
-    {
-      "id": "dummy_photo_2",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_fb58b8d23060"
-    },
-    {
-      "id": "dummy_photo_3",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_358b3bcd1b50"
-    },
-    {
-      "id": "dummy_photo_4",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_3a6375761b45"
-    },
-    {
-      "id": "dummy_photo_5",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_a2e7fdc5f793"
-    },
-    {
-      "id": "dummy_photo_6",
-      "appId": "photos",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
-        "tags": [
-          "ダミーデータ"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_ec168fb41748"
-    },
-    {
-      "id": "owner_schedule",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "予定",
-        "8月12日",
-        "20時30分"
-      ],
-      "record": {
-        "title": "端末の写真を整理",
-        "date": "2026-08-12",
-        "time": "20:30",
-        "place": "自宅",
-        "memo": "「雨の日の窓」の写真を確認する。"
-      },
-      "cond": "",
-      "publicId": "c_5ad6b8c27c5f"
-    },
-    {
-      "id": "dummy_schedule_1",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_a37ddcb9ffde"
-    },
-    {
-      "id": "dummy_schedule_2",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_9a7365886b8a"
-    },
-    {
-      "id": "dummy_schedule_3",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_17cc0b436b41"
-    },
-    {
-      "id": "dummy_schedule_4",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_ad8b983cd8fc"
-    },
-    {
-      "id": "dummy_schedule_5",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_cd7b2c42cb24"
-    },
-    {
-      "id": "dummy_schedule_6",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_2e9e5b44006e"
-    },
-    {
-      "id": "dummy_schedule_7",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_3418c04e0c56"
-    },
-    {
-      "id": "dummy_schedule_8",
-      "appId": "calendar",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "date": "2026-08-12",
-        "time": "12:00",
-        "place": "ダミーデータ",
-        "memo": "一覧スクロール確認用のダミーデータです。"
-      },
-      "cond": "",
-      "publicId": "c_a0ec894adce6"
-    },
-    {
-      "id": "browser_guide",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ブラウザ",
-        "タブ",
-        "Web",
-        "案内"
-      ],
-      "record": {
-        "title": "ブラウザ操作ガイド",
-        "url": "/demo/browser/start.html",
-        "allowedUrls": [
-          "/demo/browser/details.html"
-        ]
-      },
-      "cond": "",
-      "publicId": "c_a0cec9e1ac30"
-    },
-    {
-      "id": "dummy_browser_1",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_be720b110439"
-    },
-    {
-      "id": "dummy_browser_2",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_fd4144354636"
-    },
-    {
-      "id": "dummy_browser_3",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_2d9ff48c2e57"
-    },
-    {
-      "id": "dummy_browser_4",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_6583456c66bb"
-    },
-    {
-      "id": "dummy_browser_5",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_72782ea7ea51"
-    },
-    {
-      "id": "dummy_browser_6",
-      "appId": "browser",
-      "initialState": "normal",
-      "search": [
-        "ダミーデータ"
-      ],
-      "record": {
-        "title": "ダミーデータ",
-        "url": "/demo/browser/dummy.html"
-      },
-      "cond": "",
-      "publicId": "c_3eeb6b99d118"
-    },
-    {
-      "id": "browser_archive",
-      "appId": "browser",
-      "initialState": "repairable",
-      "repairLabel": "タ▚▐▀▜ブ",
-      "search": [
-        "アーカイブタブ",
-        "ブラウザの記録"
-      ],
-      "record": {
-        "title": "アーカイブ",
-        "url": "/demo/browser/archive-k7m2q.html"
-      },
-      "cond": "",
-      "publicId": "c_e9c108f35d34"
     },
     {
       "id": "sample_radio",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ラジオ",
         "放送",
@@ -1248,7 +995,6 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "programTitle": "接続テスト放送",
-        "audioUrl": "/system/radio-caption-sample.wav",
         "genAudioId": "demo_voice",
         "transcript": [
           {
@@ -1263,75 +1009,350 @@ export const workerScenario: WorkerScenario = {
             "atMs": 6000,
             "text": "字幕データがなければ、この欄は表示されません。"
           }
-        ]
+        ],
+        "audioUrl": "/system/radio-caption-sample.wav"
       },
-      "cond": "",
       "publicId": "c_513e68175e27"
     },
     {
       "id": "dummy_radio_1",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "cond": "",
       "publicId": "c_a1885b48dd86"
     },
     {
       "id": "dummy_radio_2",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "cond": "",
       "publicId": "c_02a56b40c49f"
     },
     {
       "id": "dummy_radio_3",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "cond": "",
       "publicId": "c_e4a4835b572c"
     },
     {
       "id": "dummy_radio_4",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "cond": "",
       "publicId": "c_21727e0c83a1"
     },
     {
       "id": "dummy_radio_5",
       "appId": "radio",
       "initialState": "normal",
+      "cond": "",
       "search": [
         "ダミーデータ"
       ],
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "cond": "",
       "publicId": "c_447380361ccd"
+    },
+    {
+      "id": "mail_guide",
+      "appId": "mail",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "メール",
+        "メール機能"
+      ],
+      "record": {
+        "from": "デモ運営",
+        "to": "プレイヤー",
+        "subject": "メール機能の確認",
+        "date": "2026年8月12日 18:30",
+        "body": "メールは、件名と日付の一覧から選んで内容を確認できます。ナビで「未整理メール」と検索すると、破損したメールの修復も試せます。"
+      },
+      "publicId": "c_271fc8c96870"
+    },
+    {
+      "id": "damaged_mail",
+      "appId": "mail",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "未整理メール",
+        "破損メール",
+        "メール修復"
+      ],
+      "repairLabel": "未▚▐▀▜メール",
+      "record": {
+        "from": "確認担当",
+        "to": "プレイヤー",
+        "subject": "修復されたメール",
+        "date": "2026年8月12日 18:45",
+        "body": "メール単位の修復が完了しました。Ccが設定された場合は、宛先情報の中に表示されます。",
+        "cc": "デモ運営"
+      },
+      "publicId": "c_4a00ef29e36b"
+    },
+    {
+      "id": "dummy_mail_1",
+      "appId": "mail",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "from": "ダミーデータ",
+        "to": "プレイヤー",
+        "subject": "ダミーデータ",
+        "date": "2026年8月12日 12:00",
+        "body": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_451b9414a8da"
+    },
+    {
+      "id": "dummy_mail_2",
+      "appId": "mail",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "from": "ダミーデータ",
+        "to": "プレイヤー",
+        "subject": "ダミーデータ",
+        "date": "2026年8月12日 12:00",
+        "body": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_eb5be853c25d"
+    },
+    {
+      "id": "dummy_mail_3",
+      "appId": "mail",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "from": "ダミーデータ",
+        "to": "プレイヤー",
+        "subject": "ダミーデータ",
+        "date": "2026年8月12日 12:00",
+        "body": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_79ba43a616d2"
+    },
+    {
+      "id": "dummy_mail_4",
+      "appId": "mail",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "from": "ダミーデータ",
+        "to": "プレイヤー",
+        "subject": "ダミーデータ",
+        "date": "2026年8月12日 12:00",
+        "body": "一覧スクロール確認用のダミーデータです。"
+      },
+      "publicId": "c_74bbb653f3aa"
+    },
+    {
+      "id": "browser_guide",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ブラウザ",
+        "タブ",
+        "Web",
+        "案内"
+      ],
+      "record": {
+        "title": "ブラウザ操作ガイド",
+        "url": "/demo/browser/start.html",
+        "allowedUrls": [
+          "/demo/browser/details.html"
+        ]
+      },
+      "publicId": "c_a0cec9e1ac30"
+    },
+    {
+      "id": "dummy_browser_1",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_be720b110439"
+    },
+    {
+      "id": "dummy_browser_2",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_fd4144354636"
+    },
+    {
+      "id": "dummy_browser_3",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_2d9ff48c2e57"
+    },
+    {
+      "id": "dummy_browser_4",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_6583456c66bb"
+    },
+    {
+      "id": "dummy_browser_5",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_72782ea7ea51"
+    },
+    {
+      "id": "dummy_browser_6",
+      "appId": "browser",
+      "initialState": "normal",
+      "cond": "",
+      "search": [
+        "ダミーデータ"
+      ],
+      "record": {
+        "title": "ダミーデータ",
+        "url": "/demo/browser/dummy.html"
+      },
+      "publicId": "c_3eeb6b99d118"
+    },
+    {
+      "id": "browser_archive",
+      "appId": "browser",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "アーカイブタブ",
+        "ブラウザの記録"
+      ],
+      "repairLabel": "タ▚▐▀▜ブ",
+      "record": {
+        "title": "アーカイブ",
+        "url": "/demo/browser/archive-k7m2q.html"
+      },
+      "publicId": "c_e9c108f35d34"
+    },
+    {
+      "id": "guide_history_archive_a",
+      "appId": "messages",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "消えた連絡記録",
+        "履歴修復A"
+      ],
+      "repairLabel": "破損した履歴",
+      "record": {
+        "talk": "guide",
+        "block": "guide::history_archive_a"
+      },
+      "publicId": "c_f452f3bfd9c3"
+    },
+    {
+      "id": "guide_history_archive_b",
+      "appId": "messages",
+      "initialState": "repairable",
+      "cond": "",
+      "search": [
+        "連続破損の記録",
+        "履歴修復B"
+      ],
+      "repairLabel": "破損した履歴",
+      "record": {
+        "talk": "guide",
+        "block": "guide::history_archive_b"
+      },
+      "publicId": "c_d2fb1ed4cac6"
+    },
+    {
+      "id": "lobby_history_archive",
+      "appId": "chat",
+      "initialState": "repairable",
+      "cond": "sealed_note_unlocked",
+      "search": [
+        "消えた談話記録",
+        "チャット履歴修復"
+      ],
+      "repairLabel": "破損した履歴",
+      "record": {
+        "talk": "lobby",
+        "block": "lobby::history_archive"
+      },
+      "publicId": "c_ee422a2fa57f"
     }
   ],
   "talks": [
@@ -1340,16 +1361,16 @@ export const workerScenario: WorkerScenario = {
       "kind": "sms",
       "appId": "messages",
       "label": "デモ連絡先",
-      "search": [
-        "デモ連絡先",
-        "連絡先"
-      ],
       "startBlocks": [
         "guide::history_archive_a",
         "guide::history_archive_b",
         "guide::intro"
       ],
       "initialState": "normal",
+      "search": [
+        "デモ連絡先",
+        "連絡先"
+      ],
       "cond": "",
       "inputVisible": true,
       "inputEnabled": true,
@@ -1357,7 +1378,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "guide::intro",
       "rules": [
         {
-          "id": "rule_f23f04fc5263",
+          "id": "rule_ccbbc7beb27004f8",
           "order": 2,
           "from": "*",
           "isDefault": false,
@@ -1381,7 +1402,7 @@ export const workerScenario: WorkerScenario = {
           "example": "チャットへ送る"
         },
         {
-          "id": "rule_169b8f2c5204",
+          "id": "rule_0242ab445ef14595",
           "order": 3,
           "from": "*",
           "isDefault": false,
@@ -1405,7 +1426,7 @@ export const workerScenario: WorkerScenario = {
           "example": "別ルームへ送る"
         },
         {
-          "id": "rule_938bcab612e1",
+          "id": "rule_78d0c4947fc3bc1e",
           "order": 4,
           "from": "guide::intro",
           "isDefault": true,
@@ -1447,7 +1468,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "sms_receiver::start",
       "rules": [
         {
-          "id": "rule_0d64a08edaa9",
+          "id": "rule_57d2822cead9f5d1",
           "order": 8,
           "from": "sms_receiver::start",
           "isDefault": true,
@@ -1471,7 +1492,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_09b306faf4a1",
+          "id": "rule_4d831274d8a3dd94",
           "order": 9,
           "from": "sms_receiver::received_from_sms",
           "isDefault": true,
@@ -1495,7 +1516,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_51c25d17ec16",
+          "id": "rule_55309370d8baef2a",
           "order": 10,
           "from": "sms_receiver::received_from_chat",
           "isDefault": true,
@@ -1519,7 +1540,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_91b66ef24ec2",
+          "id": "rule_744e65c4c73155b9",
           "order": 11,
           "from": "sms_receiver::received_delayed",
           "isDefault": true,
@@ -1561,7 +1582,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "sms_media_receiver::start",
       "rules": [
         {
-          "id": "rule_7cc00713ef12",
+          "id": "rule_be10570588394753",
           "order": 12,
           "from": "sms_media_receiver::start",
           "isDefault": true,
@@ -1585,7 +1606,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_99ba415ef46d",
+          "id": "rule_f55dc35cb8760fe3",
           "order": 13,
           "from": "sms_media_receiver::received_image",
           "isDefault": true,
@@ -1627,7 +1648,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_1::start",
       "rules": [
         {
-          "id": "rule_ec68c7f61eb1",
+          "id": "rule_c56ba61c0ef4cb29",
           "order": 14,
           "from": "dummy_sms_1::start",
           "isDefault": true,
@@ -1669,7 +1690,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_2::start",
       "rules": [
         {
-          "id": "rule_7f048bbd7de1",
+          "id": "rule_f54eca82cda84f9f",
           "order": 15,
           "from": "dummy_sms_2::start",
           "isDefault": true,
@@ -1711,7 +1732,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_3::start",
       "rules": [
         {
-          "id": "rule_f7ac7e436cc1",
+          "id": "rule_dc81bf82310a9518",
           "order": 16,
           "from": "dummy_sms_3::start",
           "isDefault": true,
@@ -1753,7 +1774,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_4::start",
       "rules": [
         {
-          "id": "rule_f1480437f693",
+          "id": "rule_c43746fad3cc261d",
           "order": 17,
           "from": "dummy_sms_4::start",
           "isDefault": true,
@@ -1795,7 +1816,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_5::start",
       "rules": [
         {
-          "id": "rule_207f0a1b02a9",
+          "id": "rule_1849b53836e15bc3",
           "order": 18,
           "from": "dummy_sms_5::start",
           "isDefault": true,
@@ -1837,7 +1858,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "dummy_sms_6::start",
       "rules": [
         {
-          "id": "rule_ebda605909ea",
+          "id": "rule_3956c5432facc194",
           "order": 19,
           "from": "dummy_sms_6::start",
           "isDefault": true,
@@ -1867,22 +1888,22 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "サンプルルーム",
-      "cond": "sealed_note_unlocked",
-      "search": [
-        "サンプルルーム"
-      ],
       "startBlocks": [
         "lobby::history_archive",
         "lobby::start"
       ],
       "initialState": "normal",
+      "search": [
+        "サンプルルーム"
+      ],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_384f82df1ef6",
       "initialFrom": "lobby::start",
       "rules": [
         {
-          "id": "rule_37e46d672586",
+          "id": "rule_c33da1e3d23b43a1",
           "order": 5,
           "from": "lobby::start",
           "isDefault": true,
@@ -1908,7 +1929,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_49e008c1cc70",
+          "id": "rule_416fc65de6a3d722",
           "order": 6,
           "from": "*",
           "isDefault": false,
@@ -1932,7 +1953,7 @@ export const workerScenario: WorkerScenario = {
           "example": "チャット連携"
         },
         {
-          "id": "rule_e8e6db4e7850",
+          "id": "rule_cad3a7bd4abe71c8",
           "order": 7,
           "from": "lobby::lobby_reply",
           "isDefault": true,
@@ -1962,19 +1983,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "連携受信ログ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "chat_receiver::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_b873fa6b67cf",
       "initialFrom": "chat_receiver::start",
       "rules": [
         {
-          "id": "rule_d000c37025e0",
+          "id": "rule_dbbc58690e96076b",
           "order": 20,
           "from": "chat_receiver::start",
           "isDefault": true,
@@ -1998,7 +2019,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_7b7a3313a9c2",
+          "id": "rule_a791f5b8a55a0a45",
           "order": 21,
           "from": "chat_receiver::received_from_sms",
           "isDefault": true,
@@ -2022,7 +2043,7 @@ export const workerScenario: WorkerScenario = {
           "example": ""
         },
         {
-          "id": "rule_c1cd0a82cd30",
+          "id": "rule_634c23a869173adc",
           "order": 22,
           "from": "chat_receiver::received_from_chat",
           "isDefault": true,
@@ -2052,19 +2073,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_1::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_4aff5248b7f8",
       "initialFrom": "dummy_chat_1::start",
       "rules": [
         {
-          "id": "rule_067622548207",
+          "id": "rule_fcbb2264d7b0f31b",
           "order": 23,
           "from": "dummy_chat_1::start",
           "isDefault": true,
@@ -2094,19 +2115,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_2::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_31942c9c962d",
       "initialFrom": "dummy_chat_2::start",
       "rules": [
         {
-          "id": "rule_20a8ba05c3a2",
+          "id": "rule_351b6ff6c0eb42d2",
           "order": 24,
           "from": "dummy_chat_2::start",
           "isDefault": true,
@@ -2136,19 +2157,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_3::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_73a75e3d8faa",
       "initialFrom": "dummy_chat_3::start",
       "rules": [
         {
-          "id": "rule_ff3912863306",
+          "id": "rule_521065cc59cf4ed2",
           "order": 25,
           "from": "dummy_chat_3::start",
           "isDefault": true,
@@ -2178,19 +2199,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_4::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_0e6f206f66af",
       "initialFrom": "dummy_chat_4::start",
       "rules": [
         {
-          "id": "rule_c077ebb93190",
+          "id": "rule_1611fdaf0de7806f",
           "order": 26,
           "from": "dummy_chat_4::start",
           "isDefault": true,
@@ -2220,19 +2241,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_5::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_0a2e442c9bb6",
       "initialFrom": "dummy_chat_5::start",
       "rules": [
         {
-          "id": "rule_4fdb03abf855",
+          "id": "rule_9f708a551c932dca",
           "order": 27,
           "from": "dummy_chat_5::start",
           "isDefault": true,
@@ -2262,19 +2283,19 @@ export const workerScenario: WorkerScenario = {
       "kind": "chat",
       "appId": "chat",
       "label": "ダミーデータ",
-      "cond": "sealed_note_unlocked",
       "startBlocks": [
         "dummy_chat_6::start"
       ],
       "initialState": "normal",
       "search": [],
+      "cond": "sealed_note_unlocked",
       "inputVisible": true,
       "inputEnabled": true,
       "publicId": "t_cb0b2cb99f03",
       "initialFrom": "dummy_chat_6::start",
       "rules": [
         {
-          "id": "rule_addbb7946598",
+          "id": "rule_385b4276662e16e5",
           "order": 28,
           "from": "dummy_chat_6::start",
           "isDefault": true,
@@ -2323,7 +2344,7 @@ export const workerScenario: WorkerScenario = {
       "initialFrom": "search_agent::intro",
       "rules": [
         {
-          "id": "rule_c45749202a98",
+          "id": "rule_b20e761b9a046a5a",
           "order": 29,
           "from": "*",
           "isDefault": false,
@@ -2347,7 +2368,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヘルプ"
         },
         {
-          "id": "rule_2e6919147486",
+          "id": "rule_5429ee9a4df224e9",
           "order": 30,
           "from": "*",
           "isDefault": false,
@@ -2374,7 +2395,7 @@ export const workerScenario: WorkerScenario = {
           "example": "黄色です"
         },
         {
-          "id": "rule_f8f598b6cb9b",
+          "id": "rule_060421c56eb1abc2",
           "order": 31,
           "from": "*",
           "isDefault": false,
@@ -2398,7 +2419,7 @@ export const workerScenario: WorkerScenario = {
           "example": "機能テスト"
         },
         {
-          "id": "rule_fcac3fe08630",
+          "id": "rule_88793eb33a67d548",
           "order": 32,
           "from": "*",
           "isDefault": false,
@@ -2422,7 +2443,7 @@ export const workerScenario: WorkerScenario = {
           "example": "着信テスト"
         },
         {
-          "id": "rule_40d1466e50a0",
+          "id": "rule_95b50fa2c8c06da5",
           "order": 33,
           "from": "*",
           "isDefault": false,
@@ -2446,7 +2467,7 @@ export const workerScenario: WorkerScenario = {
           "example": "遅延メッセージ"
         },
         {
-          "id": "rule_39f47d8b58b0",
+          "id": "rule_023ab1c9e03fa851",
           "order": 34,
           "from": "*",
           "isDefault": false,
@@ -2470,7 +2491,7 @@ export const workerScenario: WorkerScenario = {
           "example": "画像受信テスト"
         },
         {
-          "id": "rule_24b9af4214cc",
+          "id": "rule_cb7cb2c15af7b306",
           "order": 35,
           "from": "*",
           "isDefault": false,
@@ -2494,7 +2515,7 @@ export const workerScenario: WorkerScenario = {
           "example": "着信テスト"
         },
         {
-          "id": "rule_22ee29ed7b31",
+          "id": "rule_a3c1273386ed531e",
           "order": 36,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2518,7 +2539,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_cd5bb4f698a9",
+          "id": "rule_f51115100607ac0d",
           "order": 37,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2542,7 +2563,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_10bbcede3d1c",
+          "id": "rule_234b510784ada779",
           "order": 38,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2566,7 +2587,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_886128f5e9b5",
+          "id": "rule_cd822dbcfd1a3f75",
           "order": 39,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2590,7 +2611,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_a7daca26b7da",
+          "id": "rule_7e970c2055b899d3",
           "order": 40,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2614,7 +2635,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_9ba1e05ce0fa",
+          "id": "rule_4267ac67fdaae456",
           "order": 41,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2638,7 +2659,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_6b6f6fce58b8",
+          "id": "rule_52921c7d52af7588",
           "order": 42,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2662,7 +2683,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_5c8e16fa9f09",
+          "id": "rule_e1b05bafb78d76af",
           "order": 43,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2686,7 +2707,7 @@ export const workerScenario: WorkerScenario = {
           "example": "ヒント"
         },
         {
-          "id": "rule_1aaf19953a40",
+          "id": "rule_4077a88556f66863",
           "order": 44,
           "from": "search_agent::intro",
           "isDefault": true,
@@ -4318,6 +4339,26 @@ export const workerScenario: WorkerScenario = {
       "asset": "/demo/demo-video.mp4",
       "content": "demo_video",
       "poster": "demo_video_poster"
+    },
+    {
+      "id": "media_6",
+      "type": "audio",
+      "asset": "/system/call-caption-sample.wav"
+    },
+    {
+      "id": "media_7",
+      "type": "image",
+      "asset": "/demo/album/evening-platform.webp"
+    },
+    {
+      "id": "media_8",
+      "type": "image",
+      "asset": "/demo/album/coffee-table.webp"
+    },
+    {
+      "id": "media_9",
+      "type": "audio",
+      "asset": "/system/radio-caption-sample.wav"
     }
   ],
   "repeatTalkBlocks": {
@@ -4329,6 +4370,7 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "demo_call",
       "name": "着信テスト",
+      "cond": "",
       "audioUrl": "/system/call-caption-sample.wav",
       "transcript": [
         {
@@ -4344,7 +4386,6 @@ export const workerScenario: WorkerScenario = {
           "text": "［高い確認音］"
         }
       ],
-      "cond": "",
       "publicId": "call_101df897abb3"
     }
   ],
@@ -4390,66 +4431,66 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "clue_attachments",
       "appId": "messages",
-      "targetTalkId": "guide",
       "title": "デモ連絡先",
       "body": "確認用の画像と鍵付き添付が届きました。",
-      "cond": "image_color_reported && !sealed_note_unlocked"
+      "cond": "image_color_reported && !sealed_note_unlocked",
+      "targetTalkId": "guide"
     },
     {
       "id": "chat_auth",
       "appId": "messages",
-      "targetTalkId": "guide",
       "title": "デモ連絡先",
       "body": "再認証用のリンクを発行しました。",
-      "cond": "chat_auth_link_sent && !chat_auth_verified"
+      "cond": "chat_auth_link_sent && !chat_auth_verified",
+      "targetTalkId": "guide"
     },
     {
       "id": "demo_sms_message_received",
       "appId": "messages",
-      "targetTalkId": "sms_receiver",
       "title": "テスト受信箱",
       "body": "別のメッセージルームから新着メッセージが届きました。",
-      "cond": "demo_sms_message_received"
+      "cond": "demo_sms_message_received",
+      "targetTalkId": "sms_receiver"
     },
     {
       "id": "demo_sms_cross_received",
       "appId": "messages",
-      "targetTalkId": "sms_receiver",
       "title": "テスト受信箱",
       "body": "チャットからメッセージアプリへ新着が届きました。",
-      "cond": "demo_sms_cross_received"
+      "cond": "demo_sms_cross_received",
+      "targetTalkId": "sms_receiver"
     },
     {
       "id": "demo_delayed_message_received",
       "appId": "messages",
-      "targetTalkId": "sms_receiver",
       "title": "テスト受信箱",
       "body": "遅延イベントから新着メッセージが届きました。",
-      "cond": "demo_delayed_message_received"
+      "cond": "demo_delayed_message_received",
+      "targetTalkId": "sms_receiver"
     },
     {
       "id": "demo_image_received",
       "appId": "messages",
-      "targetTalkId": "sms_media_receiver",
       "title": "画像受信",
       "body": "アルバム未登録の画像が届きました。",
-      "cond": "demo_image_received"
+      "cond": "demo_image_received",
+      "targetTalkId": "sms_media_receiver"
     },
     {
       "id": "demo_chat_message_received",
       "appId": "chat",
-      "targetTalkId": "chat_receiver",
       "title": "連携受信ログ",
       "body": "別のチャットルームから新着が届きました。",
-      "cond": "demo_chat_message_received"
+      "cond": "demo_chat_message_received",
+      "targetTalkId": "chat_receiver"
     },
     {
       "id": "demo_chat_cross_received",
       "appId": "chat",
-      "targetTalkId": "chat_receiver",
       "title": "連携受信ログ",
       "body": "メッセージアプリからチャットへ新着が届きました。",
-      "cond": "demo_chat_cross_received"
+      "cond": "demo_chat_cross_received",
+      "targetTalkId": "chat_receiver"
     }
   ],
   "assistantMessages": [
@@ -4458,48 +4499,48 @@ export const workerScenario: WorkerScenario = {
       "surface": "home",
       "body": "ナビで「古いメモ」を検索し、修復してみよう。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "!old_note_opened"
+      "cond": "!old_note_opened",
+      "agentAction": "hi"
     },
     {
       "id": "photo_hint",
       "surface": "home",
       "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported",
+      "agentAction": "hi"
     },
     {
       "id": "report_hint",
       "surface": "home",
       "body": "写真で一番大きく見える灯りの色を、ナビで教えて。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "rainy_window_opened && !image_color_reported"
+      "cond": "rainy_window_opened && !image_color_reported",
+      "agentAction": "hi"
     },
     {
       "id": "sealed_note_opened",
       "surface": "messages",
       "body": "次の案内がナビに届いています。右下のナビを開いてください。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
+      "agentAction": "hi"
     },
     {
       "id": "contact_owner",
       "surface": "home",
       "body": "再認証したチャットで、メッセージを送ってみよう。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "chat_auth_verified && !demo_completed"
+      "cond": "chat_auth_verified && !demo_completed",
+      "agentAction": "hi"
     },
     {
       "id": "demo_completed_nav",
       "surface": "chat",
       "body": "基本デモが完了しました。右下のナビから機能テストも試せます。",
       "weight": 1,
-      "agentAction": "hi",
-      "cond": "demo_completed"
+      "cond": "demo_completed",
+      "agentAction": "hi"
     },
     {
       "id": "radio_completed",
@@ -4527,16 +4568,48 @@ export const workerScenario: WorkerScenario = {
   ],
   "albumMediaAttachmentLinks": [
     {
+      "attachmentId": "media_7",
+      "photoId": "evening_platform"
+    },
+    {
       "attachmentId": "rainy_window_image",
       "photoId": "rainy_window"
+    },
+    {
+      "attachmentId": "media_8",
+      "photoId": "coffee_table"
+    },
+    {
+      "attachmentId": "demo_video_attachment",
+      "photoId": "demo_video"
     },
     {
       "attachmentId": "demo_received_image_attachment",
       "photoId": "demo_received_image"
     },
     {
-      "attachmentId": "demo_video_attachment",
-      "photoId": "demo_video"
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_1"
+    },
+    {
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_2"
+    },
+    {
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_3"
+    },
+    {
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_4"
+    },
+    {
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_5"
+    },
+    {
+      "attachmentId": "demo_received_image_attachment",
+      "photoId": "dummy_photo_6"
     }
   ],
   "lockedContentPasswords": [
@@ -4548,158 +4621,140 @@ export const workerScenario: WorkerScenario = {
   "hooks": [
     {
       "event": "session_started",
-      "handler": "mark_session_started",
-      "cond": "!session_started",
       "target": "",
+      "cond": "!session_started",
+      "handler": "mark_session_started",
       "llm": false
     },
     {
       "event": "content_repaired",
       "target": "old_note",
-      "handler": "mark_old_note_opened",
       "cond": "!old_note_opened",
+      "handler": "mark_old_note_opened",
       "llm": false
     },
     {
       "event": "content_repaired",
       "target": "rainy_window",
-      "handler": "mark_rainy_window_opened",
       "cond": "!rainy_window_opened",
+      "handler": "mark_rainy_window_opened",
       "llm": false
     },
     {
       "event": "talk_turn_completed",
       "target": "search_agent",
-      "handler": "deliver_clue_attachments",
       "cond": "clue_attachments_pending",
+      "handler": "deliver_clue_attachments",
       "llm": false
     },
     {
       "event": "talk_turn_completed",
       "target": "search_agent",
-      "handler": "handle_demo_nav_test_command",
       "cond": "",
+      "handler": "handle_demo_nav_test_command",
       "llm": false
     },
     {
       "event": "talk_turn_completed",
       "target": "guide",
-      "handler": "handle_demo_message_test_command",
       "cond": "",
+      "handler": "handle_demo_message_test_command",
       "llm": false
     },
     {
       "event": "content_unlocked",
       "target": "sealed_note",
-      "handler": "mark_sealed_note_unlocked",
       "cond": "!sealed_note_unlocked",
+      "handler": "mark_sealed_note_unlocked",
       "llm": false
     },
     {
       "event": "schedule_demo_call",
-      "handler": "schedule_demo_call",
       "target": "",
       "cond": "",
+      "handler": "schedule_demo_call",
       "llm": false
     },
     {
       "event": "scheduled_event",
       "target": "show_demo_call",
-      "handler": "show_demo_call",
       "cond": "",
+      "handler": "show_demo_call",
       "llm": false
     },
     {
       "event": "scheduled_event",
       "target": "deliver_demo_delayed_message",
-      "handler": "deliver_demo_delayed_message",
       "cond": "",
+      "handler": "deliver_demo_delayed_message",
       "llm": false
     },
     {
       "event": "incoming_call_completed",
       "target": "demo_call",
-      "handler": "mark_demo_call_completed",
       "cond": "!demo_call_completed",
+      "handler": "mark_demo_call_completed",
       "llm": false
     },
     {
       "event": "demo_form",
-      "handler": "demo_form_game_over",
       "target": "",
       "cond": "",
+      "handler": "demo_form_game_over",
       "llm": false
     },
     {
       "event": "demo_all_clear",
-      "handler": "demo_all_clear",
       "target": "",
       "cond": "",
+      "handler": "demo_all_clear",
       "llm": false
     },
     {
       "event": "demo_form_reject",
-      "handler": "demo_form_reject",
       "target": "",
       "cond": "",
+      "handler": "demo_form_reject",
       "llm": false
     },
     {
       "event": "chat_auth_link_requested",
-      "handler": "send_chat_auth_link",
-      "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
       "target": "",
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
+      "handler": "send_chat_auth_link",
       "llm": false
     },
     {
       "event": "message_link_opened",
       "target": "chat_auth_link_opened",
-      "handler": "verify_chat_auth",
       "cond": "chat_auth_link_sent && !chat_auth_verified",
+      "handler": "verify_chat_auth",
       "llm": false
     },
     {
       "event": "talk_turn_completed",
       "target": "lobby",
-      "handler": "complete_demo_todo",
       "cond": "demo_completed && !demo_completion_announced",
+      "handler": "complete_demo_todo",
       "llm": false
     },
     {
       "event": "talk_turn_completed",
       "target": "lobby",
-      "handler": "handle_demo_chat_test_command",
       "cond": "",
+      "handler": "handle_demo_chat_test_command",
       "llm": false
     },
     {
       "event": "audio_playback_completed",
       "target": "sample_radio",
-      "handler": "mark_radio_playback_completed",
       "cond": "!radio_playback_completed",
+      "handler": "mark_radio_playback_completed",
       "llm": false
     }
   ],
   "publicIds": {
     "content": {
-      "demo_call_history": "c_8a5f7f91ea5b",
-      "missed_call": "c_0376fabddf4f",
-      "demo_voicemail": "c_1587119bb83d",
-      "dummy_call_1": "c_2026bc4fe74f",
-      "dummy_call_2": "c_f70177071c48",
-      "dummy_call_3": "c_e73677fd9822",
-      "dummy_call_4": "c_8f794be1736f",
-      "dummy_call_5": "c_7c4385c5b673",
-      "dummy_call_6": "c_07c948744931",
-      "mail_guide": "c_271fc8c96870",
-      "guide_history_archive_a": "c_f452f3bfd9c3",
-      "guide_history_archive_b": "c_d2fb1ed4cac6",
-      "lobby_history_archive": "c_ee422a2fa57f",
-      "damaged_mail": "c_4a00ef29e36b",
-      "dummy_mail_1": "c_451b9414a8da",
-      "dummy_mail_2": "c_eb5be853c25d",
-      "dummy_mail_3": "c_79ba43a616d2",
-      "dummy_mail_4": "c_74bbb653f3aa",
       "welcome_note": "c_fbeb27e60040",
       "feature_test_guide": "c_cefa574e8306",
       "old_note": "c_32c01e364751",
@@ -4730,6 +4785,27 @@ export const workerScenario: WorkerScenario = {
       "dummy_schedule_6": "c_2e9e5b44006e",
       "dummy_schedule_7": "c_3418c04e0c56",
       "dummy_schedule_8": "c_a0ec894adce6",
+      "demo_call_history": "c_8a5f7f91ea5b",
+      "missed_call": "c_0376fabddf4f",
+      "demo_voicemail": "c_1587119bb83d",
+      "dummy_call_1": "c_2026bc4fe74f",
+      "dummy_call_2": "c_f70177071c48",
+      "dummy_call_3": "c_e73677fd9822",
+      "dummy_call_4": "c_8f794be1736f",
+      "dummy_call_5": "c_7c4385c5b673",
+      "dummy_call_6": "c_07c948744931",
+      "sample_radio": "c_513e68175e27",
+      "dummy_radio_1": "c_a1885b48dd86",
+      "dummy_radio_2": "c_02a56b40c49f",
+      "dummy_radio_3": "c_e4a4835b572c",
+      "dummy_radio_4": "c_21727e0c83a1",
+      "dummy_radio_5": "c_447380361ccd",
+      "mail_guide": "c_271fc8c96870",
+      "damaged_mail": "c_4a00ef29e36b",
+      "dummy_mail_1": "c_451b9414a8da",
+      "dummy_mail_2": "c_eb5be853c25d",
+      "dummy_mail_3": "c_79ba43a616d2",
+      "dummy_mail_4": "c_74bbb653f3aa",
       "browser_guide": "c_a0cec9e1ac30",
       "dummy_browser_1": "c_be720b110439",
       "dummy_browser_2": "c_fd4144354636",
@@ -4738,12 +4814,9 @@ export const workerScenario: WorkerScenario = {
       "dummy_browser_5": "c_72782ea7ea51",
       "dummy_browser_6": "c_3eeb6b99d118",
       "browser_archive": "c_e9c108f35d34",
-      "sample_radio": "c_513e68175e27",
-      "dummy_radio_1": "c_a1885b48dd86",
-      "dummy_radio_2": "c_02a56b40c49f",
-      "dummy_radio_3": "c_e4a4835b572c",
-      "dummy_radio_4": "c_21727e0c83a1",
-      "dummy_radio_5": "c_447380361ccd"
+      "guide_history_archive_a": "c_f452f3bfd9c3",
+      "guide_history_archive_b": "c_d2fb1ed4cac6",
+      "lobby_history_archive": "c_ee422a2fa57f"
     },
     "talk": {
       "guide": "t_17f5f84e4690",
@@ -4770,7 +4843,11 @@ export const workerScenario: WorkerScenario = {
       "sealed_note_file": "a_f0739fda5410",
       "demo_received_image_attachment": "a_48c127707e4a",
       "demo_video_poster": "a_eccc2405c02c",
-      "demo_video_attachment": "a_b5d08e2fcddf"
+      "demo_video_attachment": "a_b5d08e2fcddf",
+      "media_6": "a_c0a7526bba86",
+      "media_7": "a_def327a3cdab",
+      "media_8": "a_52e9796cb1c3",
+      "media_9": "a_36de402e3f3b"
     },
     "incomingCall": {
       "demo_call": "call_101df897abb3"

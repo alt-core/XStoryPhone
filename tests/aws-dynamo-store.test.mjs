@@ -80,7 +80,7 @@ test("DynamoDBの入力ログ確認はGSI2を時系列降順でQueryする", asy
     status: "completed", matched: true, ruleId: null, nextFromId: null, responseSnapshot: { resultCount: 1 }
   };
   const fake = fakeTransport(async (operation) => operation === "Query" ? { Items: [dynamoDocument.item(row)] } : {});
-  const items = await new DynamoStore(fake.transport, "table").playerInputEvents({
+  const { items } = await new DynamoStore(fake.transport, "table").playerInputEvents({
     playerId: "player-1",
     query: "灯り",
     limit: 100
@@ -400,7 +400,9 @@ test("監修指示の更新はtalk・from・idから直接キーを組み立て�
     PK: "REVIEW#talk-1#from-1",
     SK: "JUDGMENT#judgment-1"
   });
-  assert.equal(fake.calls[0].input.ConditionExpression, "attribute_exists(PK)");
+  assert.equal(fake.calls[0].input.ConditionExpression, "attribute_exists(PK) AND #guardStatus = :guardOpen");
+  assert.equal(fake.calls[0].input.ExpressionAttributeNames["#guardStatus"], "status");
+  assert.equal(dynamoDocument.valueFromItem(fake.calls[0].input.ExpressionAttributeValues)[":guardOpen"], "open");
   assert.match(fake.calls[0].input.UpdateExpression, /#comment = :comment/u);
   assert.equal(fake.calls[0].input.ExpressionAttributeNames["#comment"], "comment");
 });

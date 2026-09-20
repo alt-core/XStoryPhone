@@ -8,18 +8,30 @@ export type RegexCriteria =
   | { kind: "ready"; regex: RegExp }
   | { kind: "invalid"; error: string };
 
+export type TalkReviewSelection = {
+  decision?: { rule_id: string; confidence: number; reason_code: string };
+  accepted?: boolean;
+  selectedRuleId?: string;
+  finalRuleId: string;
+  fallbackReason?: string;
+  inputHash?: string;
+  promptHash?: string;
+  schemaHash?: string;
+  extraction?: { status: string; sampleCount: number; inputHash: string; promptHash: string; schemaHash: string };
+};
+
 export type SemanticRuleSelector = (input: {
   playerInput: string;
   rules: readonly Pick<TalkRule, "id" | "from" | "criteria" | "intent" | "mode" | "isDefault">[];
   defaultRuleId: string;
   recentMessages: readonly { speaker: string; body: string }[];
 }) => Promise<
-  | { ok: true; ruleId: string }
+  | { ok: true; ruleId: string; reviewSelection?: TalkReviewSelection }
   | { ok: false; error: "provider_unavailable" | "provider_error" | "provider_invalid" }
 >;
 
 export type TalkRuleResolution =
-  | { ok: true; rule: TalkRule; defaultRule: TalkRule; source: "regex" | "semantic" | "default" }
+  | { ok: true; rule: TalkRule; defaultRule: TalkRule; source: "regex" | "semantic" | "default"; reviewSelection?: TalkReviewSelection }
   | {
       ok: false;
       error: "missing_default" | "invalid_regex" | "provider_unavailable" | "provider_error" | "provider_invalid";
@@ -103,6 +115,7 @@ export async function resolveTalkRule(input: {
     ok: true,
     rule: selectedRule,
     defaultRule,
-    source: selectedRule.isDefault ? "default" : "semantic"
+    source: selectedRule.isDefault ? "default" : "semantic",
+    ...(selected.reviewSelection ? { reviewSelection: selected.reviewSelection } : {})
   };
 }

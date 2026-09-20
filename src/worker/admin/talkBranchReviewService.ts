@@ -7,16 +7,18 @@ import {
   contentByInternalId,
   createInitialPlayerState,
   messageTemplatesForBlock,
+  messagesForTalkOutputSteps,
   reconcileScenarioState,
   searchScenario,
+  searchAgentTimelineForOutputs,
   talkBlockIdForRepeatDisplay,
   workerScenario
 } from "../scenario.ts";
 import { internalizeTalkCommand, semanticInputForTalkCommand, talkCommand } from "../services/talkCommand.ts";
 import { resolveScenarioTalkRule } from "../services/talkResolver.ts";
+import { talkFlowRecentMessages } from "../services/talkContext.ts";
 import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../services/talkOutput.ts";
 import { applyCompactStateAssignments, compactStateValues, effectiveStateValues } from "../stateValues.ts";
-import { currentRuleIdForReviewEvent } from "./reviewClusterRules.ts";
 
 type JudgmentStatus = ReviewJudgmentStatus;
 
@@ -50,6 +52,7 @@ type TrialInput = {
   id: string;
   actualRuleId: string;
   userInput: string;
+  responseSnapshot: Record<string, unknown>;
 };
 
 function nowIso() {
@@ -374,8 +377,8 @@ async function loadJudgments(
   return (await store.reviewJudgments(filter)).map((row): Judgment => ({ ...row }));
 }
 
-async function loadInputEvents(store: AppStore, talkId: string, fromId: string) {
-  return await store.reviewInputEvents(talkId, fromId) satisfies InputEvent[];
+async function loadInputEvents(store: AppStore, talkId: string, fromId: string, query?: import("../../server/store.ts").ReviewInputQuery) {
+  return await store.reviewInputEvents(talkId, fromId, query) satisfies InputEvent[];
 }
 
 async function loadTrialInputs(store: AppStore, talkId: string, fromId: string) {
@@ -428,15 +431,17 @@ export async function talkBranchReviewFromItems(store: AppStore) {
 export async function talkBranchReviewFromDetail(store: AppStore, talkId: string, fromId: string) {
   const talk = talkFor(talkId);
   if (!talk || !fromIdsFor(talk).includes(fromId)) return null;
-  const [events, trials, judgments, savedClusters] = await Promise.all([
+  const [events, trials, judgments, savedClusters, inputCounts] = await Promise.all([
     loadInputEvents(store, talkId, fromId),
     loadTrialInputs(store, talkId, fromId),
     loadJudgments(store, { talkId, fromId, status: "open" }),
-    loadSavedClusters(store, talkId, fromId)
+    loadSavedClusters(store, talkId, fromId),
+    store.reviewInputCounts(talkId, fromId)
   ]);
   const incomingMessages = incomingPreviewMessages(talk, fromId);
-  const currentInputs = new Map(events.map((event) => [event.id, event.userInput]));
-  const currentRuleIds = new Map(events.map((event) => [event.id, currentRuleIdForReviewEvent(talk, fromId, event)]));
+  const sourceIds = [...new Set(savedClusters.flatMap((cluster) => cluster.sourceEventIds))];
+  const sourceEvents = sourceIds.length ? await loadInputEvents(store, talkId, fromId, { ids: sourceIds }) : [];
+  const currentInputs = new Map([...events, ...sourceEvents].map((event) => [event.id, event.userInput]));
   const branches = rulesFor(talk, fromId).map((rule) => {
     const regexCriteria = parseRegexCriteria(rule.criteria);
     const savedSourceIds = new Set<string>();
@@ -452,7 +457,7 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
         inputs: currentClusterInputs(sourceEventIds, currentInputs)
       };
     });
-    const currentRuleEvents = events.filter((event) => currentRuleIds.get(event.id) === rule.id);
+    const currentRuleEvents = events.filter((event) => event.ruleId === rule.id);
     const unsavedEvents = currentRuleEvents.filter((event) => !savedSourceIds.has(event.id));
     return {
       ruleId: rule.id,
@@ -478,8 +483,10 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
         return repeatBlockId === blockId ? [] : blockPreviewMessages(repeatBlockId);
       }),
       transition: transitionFor(rule),
-      inputCount: currentRuleEvents.length,
-      trialInputs: trials.filter((trial) => trial.actualRuleId === rule.id).map((trial) => ({ id: trial.id, input: trial.userInput })),
+      inputCount: inputCounts[rule.id] ?? 0,
+      trialInputs: trials.filter((trial) => trial.actualRuleId === rule.id).map((trial) => ({
+        id: trial.id, input: trial.userInput, responseSnapshot: trial.responseSnapshot
+      })),
       clusters: [...ruleSavedClusters, ...rawClustersFor(unsavedEvents, rule.id)],
       judgments: judgments.filter((judgment) => judgment.actualRuleId === rule.id)
     };
@@ -490,19 +497,26 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
     context: rulesFor(talk, fromId).find((rule) => rule.isDefault && rule.from === fromId)?.criteria
       || `${talk.label}（${talk.kind === "sms" ? "メッセージ" : talk.kind === "chat" ? "チャット" : "検索AI"}） / ${shortBlockLabel(fromId)}`,
     incomingMessages,
+    inputPreviewLimit: 1000,
+    totalInputCount: Object.values(inputCounts).reduce((sum, count) => sum + count, 0),
+    unassignedInputCount: Object.entries(inputCounts)
+      .filter(([ruleId]) => !rulesFor(talk, fromId).some((rule) => rule.id === ruleId))
+      .reduce((sum, [, count]) => sum + count, 0),
     branches,
     judgments
   };
 }
 
-export async function talkBranchReviewAnalysisInputs(store: AppStore, talkId: string, fromId: string) {
+export async function talkBranchReviewAnalysisInputs(store: AppStore, talkId: string, fromId: string, ruleId?: string, limit = 500) {
   const talk = talkFor(talkId);
-  if (!talk || !fromIdsFor(talk).includes(fromId)) return null;
+  if (!talk || !fromIdsFor(talk).includes(fromId)
+    || (ruleId && !rulesFor(talk, fromId).some((rule) => rule.id === ruleId))) return null;
   return {
     scenarioRevision: workerScenario.revision,
     talkId,
     fromId,
-    events: await loadInputEvents(store, talkId, fromId)
+    inputCounts: await store.reviewInputCounts(talkId, fromId),
+    events: await loadInputEvents(store, talkId, fromId, { ...(ruleId ? { ruleId } : {}), limit })
   };
 }
 
@@ -528,9 +542,11 @@ export async function replaceTalkBranchReviewClusters(store: AppStore, input: {
   if (input.scenarioRevision !== workerScenario.revision) {
     return { ok: false as const, error: "revision_conflict" };
   }
-  const events = await loadInputEvents(store, input.talkId, input.fromId);
+  const events = await loadInputEvents(store, input.talkId, input.fromId, {
+    ids: input.clusters.flatMap((cluster) => cluster.sourceEventIds), ruleId: input.actualRuleId
+  });
   const allowedIds = new Set(events
-    .filter((event) => currentRuleIdForReviewEvent(talk, input.fromId, event) === input.actualRuleId)
+    .filter((event) => event.ruleId === input.actualRuleId)
     .map((event) => event.id));
   const assignedIds = new Set<string>();
   for (const cluster of input.clusters) {
@@ -567,10 +583,7 @@ export async function simulateTalkBranchReviewSelection(
   if (!talk || !targetRule) return { ok: false as const, error: "not_found", status: 404 as const };
   const preset = talkBranchReviewStatePresetForCond(targetRule.cond);
   const playerInput = talk.kind === "search_agent" ? input.message : internalizeReviewTalkCommand(input.message);
-  const recentMessages = incomingPreviewMessages(talk, input.fromId)
-    .filter((message) => message.speaker !== "SYSTEM")
-    .slice(-4)
-    .map((message) => ({ speaker: message.speaker, body: message.body }));
+  const recentMessages = talkFlowRecentMessages(talk, input.fromId, preset.stateValues);
   const selected = await resolveScenarioTalkRule({
     env,
     llmEnabled: workerScenario.features.llm,
@@ -588,29 +601,34 @@ export async function simulateTalkBranchReviewSelection(
   const nextFromId = selectedRule.mode === "stay" || selectedRule.mode === "game_over"
     ? input.fromId
     : selectedRule.nextFromId || input.fromId;
-  const response = outputStepPreviewMessages(selectedRule.outputSteps).map((message) => message.body).join("\n");
+  const seededState = createInitialPlayerState();
+  seededState.stateValues = compactStateValues(
+    workerScenario.stateVariables,
+    preset.stateValues as Record<string, string | number | boolean>
+  );
+  const previewState = (await reconcileScenarioState(seededState, "review-preview")).state;
+  previewState.stateValues = applyCompactStateAssignments(
+    workerScenario.stateVariables, previewState.stateValues, selectedRule.set,
+    selected.matchGroups, workerScenario.stateVariableDefinitions
+  );
+  const outputEnv = {
+    ...effectiveStateValues(workerScenario.stateVariables, previewState.stateValues),
+    ...talkOutputMatchEnv(selectedRule.match, selected.matchGroups)
+  };
+  const renderOptions = {
+    previousCounts: {}, startSeq: 0, inputVisible: talk.inputVisible, inputVisibleAfterSeq: 0,
+    inputEnabled: talk.inputEnabled, inputEnabledAfterSeq: 0,
+    baseSentAt: now, idPrefix: `review_${id}`
+  };
+  let messages: Array<Record<string, unknown>> = [];
   let outputPreview: { selectedBlockIds: string[]; resultCount?: number } = {
     selectedBlockIds: [...selectedRule.nextBlocks]
   };
   if (talk.kind === "search_agent") {
-    const seededState = createInitialPlayerState();
-    seededState.stateValues = compactStateValues(
-      workerScenario.stateVariables,
-      preset.stateValues as Record<string, string | number | boolean>
-    );
-    const previewState = (await reconcileScenarioState(seededState, "review-preview")).state;
-    previewState.stateValues = applyCompactStateAssignments(
-      workerScenario.stateVariables,
-      previewState.stateValues,
-      selectedRule.set,
-      selected.matchGroups,
-      workerScenario.stateVariableDefinitions
-    );
     const evaluated = evaluateTalkOutputSteps({
       steps: selectedRule.outputSteps,
       env: {
-        ...effectiveStateValues(workerScenario.stateVariables, previewState.stateValues),
-        ...talkOutputMatchEnv(selectedRule.match, selected.matchGroups),
+        ...outputEnv,
         player_input: playerInput
       },
       search: (query) => searchScenario(query, previewState)
@@ -621,6 +639,13 @@ export async function simulateTalkBranchReviewSelection(
         ? { resultCount: evaluated.searchResults.length }
         : {})
     };
+    messages = searchAgentTimelineForOutputs({ ...renderOptions, outputs: evaluated.outputs, formatEnv: evaluated.env })
+      .messages.map((message) => ({ ...message }));
+  } else {
+    messages = messagesForTalkOutputSteps({
+      ...renderOptions, talk, steps: selectedRule.outputSteps, formatEnv: outputEnv,
+      useRepeat: selectedRule.mode !== "game_over"
+    }).messages.map((message) => ({ ...message }));
   }
   await store.saveReviewTrialInput({
     id,
@@ -630,9 +655,18 @@ export async function simulateTalkBranchReviewSelection(
     userInput: input.message,
     nextFromId,
     responseSnapshot: {
-      response,
+      response: messages.flatMap((message) => typeof message.body === "string" ? [message.body] : []).join("\n"),
+      messages,
+      playerInput,
+      inputKind: playerInput.startsWith("photo:") ? "photo" : playerInput.startsWith("share:") ? "share" : "text",
+      recentMessages,
+      statePreset: preset.stateValues,
+      stateUpdates: [...selectedRule.set],
+      mode: selectedRule.mode || "normal",
+      nextFromId,
       selectionSource: selected.source,
       match: selected.matchGroups,
+      reviewSelection: selected.reviewSelection,
       ...outputPreview
     },
     createdAt: now
@@ -691,7 +725,7 @@ export async function updateJudgment(store: AppStore, talkId: string, fromId: st
 }
 
 export async function dismissJudgment(store: AppStore, talkId: string, fromId: string, id: string) {
-  await store.updateReviewJudgmentStatus(talkId, fromId, id, "dismissed", nowIso());
+  await store.updateReviewJudgmentStatus(talkId, fromId, id, "dismissed", nowIso(), true);
 }
 
 export async function updateJudgmentStatus(store: AppStore, talkId: string, fromId: string, id: string, status: JudgmentStatus) {
@@ -726,13 +760,15 @@ export async function talkBranchReviewReport(store: AppStore, status: JudgmentSt
     { talkId: item.talkId, fromId: item.fromId }
   ])).values()];
   const sourceRows = (await Promise.all(groups.map(async ({ talkId, fromId }) => {
+    const ids = [...new Set(judgments.filter((judgment) => judgment.talkId === talkId && judgment.fromId === fromId)
+      .flatMap((judgment) => judgment.sourceEventIds))];
     const [events, trials] = await Promise.all([
-      loadInputEvents(store, talkId, fromId),
-      loadTrialInputs(store, talkId, fromId)
+      loadInputEvents(store, talkId, fromId, { ids }),
+      store.reviewTrialInputs(talkId, fromId, ids)
     ]);
-    return [...events, ...trials].map((row) => ({ id: row.id, userInput: row.userInput }));
+    return [...events, ...trials].map((row) => ({ id: row.id, userInput: row.userInput, responseSnapshot: row.responseSnapshot }));
   }))).flat();
-  const sourceInputById = new Map(sourceRows.map((row) => [row.id, row.userInput]));
+  const sourceInputById = new Map(sourceRows.map((row) => [row.id, row]));
   return {
     generatedAt: nowIso(),
     scenarioRevision: workerScenario.revision,
@@ -746,9 +782,85 @@ export async function talkBranchReviewReport(store: AppStore, status: JudgmentSt
       expectedRuleLabel: item.expectedRuleId
         ? ruleLabel(talkFor(item.talkId)?.rules.find((rule) => rule.id === item.expectedRuleId) ?? ({ id: item.expectedRuleId, isDefault: false, intent: item.expectedRuleId } as TalkRule))
         : "",
-      sourceInputs: item.sourceEventIds.map((id) => ({ id, input: sourceInputById.get(id) ?? "" }))
+      sourceInputs: item.sourceEventIds.map((id) => ({
+        id, input: sourceInputById.get(id)?.userInput ?? "",
+        ...(sourceInputById.has(id) ? { responseSnapshot: sourceInputById.get(id)?.responseSnapshot } : {})
+      }))
     }))
   };
+}
+
+function reportLabel(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "-";
+}
+
+function reportStatusLabel(status: string) {
+  if (status === "open") {
+    return "未対応";
+  }
+  if (status === "reported") {
+    return "レポート作成済み";
+  }
+  if (status === "applied") {
+    return "反映済み";
+  }
+  if (status === "dismissed") {
+    return "却下";
+  }
+  return reportLabel(status);
+}
+
+function reportScopeLabel(scope: string) {
+  if (scope === "branch") {
+    return "分岐全体";
+  }
+  if (scope === "criteria") {
+    return "分類条件";
+  }
+  if (scope === "input_selection") {
+    return "選択入力";
+  }
+  if (scope === "input") {
+    return "入力";
+  }
+  return reportLabel(scope);
+}
+
+function reportJudgmentLabel(judgment: string) {
+  if (judgment === "move_to_existing") {
+    return "既存分岐へ移動";
+  }
+  if (judgment === "needs_new_branch") {
+    return "新規分岐追加";
+  }
+  if (judgment === "hold") {
+    return "保留";
+  }
+  if (judgment === "comment_only") {
+    return "コメントのみ";
+  }
+  return reportLabel(judgment);
+}
+
+function reportCommentBlock(value: string) {
+  const text = value.trim();
+  return text ? text.split(/\r?\n/u).map((line) => `  ${line}`).join("\n") : "  -";
+}
+
+function reportRuleLabel(label: string, id: string | null) {
+  return `${reportLabel(label)}（${reportLabel(id)}）`;
+}
+
+function reportReviewerSummary(items: Awaited<ReturnType<typeof talkBranchReviewReport>>["items"]) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const label = reportLabel(item.reviewerLabel);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "ja"))
+    .map(([label, count]) => `${label} ${count}`)
+    .join("、") || "-";
 }
 
 export function talkBranchReviewReportMarkdown(report: Awaited<ReturnType<typeof talkBranchReviewReport>>) {
@@ -757,27 +869,42 @@ export function talkBranchReviewReportMarkdown(report: Awaited<ReturnType<typeof
     "",
     `- 作成日時: ${report.generatedAt}`,
     `- シナリオリビジョン: ${report.scenarioRevision}`,
-    `- 対象ステータス: ${report.status}`,
+    `- 対象ステータス: ${reportStatusLabel(report.status)}`,
     `- 指示数: ${report.items.length}`,
+    `- コメント者別: ${reportReviewerSummary(report.items)}`,
     ""
   ];
+
   for (const item of report.items) {
     lines.push(
-      `## ${item.fromLabel}`,
+      `## ${item.fromLabel} / ${reportLabel(item.actualRuleLabel)}`,
       "",
       `- 指示ID: ${item.id}`,
-      `- 対象範囲: ${item.scope}`,
-      `- 指示種別: ${item.judgment}`,
-      `- 現在の分岐: ${item.actualRuleLabel || "-"}`,
-      `- 期待する分岐: ${item.expectedRuleLabel || "-"}`,
-      `- コメント者: ${item.reviewerLabel || "-"}`,
-      "",
-      item.sourceInputs.length ? `### 根拠入力\n${item.sourceInputs.map((source) => `- ${source.input || source.id}`).join("\n")}\n` : "",
-      item.newBranchNote ? `### 新規分岐メモ\n${item.newBranchNote}\n` : "",
-      item.comment && item.comment.trim() !== item.newBranchNote.trim() ? `### コメント\n${item.comment}\n` : ""
+      `- 会話ID: ${item.talkId}`,
+      `- 会話地点ID: ${item.fromId}`,
+      `- 対象範囲: ${reportScopeLabel(item.scope)}`,
+      `- 指示種別: ${reportJudgmentLabel(item.judgment)}`,
+      `- 現在の分岐: ${reportRuleLabel(item.actualRuleLabel, item.actualRuleId)}`,
+      `- 期待する分岐: ${reportRuleLabel(item.expectedRuleLabel, item.expectedRuleId)}`,
+      `- コメント者: ${reportLabel(item.reviewerLabel)}`,
+      ""
     );
+    if (item.sourceInputs.length) {
+      lines.push("### 根拠入力");
+      for (const source of item.sourceInputs) {
+        lines.push(`- ${source.input || source.id}`);
+      }
+      lines.push("");
+    }
+    if (item.newBranchNote) {
+      lines.push("### 新規分岐メモ", reportCommentBlock(item.newBranchNote), "");
+    }
+    if (!item.newBranchNote || item.comment.trim() !== item.newBranchNote.trim()) {
+      lines.push("### コメント", reportCommentBlock(item.comment), "");
+    }
   }
-  return `${lines.filter((line) => line !== "").join("\n").replace(/\n+$/u, "")}\n`;
+
+  return `${lines.join("\n").replace(/\n+$/u, "")}\n`;
 }
 
 export function cleanId(value: unknown, maxLength = 160) {

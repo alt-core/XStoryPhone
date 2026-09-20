@@ -1,0 +1,10 @@
+comment	id	cond	initial	search	repair_label	notes	name	avatar	start	input_visible	input_enabled
+	lobby	sealed_note_unlocked		サンプルルーム			サンプルルーム		"history_archive
+start"		
+	chat_receiver	sealed_note_unlocked					連携受信ログ		start		
+	dummy_chat_1	sealed_note_unlocked					ダミーデータ		start		
+	dummy_chat_2	sealed_note_unlocked					ダミーデータ		start		
+	dummy_chat_3	sealed_note_unlocked					ダミーデータ		start		
+	dummy_chat_4	sealed_note_unlocked					ダミーデータ		start		
+	dummy_chat_5	sealed_note_unlocked					ダミーデータ		start		
+	dummy_chat_6	sealed_note_unlocked					ダミーデータ		start

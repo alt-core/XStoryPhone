@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import {
-  buildTalkFlowLlmPromptInputForTurn,
   buildTalkFlowLlmChatCompletionBody,
   buildTalkFlowLlmMessages,
   parseTalkFlowRegexCriteria,
@@ -12,6 +11,8 @@ import {
   talkFlowLlmResponseSchema
 } from "../src/worker/product/talkFlowLlmSelection.ts";
 import { evaluateConditionExpression } from "../src/shared/conditionExpression.ts";
+import { renderTalkRuleCriteria } from "../src/worker/services/talkResolver.ts";
+import { talkTestContext } from "./lib/talk-test-context.mjs";
 
 const loadedScenario = loadAndValidateScenario().worker;
 const scenario = {
@@ -108,8 +109,6 @@ const dryRun = flags.has("dry-run");
 const failFast = flags.has("fail-fast");
 const condStatePatternLimit = 16;
 const blockKeyByCanonicalId = new Map(scenario.talkBlocks.map((block) => [block.block, block.blockKey ?? block.block]));
-const talkBlockById = new Map(scenario.talkBlocks.map((block) => [block.block, block]));
-const talkPersonById = new Map(scenario.talkPeople.map((person) => [person.id, person]));
 
 if (live && !dryRun && !flags.has(paidApiConfirmationFlag)) {
   console.error(
@@ -650,9 +649,10 @@ function selectableRegexWitnessState(talk, node, rule, initialState) {
     const key = stableJson(stateValues);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (!evaluateConditionExpression(rule.cond, { ...stateValues, player_input: rule.example })) continue;
-    const activeRules = rules.filter((candidate) =>
-      evaluateConditionExpression(candidate.cond, { ...stateValues, player_input: rule.example })
+    const effectiveState = { ...loadedScenario.stateVariables, ...stateValues };
+    if (!evaluateConditionExpression(rule.cond, { ...effectiveState, player_input: rule.example })) continue;
+    const activeRules = renderTalkRuleCriteria(rules, effectiveState).filter((candidate) =>
+      evaluateConditionExpression(candidate.cond, { ...effectiveState, player_input: rule.example })
     );
     const selected = selectTalkFlowRuleByRegexCriteria(activeRules, rule.example);
     if (selected?.id === rule.id) return stateValues;
@@ -735,40 +735,12 @@ function nodeById(talk, fromId) {
   return node;
 }
 
-function speakerForTalkBlockMessage(talk, message) {
-  const person = talkPersonById.get(message.sender);
-  if (person?.role === "owner") {
-    return "phone_owner";
-  }
-  return person?.name ?? (talk.kind === "chat" ? "chat_participant" : "other");
-}
-
-function recentMessagesForBlock(talk, blockId) {
-  const block = talkBlockById.get(blockId);
-  assert.ok(block, `talk block が見つかりません: ${talk.id}/${blockId}`);
-  return block.messages
-    .slice(-2)
-    .map((message) => ({
-      speaker: speakerForTalkBlockMessage(talk, message),
-      body: String(message.body ?? "").trim()
-    }))
-    .filter((message) => message.body);
-}
-
 function buildPromptInput(testCase) {
-  const talk = talkById(testCase.talkId);
-  const node = nodeById(talk, testCase.fromId);
-  const stateValues = testCase.stateValues ?? {};
-  const context = buildTalkFlowLlmPromptInputForTurn({
-    talkId: talk.id,
-    kind: talk.kind,
-    fromId: testCase.fromId,
-    playerInput: testCase.input,
-    recentMessages: recentMessagesForBlock(talk, testCase.fromId),
-    commonRules: talk.commonRules,
-    nodeRules: node.rules,
-    stateValues,
-    evaluateCond: evaluateConditionExpression
+  const { context } = talkTestContext(loadedScenario, {
+    talkId: testCase.talkId,
+    from: testCase.fromId,
+    input: testCase.input,
+    stateValues: testCase.stateValues
   });
   assert.ok(context, `LLM 入力 context が作れません: ${testCase.id}`);
   if (testCase.regexCriteria) {
@@ -791,7 +763,7 @@ function buildPromptInput(testCase) {
 function activeRuntimeRuleById(testCase, ruleId) {
   const talk = talkById(testCase.talkId);
   const node = nodeById(talk, testCase.fromId);
-  const stateValues = testCase.stateValues ?? {};
+  const stateValues = { ...loadedScenario.stateVariables, ...testCase.stateValues };
   const activeRules = [...talk.commonRules, ...node.rules]
     .sort((a, b) => a.order - b.order)
     .filter((rule) => evaluateConditionExpression(rule.cond, { ...stateValues, player_input: testCase.input }));

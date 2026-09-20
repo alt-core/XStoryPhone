@@ -1,8 +1,13 @@
-import { resolveTalkRule } from "../../shared/conversation.ts";
+import { resolveTalkRule, type TalkReviewSelection } from "../../shared/conversation.ts";
 import { renderTemplate } from "../../shared/condition.ts";
 import type { ScenarioTalk } from "../../shared/scenario.ts";
 import { createStructuredOutputProvider, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
 import { extractTalkRuleMatch, semanticRuleSelector } from "./conversationLlm.ts";
+
+export function renderTalkRuleCriteria<T extends { criteria: string }>(rules: readonly T[], stateValues: Record<string, unknown>): T[] {
+  const templateEnv = Object.fromEntries(Object.entries(stateValues).map(([key, value]) => [key, String(value)]));
+  return rules.map((rule) => ({ ...rule, criteria: renderTemplate(rule.criteria, templateEnv) }));
+}
 
 export async function resolveScenarioTalkRule(input: {
   env: LlmProviderEnv;
@@ -16,10 +21,9 @@ export async function resolveScenarioTalkRule(input: {
   provider?: StructuredOutputProvider | null;
 }) {
   const provider = input.llmEnabled ? (input.provider ?? createStructuredOutputProvider(input.env)) : null;
-  const templateEnv = Object.fromEntries(Object.entries(input.stateValues).map(([key, value]) => [key, String(value)]));
   const talk = {
     ...input.talk,
-    rules: input.talk.rules.map((rule) => ({ ...rule, criteria: renderTemplate(rule.criteria, templateEnv) }))
+    rules: renderTalkRuleCriteria(input.talk.rules, input.stateValues)
   };
   const selection = await resolveTalkRule({
     rules: talk.rules,
@@ -36,18 +40,22 @@ export async function resolveScenarioTalkRule(input: {
       })
     } : {})
   });
-  if (!selection.ok || !selection.rule.match.trim()) {
-    return selection.ok ? { ...selection, matchGroups: {} } : selection;
-  }
+  if (!selection.ok) return selection;
+  const reviewSelection: TalkReviewSelection = {
+    selectedRuleId: selection.rule.id, ...selection.reviewSelection, finalRuleId: selection.rule.id
+  };
+  if (!selection.rule.match.trim()) return { ...selection, reviewSelection, matchGroups: {} };
   if (!provider) {
     return { ok: false as const, error: "provider_unavailable" as const };
   }
   const extracted = await extractTalkRuleMatch(provider, selection.rule, input.playerInput, input.recentMessages, {
     talkId: talk.id,
-    fromId: input.from
+    fromId: input.from,
+    onResult(result) { reviewSelection.extraction = result; }
   });
-  if (extracted.ok) return { ...selection, matchGroups: extracted.values };
+  if (extracted.ok) return { ...selection, reviewSelection, matchGroups: extracted.values };
   return extracted.error === "no_match"
-    ? { ok: true as const, rule: selection.defaultRule, defaultRule: selection.defaultRule, source: "default" as const, matchGroups: {} }
+    ? { ok: true as const, rule: selection.defaultRule, defaultRule: selection.defaultRule, source: "default" as const,
+      reviewSelection: { ...reviewSelection, accepted: false, finalRuleId: selection.defaultRule.id, fallbackReason: "extraction_no_match" }, matchGroups: {} }
     : extracted;
 }

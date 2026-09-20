@@ -4,12 +4,14 @@ import type {
   HookLlmCacheRecord,
   InitialScheduledEvent,
   InputEventRecord,
-  PlayerInputReviewEvent,
+  PlayerInputReviewFilters,
+  PlayerInputReviewPage,
   PlayerCommitEffects,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
   ReviewInputEvent,
+  ReviewInputQuery,
   ReviewJudgment,
   ReviewJudgmentFilter,
   ReviewJudgmentStatus,
@@ -21,6 +23,8 @@ import type {
 } from "../../server/store.ts";
 import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
 import {
+  decodeReviewCursor,
+  encodeReviewCursor,
   DYNAMO_PLAYER_STATE_WARNING_BYTES,
   MAX_SESSIONS_PER_PLAYER,
   isSearchAgentTranscriptConflictError,
@@ -710,16 +714,14 @@ export class DynamoStore implements AppStore {
     }
   }
 
-  async playerInputEvents(filters: {
-    playerId?: string;
-    talkId?: string;
-    query?: string;
-    limit: number;
-  }): Promise<PlayerInputReviewEvent[]> {
+  async playerInputEvents(filters: PlayerInputReviewFilters): Promise<PlayerInputReviewPage> {
     const rows: Record<string, unknown>[] = [];
     const normalizedQuery = filters.query?.normalize("NFC").trim().toLocaleLowerCase("ja");
-    let startKey: DynamoItem | undefined;
     const prefix = "INPUT#talk_send#";
+    const cursor = decodeReviewCursor(filters.cursor);
+    if (cursor && (Object.keys(cursor).length !== 4 || !cursor.PK || !cursor.SK
+      || cursor.GSI2PK !== "INPUT_REVIEW" || !cursor.GSI2SK?.startsWith(prefix))) throw new Error("invalid_review_cursor");
+    let startKey: DynamoItem | undefined = cursor ? item(cursor) : undefined;
     do {
       const result = await this.transport.execute("Query", {
         TableName: this.tableName,
@@ -734,28 +736,39 @@ export class DynamoStore implements AppStore {
       for (const row of (result.Items ?? []).map(valueFromItem)) {
         const matches = (!filters.playerId || stringValue(row.playerId) === filters.playerId)
           && (!filters.talkId || stringValue(row.talkId) === filters.talkId)
-          && (!normalizedQuery || stringValue(row.normalizedInput).includes(normalizedQuery));
+          && (!filters.status || stringValue(row.status) === filters.status)
+          && (!filters.before || stringValue(row.occurredAt) < filters.before)
+          && (!filters.after || stringValue(row.occurredAt) >= filters.after)
+          && (!normalizedQuery || stringValue(row.normalizedInput).includes(normalizedQuery)
+            || JSON.stringify(row.responseSnapshot ?? {}).normalize("NFC").toLocaleLowerCase("ja").includes(normalizedQuery));
         if (matches) rows.push(row);
-        if (rows.length >= filters.limit) break;
+        if (rows.length > filters.limit) break;
       }
       startKey = result.LastEvaluatedKey;
-    } while (startKey && rows.length < filters.limit);
-    return rows.slice(0, filters.limit).map((row) => ({
-      id: stringValue(row.id),
-      playerId: stringValue(row.playerId),
-      occurredAt: stringValue(row.occurredAt),
-      appId: nullableString(row.appId),
-      talkId: nullableString(row.talkId),
-      fromId: nullableString(row.fromId),
-      userInput: stringValue(row.userInput),
-      status: stringValue(row.status),
-      matched: row.matched === true,
-      ruleId: nullableString(row.ruleId),
-      nextFromId: nullableString(row.nextFromId),
-      responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
-        ? row.responseSnapshot as Record<string, unknown>
-        : {}
-    }));
+    } while (startKey && rows.length <= filters.limit);
+    const selected = rows.slice(0, filters.limit);
+    const last = selected[selected.length - 1];
+    return {
+      nextCursor: rows.length > filters.limit && last ? encodeReviewCursor({
+        PK: stringValue(last.PK), SK: stringValue(last.SK), GSI2PK: stringValue(last.GSI2PK), GSI2SK: stringValue(last.GSI2SK)
+      }) : null,
+      items: selected.map((row) => ({
+        id: stringValue(row.id),
+        playerId: stringValue(row.playerId),
+        occurredAt: stringValue(row.occurredAt),
+        appId: nullableString(row.appId),
+        talkId: nullableString(row.talkId),
+        fromId: nullableString(row.fromId),
+        userInput: stringValue(row.userInput),
+        status: stringValue(row.status),
+        matched: row.matched === true,
+        ruleId: nullableString(row.ruleId),
+        nextFromId: nullableString(row.nextFromId),
+        responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
+          ? row.responseSnapshot as Record<string, unknown>
+          : {}
+      }))
+    };
   }
 
   async generatedAudioJob(playerId: string, audioId: string) {
@@ -825,10 +838,24 @@ export class DynamoStore implements AppStore {
     };
   }
 
-  async reviewInputEvents(talkId: string, fromId: string): Promise<ReviewInputEvent[]> {
+  async reviewInputCounts(talkId: string, fromId: string) {
+    const counts: Record<string, number> = {};
+    for (const row of await this.queryGsi("REVIEW_SOURCE", `INPUT#${talkId}#${fromId}#`)) {
+      if (row.talkId !== talkId || row.fromId !== fromId) continue;
+      const ruleId = stringValue(row.ruleId);
+      if (ruleId) counts[ruleId] = (counts[ruleId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  async reviewInputEvents(talkId: string, fromId: string, query: ReviewInputQuery = {}): Promise<ReviewInputEvent[]> {
+    if (query.ids && !query.ids.length) return [];
+    const ids = query.ids ? new Set(query.ids) : null;
     return (await this.queryGsi("REVIEW_SOURCE", `INPUT#${talkId}#${fromId}#`))
-      .sort((left, right) => stringValue(right.occurredAt).localeCompare(stringValue(left.occurredAt)))
-      .slice(0, 1000)
+      .filter((row) => row.talkId === talkId && row.fromId === fromId
+        && (!query.ruleId || row.ruleId === query.ruleId) && (!ids || ids.has(stringValue(row.id))))
+      .sort((left, right) => stringValue(right.occurredAt).localeCompare(stringValue(left.occurredAt)) || stringValue(right.id).localeCompare(stringValue(left.id)))
+      .slice(0, ids ? undefined : query.limit ?? 1000)
       .map((row) => ({
         id: stringValue(row.id),
         ruleId: stringValue(row.ruleId),
@@ -840,12 +867,16 @@ export class DynamoStore implements AppStore {
       }));
   }
 
-  async reviewTrialInputs(talkId: string, fromId: string): Promise<ReviewTrialInput[]> {
+  async reviewTrialInputs(talkId: string, fromId: string, sourceIds?: readonly string[]): Promise<ReviewTrialInput[]> {
+    if (sourceIds && !sourceIds.length) return [];
+    const ids = sourceIds ? new Set(sourceIds) : null;
     return (await this.queryPk(reviewPk(talkId, fromId), "TRIAL#"))
-      .filter((row) => row.status === "active")
+      .filter((row) => row.status === "active" && (!ids || ids.has(stringValue(row.id))))
       .sort((left, right) => stringValue(right.createdAt).localeCompare(stringValue(left.createdAt)))
-      .slice(0, 500)
-      .map((row) => ({ id: stringValue(row.id), actualRuleId: stringValue(row.actualRuleId), userInput: stringValue(row.userInput) }));
+      .slice(0, ids ? undefined : 500)
+      .map((row) => ({ id: stringValue(row.id), actualRuleId: stringValue(row.actualRuleId), userInput: stringValue(row.userInput),
+        responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
+          ? row.responseSnapshot as Record<string, unknown> : {} }));
   }
 
   async reviewClusters(talkId: string, fromId: string, scenarioRevision: string): Promise<ReviewCluster[]> {
@@ -935,14 +966,19 @@ export class DynamoStore implements AppStore {
     talkId: string,
     fromId: string,
     id: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    onlyOpen = false
   ) {
     try {
       await this.transport.execute("UpdateItem", {
         TableName: this.tableName,
         Key: item({ PK: reviewPk(talkId, fromId), SK: `JUDGMENT#${id}` }),
-        ConditionExpression: "attribute_exists(PK)",
-        ...input
+        ...input,
+        ConditionExpression: onlyOpen ? "attribute_exists(PK) AND #guardStatus = :guardOpen" : "attribute_exists(PK)",
+        ...(onlyOpen ? {
+          ExpressionAttributeNames: { ...(input.ExpressionAttributeNames as Record<string, string> ?? {}), "#guardStatus": "status" },
+          ExpressionAttributeValues: { ...(input.ExpressionAttributeValues as DynamoItem ?? {}), ":guardOpen": attribute("open") }
+        } : {})
       });
     } catch (error) {
       if (!conditionalFailure(error)) throw error;
@@ -956,15 +992,15 @@ export class DynamoStore implements AppStore {
       ExpressionAttributeValues: item({
         ":comment": input.comment, ":note": input.newBranchNote, ":label": input.reviewerLabel, ":now": input.updatedAt
       })
-    });
+    }, true);
   }
 
-  async updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string) {
+  async updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string, onlyOpen = false) {
     await this.updateReviewJudgmentItem(talkId, fromId, id, {
       UpdateExpression: "SET #status = :status, GSI1PK = :gsi, updatedAt = :now",
       ExpressionAttributeNames: { "#status": "status" },
       ExpressionAttributeValues: item({ ":status": status, ":gsi": `REVIEW_JUDGMENT#${status}`, ":now": updatedAt })
-    });
+    }, onlyOpen);
   }
 
   async deleteReviewTrialInput(talkId: string, fromId: string, id: string, updatedAt: string) {
@@ -988,7 +1024,7 @@ export class DynamoStore implements AppStore {
     await this.updateReviewJudgmentItem(talkId, fromId, id, {
       UpdateExpression: "SET sourceEventIds = :ids, updatedAt = :now",
       ExpressionAttributeValues: item({ ":ids": sourceEventIds, ":now": updatedAt })
-    });
+    }, true);
   }
 
 }

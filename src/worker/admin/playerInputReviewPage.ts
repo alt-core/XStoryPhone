@@ -40,10 +40,14 @@ export function playerInputReviewPageHtml() {
       <label class="wide">管理トークン<input id="secret" type="password" autocomplete="off"></label>
       <label>player ID<input id="playerId"></label>
       <label>会話ID<input id="talkId"></label>
-      <label>本文検索<input id="q"></label>
+      <label>入力・返答検索<input id="q"></label>
+      <label>状態<input id="statusFilter" placeholder="completed"></label>
+      <label>開始日時（含む）<input id="after" placeholder="2026-09-01T00:00:00Z"></label>
+      <label>終了日時（含まない）<input id="before" placeholder="2026-10-01T00:00:00Z"></label>
       <label>件数<input id="limit" type="number" min="1" max="500" value="100"></label>
       <button type="submit">読み込み</button>
       <button type="button" class="secondary" id="csv">CSV</button>
+      <button type="button" class="secondary" id="older" disabled>次の古い入力</button>
     </form>
     <section class="panel">
       <div class="status" id="status">未読み込み</div>
@@ -60,7 +64,10 @@ export function playerInputReviewPageHtml() {
     const statusEl = document.getElementById('status');
     const detail = document.getElementById('detail');
     const secret = document.getElementById('secret');
-    const controls = ['playerId', 'talkId', 'q', 'limit'].reduce((map, id) => {
+    const older = document.getElementById('older');
+    let currentCursor = '';
+    let nextCursor = null;
+    const controls = ['playerId', 'talkId', 'q', 'statusFilter', 'after', 'before', 'limit'].reduce((map, id) => {
       map[id] = document.getElementById(id);
       return map;
     }, {});
@@ -69,8 +76,9 @@ export function playerInputReviewPageHtml() {
       const value = new URLSearchParams();
       for (const id of Object.keys(controls)) {
         const current = controls[id].value.trim();
-        if (current) value.set(id, current);
+        if (current) value.set(id === 'statusFilter' ? 'status' : id, current);
       }
+      if (currentCursor) value.set('cursor', currentCursor);
       return value;
     }
 
@@ -115,6 +123,8 @@ export function playerInputReviewPageHtml() {
       const response = await request('/api/admin/player-input-review/events?' + params().toString());
       const data = await response.json();
       render(data.items || []);
+      nextCursor = data.nextCursor;
+      older.disabled = !nextCursor;
     }
 
     async function loadCsv() {
@@ -129,8 +139,22 @@ export function playerInputReviewPageHtml() {
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      currentCursor = '';
+      older.disabled = true;
       statusEl.textContent = '読み込み中';
       try { await loadJson(); } catch (error) { statusEl.textContent = error.message; }
+    });
+    form.addEventListener('input', () => { currentCursor = ''; nextCursor = null; older.disabled = true; });
+    older.addEventListener('click', async () => {
+      if (!nextCursor) return;
+      const previousCursor = currentCursor;
+      currentCursor = nextCursor;
+      older.disabled = true;
+      try { await loadJson(); } catch (error) {
+        currentCursor = previousCursor;
+        older.disabled = !nextCursor;
+        statusEl.textContent = error.message;
+      }
     });
     document.getElementById('csv').addEventListener('click', async () => {
       statusEl.textContent = 'CSV作成中';

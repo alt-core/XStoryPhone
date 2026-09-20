@@ -1,12 +1,6 @@
 # プレイヤー進行の保存モード
 
-XStoryPhoneは、同じシナリオとUIを2種類のプレイヤーモードで実行できます。`scenario/demo/scenario.json` の最上位へ `playerMode` を指定します。省略時は `server` です。
-
-```json
-{
-  "playerMode": "browser"
-}
-```
+XStoryPhoneは、同じシナリオとUIを2種類のプレイヤーモードで実行できます。`project_constants` シートの `player.mode` に `server` または `browser` を指定します。省略時は `server` です。生成後の内部設定名は `playerMode` です。
 
 |  | `server` | `browser` |
 |---|---|---|
@@ -76,18 +70,7 @@ ACCESS_CODE_SECRET='十分に長い秘密値' npm run access-code -- --from 0001
 
 ## プレイヤーパスコードとロック画面
 
-`project.lockScreen.method` で、疑似端末のロック方式を選びます。
-
-```json
-{
-  "project": {
-    "lockScreen": {
-      "method": "fixed-pin",
-      "pin": "0420"
-    }
-  }
-}
-```
+`project_constants` シートの `device.lock_method` で、疑似端末のロック方式を選びます。固定PINならvalueを `fixed-pin` とし、別行 `device.lock_pin` のvalueへ `0420` のような文字列を指定します。PIN行のexposureは必ず `private` にします。Sheetsで先頭のゼロを失わないよう、PINセルはプレーンテキストにしてください。
 
 | `method` | 動作 |
 |---|---|

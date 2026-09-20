@@ -1,0 +1,16 @@
+comment	id	cond	initial	search	repair_label	notes	name	kind	at	duration	audio	gen_audio	transcript
+	demo_call_history	demo_call_completed		"電話
+着信
+書き起こし"			着信テスト	incoming	20:16	6秒	media_6		"[{""atMs"":0,""text"":""［低い確認音］""},{""atMs"":2000,""text"":""［中くらいの確認音］""},{""atMs"":4000,""text"":""［高い確認音］""}]"
+	missed_call			"電話
+着信
+非通知"			非通知	missed	20:02	応答なし			
+	demo_voicemail			"留守番電話
+留守電
+ボイスメール"			案内係	voicemail	19:48	6秒	media_6		"[{""atMs"":0,""text"":""留守番電話の再生確認です。""},{""atMs"":2000,""text"":""書き起こしは時刻を付けずに表示します。""},{""atMs"":4000,""text"":""最後までスクロールして確認できます。""}]"
+	dummy_call_1			ダミーデータ			ダミーデータ	missed	00:00	応答なし			
+	dummy_call_2			ダミーデータ			ダミーデータ	missed	00:00	応答なし			
+	dummy_call_3			ダミーデータ			ダミーデータ	missed	00:00	応答なし			
+	dummy_call_4			ダミーデータ			ダミーデータ	missed	00:00	応答なし			
+	dummy_call_5			ダミーデータ			ダミーデータ	missed	00:00	応答なし			
+	dummy_call_6			ダミーデータ			ダミーデータ	missed	00:00	応答なし

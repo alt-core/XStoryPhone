@@ -18,11 +18,13 @@ export type LlmMatchExtractionRunResult =
       score: number;
       maxScore: number;
       outputs: TalkFlowMatchOutput[];
+      sampleCount: number;
     }
   | {
       ok: false;
       reason: "provider_error" | "invalid_response" | "no_match";
       outputs: TalkFlowMatchOutput[];
+      sampleCount: number;
     };
 
 // 標本取得順と合意時点を固定し、通信方法だけを呼出側へ委ねる。
@@ -50,7 +52,7 @@ export async function runTalkFlowMatchExtractionSamples(
     const results = await Promise.all(batch);
     for (const result of results) {
       if (result.status === "provider_error") {
-        return { ok: false, reason: "provider_error", outputs };
+        return { ok: false, reason: "provider_error", outputs, sampleCount: sampleIndex };
       }
       if (result.status === "invalid_response") {
         invalidResponses += 1;
@@ -70,12 +72,13 @@ export async function runTalkFlowMatchExtractionSamples(
         matchGroups: selected.matchGroups,
         score: selected.score,
         maxScore: selected.maxScore,
-        outputs
+        outputs,
+        sampleCount: sampleIndex
       };
     }
   }
 
   return outputs.length === 0 && invalidResponses > 0
-    ? { ok: false, reason: "invalid_response", outputs }
-    : { ok: false, reason: "no_match", outputs };
+    ? { ok: false, reason: "invalid_response", outputs, sampleCount: sampleIndex }
+    : { ok: false, reason: "no_match", outputs, sampleCount: sampleIndex };
 }

@@ -1,0 +1,2 @@
+comment	id	name	cond	audio	transcript	notes
+	demo_call	着信テスト		media_6	"[{""atMs"":0,""text"":""［低い確認音］""},{""atMs"":2000,""text"":""［中くらいの確認音］""},{""atMs"":4000,""text"":""［高い確認音］""}]"

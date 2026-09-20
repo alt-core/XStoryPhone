@@ -1,0 +1,9 @@
+comment	id	cond	initial	search	repair_label	notes	title	audio	gen_audio	cues	playback_cond	playback_disabled_label	form_kind	form_id	form_label	form_url	form_disabled_cond	transcript
+	sample_radio			"ラジオ
+放送
+音声"			接続テスト放送	media_9	demo_voice									"[{""atMs"":0,""text"":""ラジオ字幕の表示テストを開始します。""},{""atMs"":3000,""text"":""再生位置に合わせて字幕が切り替わります。""},{""atMs"":6000,""text"":""字幕データがなければ、この欄は表示されません。""}]"
+	dummy_radio_1			ダミーデータ			ダミーデータ											
+	dummy_radio_2			ダミーデータ			ダミーデータ											
+	dummy_radio_3			ダミーデータ			ダミーデータ											
+	dummy_radio_4			ダミーデータ			ダミーデータ											
+	dummy_radio_5			ダミーデータ			ダミーデータ

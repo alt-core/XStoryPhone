@@ -260,6 +260,9 @@ export async function runScenarioHooks(
   const effectiveRecordedState = () => effectiveStateValues(workerScenario.stateVariables, recordedStateValues);
   const llmEnv = services.llmEnv ?? {};
   const llmResults = services.llmResults ?? new Map();
+  const configuredMaxRequests = llmEnv.LLM_HOOK_MAX_REQUESTS?.trim();
+  const maxRequests = configuredMaxRequests ? Number(configuredMaxRequests) : 5;
+  if (!Number.isSafeInteger(maxRequests) || maxRequests < 1) throw new Error("LLM_HOOK_MAX_REQUESTSは1以上の整数にしてください。");
   const nextMessageSentAtByTalk = new Map(Object.entries(services.messageBaseSentAtByTalk ?? {}));
   function resolvedLlmResult(request: HookLlmRequest) {
     const key = hookLlmRequestKey(request, hookLlmModelVersion(llmEnv, request));
@@ -524,6 +527,8 @@ export async function runScenarioHooks(
     if (error instanceof ScenarioHookSequenceEnd) {
       // terminal presentation sequenceは、それ以前に記録したdomain effectと一緒に適用する。
     } else if (error instanceof PendingHookLlmRequest) {
+      // 完走のための再評価は数えず、event内で新たに解決する要求だけを制限する。
+      if (llmResults.size >= maxRequests) throw new Error("too_many_llm_hook_requests");
       const output = services.resolveLlm
         ? await services.resolveLlm(error.key, error.request)
         : await (async () => {

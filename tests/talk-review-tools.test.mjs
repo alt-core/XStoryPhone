@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { currentRuleIdForReviewEvent } from "../scripts/lib/review-cluster-rules.mjs";
 import { talkBlockKeyError } from "../scripts/lib/talk-blocks.mjs";
 import { formatTalkOutputStep, parseTalkOutputSteps } from "../scripts/lib/talk-output-steps.mjs";
 
@@ -80,56 +79,4 @@ test("会話制作dumpと全example mockを選択中scenarioで実行できる",
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
-});
-
-test("監修clusterは旧rule IDを保存済みnext blockから現在ruleへ解決する", () => {
-  const talk = {
-    rules: [
-      {
-        id: "current",
-        from: "start",
-        outputSteps: [{ kind: "if", cond: "search_found", blockId: "reply" }, { kind: "search", queryTemplate: "{{player_input}}" }],
-        nextBlocks: ["reply"]
-      },
-      { id: "other", from: "start", outputSteps: [{ kind: "block", blockId: "other" }], nextBlocks: ["other"] }
-    ]
-  };
-  assert.equal(currentRuleIdForReviewEvent(talk, "start", {
-    ruleId: "removed-rule",
-    responseSnapshot: {
-      outputSteps: [{ kind: "if", cond: "search_found", blockId: "reply" }, { kind: "search", queryTemplate: "{{player_input}}" }]
-    }
-  }), "current");
-  assert.equal(currentRuleIdForReviewEvent(talk, "start", {
-    ruleId: "removed-rule",
-    responseSnapshot: { nextBlocks: ["reply"] }
-  }), "current");
-  assert.equal(currentRuleIdForReviewEvent(talk, "start", { ruleId: "removed-rule", responseSnapshot: {} }), "");
-});
-
-test("監修clusterは同じblockでも保存済み入力actionから現在ruleを区別する", () => {
-  const talk = {
-    rules: [{
-      id: "hide-rule",
-      from: "start",
-      outputSteps: [{ kind: "block", blockId: "reply" }, { kind: "input", action: "hide" }],
-      nextBlocks: ["reply"]
-    }, {
-      id: "disable-rule",
-      from: "start",
-      outputSteps: [{ kind: "block", blockId: "reply" }, { kind: "input", action: "disable" }],
-      nextBlocks: ["reply"]
-    }]
-  };
-  assert.equal(currentRuleIdForReviewEvent(talk, "start", {
-    ruleId: "removed-rule",
-    responseSnapshot: {
-      outputSteps: [{ kind: "block", blockId: "reply" }, { kind: "input", action: "disable" }],
-      nextBlocks: ["reply"]
-    }
-  }), "disable-rule");
-  assert.equal(currentRuleIdForReviewEvent(talk, "start", {
-    ruleId: "removed-rule",
-    responseSnapshot: { nextBlocks: ["reply"] }
-  }), "");
 });

@@ -50,7 +50,10 @@ test("LLM分岐は直近文脈を渡し、低確信と危険分岐をdefaultへ�
     defaultRuleId: "default",
     recentMessages: [{ speaker: "案内役", body: "進めますか？" }]
   });
-  assert.deepEqual(selected, { ok: true, ruleId: "normal" });
+  assert.equal(selected.ok, true);
+  assert.equal(selected.ruleId, "normal");
+  assert.equal(selected.reviewSelection.decision.confidence, 0.8);
+  assert.equal(selected.reviewSelection.accepted, true);
   assert.equal(high.requests[0].temperature, 0);
   assert.deepEqual(high.requests[0].input.recent_messages, [{ speaker: "案内役", body: "進めますか？" }]);
   assert.equal(high.requests[0].input.current_context, "");
@@ -58,10 +61,16 @@ test("LLM分岐は直近文脈を渡し、低確信と危険分岐をdefaultへ�
   assert.match(high.requests[0].instructions, /同じ添付ID/u);
 
   const low = providerFrom([{ rule_id: "normal", confidence: 0.4, reason_code: "ambiguous_fallback" }]);
-  assert.deepEqual(await semanticRuleSelector(low.provider)({ playerInput: "たぶん", rules, defaultRuleId: "default", recentMessages: [] }), { ok: true, ruleId: "default" });
+  const lowResult = await semanticRuleSelector(low.provider)({ playerInput: "たぶん", rules, defaultRuleId: "default", recentMessages: [] });
+  assert.equal(lowResult.ok, true);
+  assert.equal(lowResult.ruleId, "default");
+  assert.equal(lowResult.reviewSelection.fallbackReason, "low_confidence");
 
   const gameOver = providerFrom([{ rule_id: "end", confidence: 0.85, reason_code: "matched_intent" }]);
-  assert.deepEqual(await semanticRuleSelector(gameOver.provider)({ playerInput: "終わり", rules, defaultRuleId: "default", recentMessages: [] }), { ok: true, ruleId: "default" });
+  const gameOverResult = await semanticRuleSelector(gameOver.provider)({ playerInput: "終わり", rules, defaultRuleId: "default", recentMessages: [] });
+  assert.equal(gameOverResult.ok, true);
+  assert.equal(gameOverResult.ruleId, "default");
+  assert.equal(gameOverResult.reviewSelection.fallbackReason, "low_game_over_confidence");
 });
 
 test("match抽出は同じ値を2回確認し、best項目は一致度で選ぶ", async () => {

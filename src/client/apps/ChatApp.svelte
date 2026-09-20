@@ -31,6 +31,7 @@
   import PhotoMessagePicker from "./PhotoMessagePicker.svelte";
   import { createTalkDrafts, restoreFailedTalkDraft } from "./talkDrafts.ts";
   import { brokenRangesAfterMessages, brokenRangesBeforeMessage } from "./talkHistoryRanges";
+  import { talkForFocusedContent } from "./talkContentFocus.ts";
   import {
     loadTalkDelaySeenMessages,
     saveTalkDelaySeenMessages,
@@ -95,6 +96,7 @@
   let lastAppliedFocusContentId = "";
   let lastAppliedFocusContentRequestId = focusContentRequestId;
   let pendingHistoryRepairId = "";
+  let pendingAttachmentContentId = "";
   let trackedThreadId = "";
   let trackedMessages: DelayedMessage[] = [];
   let visibleMessageIds = new Set<string>();
@@ -122,14 +124,16 @@
     lastAppliedFocusContentId = "";
     lastAppliedFocusContentRequestId = focusContentRequestId;
     pendingHistoryRepairId = "";
+    pendingAttachmentContentId = "";
   } else if (focusContentId !== lastAppliedFocusContentId || focusContentRequestId !== lastAppliedFocusContentRequestId) {
-    const focused = threads.find((thread) => matchesThreadId(thread, focusContentId));
+    const focused = talkForFocusedContent(threads, focusContentId);
     if (focused) {
       lastAppliedFocusContentId = focusContentId;
       lastAppliedFocusContentRequestId = focusContentRequestId;
       selectedThreadId = focused.id;
       pickerOpen = focused.corrupted === true;
       pendingHistoryRepairId = focused.corrupted ? "" : focusHistoryRepairId;
+      pendingAttachmentContentId = focused.id === focusContentId || focused.contentId === focusContentId ? "" : focusContentId;
       lastHistorySignature = "";
       lastHistoryThreadId = "";
       if (focused.corrupted) {
@@ -224,6 +228,17 @@
       return;
     }
 
+    if (pendingAttachmentContentId) {
+      const target = [...historyList.querySelectorAll<HTMLElement>("[data-attachment-content-id]")]
+        .find((element) => element.dataset.attachmentContentId === pendingAttachmentContentId);
+      if (target) {
+        historyList.scrollTop = Math.max(0, target.offsetTop - 8);
+        pendingAttachmentContentId = "";
+        lastHistorySignature = historySignature;
+        lastHistoryThreadId = selectedThread.id;
+      }
+      return;
+    }
     if (pendingHistoryRepairId && scrollToHistoryRepair(pendingHistoryRepairId)) {
       pendingHistoryRepairId = "";
       lastHistorySignature = historySignature;
@@ -316,6 +331,7 @@
   }
 
   function selectThread(talkId: string) {
+    pendingAttachmentContentId = "";
     flushPendingRead();
     const thread = threads.find((item) => item.id === talkId);
     if (thread?.corrupted) {
@@ -911,6 +927,7 @@
                       class="message-row"
                       class:owner={message.sender === "owner"}
                       data-history-repair-id={message.historyRepairId || undefined}
+                      data-attachment-content-id={message.attachment?.contentId || undefined}
                     >
                       {#if message.sender !== "owner"}
                         <UserAvatar name={message.senderName} src={message.avatarUrl ?? ""} size={28} tone="chat" />

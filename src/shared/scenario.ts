@@ -103,7 +103,7 @@ export type ScenarioTalk = ScenarioDeviceTalk | ScenarioSearchAgentTalk;
 export type ScenarioTalkPerson = {
   id: string;
   name: string;
-  role: "owner" | "npc";
+  role: "owner" | "npc" | "system";
   avatar?: string;
 };
 
@@ -148,6 +148,9 @@ export type ScenarioAttachmentDefinition = {
   title?: string;
   body?: string;
   poster?: string;
+  search?: readonly (string | readonly string[])[];
+  searchApp?: "messages" | "chat";
+  cond?: string;
 };
 
 export type ScenarioIncomingCall = {
@@ -201,6 +204,7 @@ export type ClientScenario = {
 };
 
 export type WorkerScenario = ClientScenario & {
+  projectConstants: Readonly<Record<string, string>>;
   clientRevision: string;
   transcriptRevision: string;
   projectAppIds: readonly string[];

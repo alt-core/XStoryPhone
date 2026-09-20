@@ -1,12 +1,12 @@
 # シナリオ作成
 
-シナリオデータの原本は、次の3ファイルです。
+制作上の正本はGoogle Sheetsです。メモ・画像・通知・状態・hookを含む制作表を明示的にpullし、取得したローカルTSV一式から検証・生成します。デモは取得済みTSVを同梱しているため、Sheetへ接続せずビルドできます。接続設定、pull/compare/put、安全な投入手順は[Google Sheetsでの制作・同期](spreadsheet-authoring.md)を参照してください。
 
-- `scenario/demo/scenario.json`: 端末、アプリ、コンテンツ、状態、通知、hook
-- `scenario/demo/authoring/talk_blocks.tsv`: 会話本文、添付、Quick Reply、遅延、更新日、出典
-- `scenario/demo/authoring/talk_flow.tsv`: メッセージ、チャット、検索AIの会話分岐
+- `scenario/<作品>/scenario.source.json`: Sheet名と論理表IDの対応、TSV取得先などの設定。本文を直接記述するファイルではありません。
+- 設定の`exportDir`にある`<Sheet名>.tsv`: 全制作表のローカル取得データ。デモでは`scenario/demo/authoring/`です。
+- `public/`以下: 画像・音声・動画・作品HTMLなどの実ファイル。TSVから参照します。
 
-`npm run scenario:build` は原本を検証し、クライアント用とWorker用のデータを生成します。内部IDから公開IDも同時に生成するため、生成済みファイルを手で編集しないでください。
+`npm run scenario:build` は取得済みTSVを検証し、クライアント用とWorker用のデータ、型付きhook handlerを生成します。Google Sheetsを自動取得・更新する処理ではありません。内部IDから公開IDも同時に生成するため、生成済みファイルを手で編集しないでください。別の`scenario.json`や`hooks.ts`を作者原本として併用しません。
 
 デモを残して別の作品を作る場合は、`scenario/demo` を作品用ディレクトリへ複製し、`XSTORYPHONE_SCENARIO_DIR` で選びます。環境変数を省略した場合だけ `scenario/demo` を使います。
 
@@ -15,36 +15,60 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run scenario:build
 XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 ```
 
+## 制作表の一覧
+
+表名は論理IDです。実際のSheet名とTSV名はmanifestの`tables`で対応させます。デモは次の26表を持ちます。
+
+| 表 | 内容 |
+|---|---|
+| `project_constants` | 作品・端末・検索AIの定数、公開範囲、保存方式 |
+| `state_vars` | 型付き状態変数、初期値、enum、Stageへの公開指定 |
+| `home_items` | ホームのアプリ、修復状態、検索語、バッジ条件 |
+| `message_items` / `chat_items` | 会話相手・ルーム、初期履歴、入力設定、talk全体の修復 |
+| `call_items` | 着信履歴・留守番電話、音声、書き起こし |
+| `gen_audio` / `incoming_calls` | 生成音声定義／着信・字幕 |
+| `todo_items` / `notifications` | ToDo／通知 |
+| `hooks` / `passwords` | eventと同期script／鍵付き添付の正解 |
+| `calendar_items` / `photo_items` / `note_items` | 予定／画像・動画／メモ |
+| `radio_items` | ラジオの音声、cue、字幕、投稿フォーム |
+| `talk_people` / `talk_flow` / `talk_blocks` | 発話者／分岐／台本・添付・Quick Reply |
+| `assistant_messages` / `attachments` | 補助案内文／素材・添付と検索導線 |
+| `mail_items` / `browser_items` | メール／ブラウザのタブ |
+| `talk_history` / `schedules` / `project_items` | 初期履歴の部分修復／初期予約／作品固有アプリの項目 |
+
+追加5表の`mail_items`、`browser_items`、`talk_history`、`schedules`、`project_items`は、未使用ならmanifestから省略できます。それ以外は表を用意し、使わない表はheaderだけ残します。検索AIは通常のtalkへ統合されており、専用の検索返答表はありません。
+
+各表のA列は`comment`です。通常表はcommentが空の行だけを読み、`notes`は制作メモです。`talk_blocks`だけは`*talk_id`、block名、`---`等をcomment列の構造として使います。空欄継承は`talk_flow`のtalk/from、`hooks`のevent、`attachments`のtype、`calendar_items`のdateだけです。継承値を消すときは`-`を指定します。必要なheader、未知列、参照先、型はビルド時に検証します。
+
+以下の表やコード例はSheetsのセル内容を表します。TSVを直接編集する場合、改行・タブ・引用符を含むセルはTSV規則でquote/escapeしてください。
+
 ## 端末設定
 
-`project` では作品名、作中OS名、検索AI名、日時、壁紙を設定します。
+`project_constants`のkey/valueで設定します。`exposure`は`public`または`private`です。任意の作品定数も同じ表へ追加できますが、秘密情報をpublicにしないでください。
 
-```json
-{
-  "project": {
-    "name": "My Story",
-    "osName": "StoryOS",
-    "assistantName": "ナビ",
-    "date": "2026-08-12",
-    "timeLabel": "20:14",
-    "wallpaperUrl": "/demo/wallpaper.svg"
-  }
-}
-```
+| key | value例 | 用途 |
+|---|---|---|
+| `project.id` / `project.name` | `my_story` / `My Story` | 安定した作品ID／作品名 |
+| `device.os_name` / `search_agent.name` | `StoryOS` / `ナビ` | 画面上の名称 |
+| `device.date` / `device.time_label` | `2026-08-12` / `20:14` | 作中の日時 |
+| `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
+| `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
+| `device.lock_pin` | `0420` | fixed-pin時だけ指定し、exposureはprivate |
+| `player.mode` | `server` | `server`または`browser`。省略時server |
+| `features.llm` | `false` | LLM有効化。privateの設定値 |
+| `search_agent.start` | `intro` | 検索AIの初期block/step。改行区切り |
 
-`osName` と `assistantName` はUIへ反映されます。`date` と `timeLabel` は作中の端末が示す日時です。
+日時は実世界の特定の瞬間ではなく、タイムゾーンを持たない作中の暦日・表示時刻です。日付は`YYYY-MM-DD`で、UTCへ変換せずロック画面とカレンダーの表示週へ使います。`calendar_items.date`も同じ形式です。
 
-`date` は `YYYY-MM-DD` 形式で指定します。これは実世界の特定の瞬間ではなく、タイムゾーンを持たない作中の暦日です。UTCへの変換はせず、ロック画面の日付表記とスケジュールアプリが表示する週をこの値から決めます。スケジュールの `record.date` も同じ形式で指定してください。
+進行中は予約状態変数`os_date`と`os_time_label`を更新できます。上の定数が初期値になるため、`state_vars`へ重ねて宣言しません。hookのscriptセルには`state.set("os_date", "2026-08-13")`、会話のsetセルには`os_time_label = "21:30"`のように書きます。日付が変わるとカレンダーはその週を表示します。
 
-シナリオ進行中は、予約状態変数 `os_date` と `os_time_label` を通常の状態変数と同じ方法で更新できます。初期値には `project.date` と `project.timeLabel` が自動で入るため、`stateVariables` へ重ねて宣言しません。hookでは `context.state.set("os_date", "2026-08-13")`、会話分岐ではTSVの `set` 列へ `os_time_label = "21:30"` のように書きます。日付が変わると、スケジュールアプリはその日を含む週へ移ります。
+固定PINは4〜8桁の数字文字列です。Sheetで先頭ゼロを落とさず文字列として保持してください。値はクライアントへ出さず、サーバーで一致判定します。入力画面の順序と保存方式は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
 
-疑似端末のロック方式は `project.lockScreen` で設定します。プレイヤーパスコード、サーバー判定の固定PIN、ロック画面なしの違いと画面遷移は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
-
-進行状態の保存方式は、最上位の `playerMode` へ `server` または `browser` を指定します。省略時は `server` です。用途と運用上の違いは[プレイヤー進行の保存モード](player-modes.md)を参照してください。
+破損リンク案内の`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`もこの表で制作します。必須定数と初期画面の値はデモ表を基に編集し、`client.*`と`device.lock_pin_length`は自動生成されるため書きません。
 
 ## アプリとコンテンツの状態
 
-`initialState` は次の3種類です。
+`home_items`と各コンテンツ表の`initial`は次の3種類です。空欄はnormalです。`repair_label`は破損時の名称です。
 
 | 値 | 初期表示 | 検索結果から開いた時 |
 |---|---|---|
@@ -66,135 +90,81 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 - `chat`
 - `browser`
 
-`messages` と `chat` の中身は、`talks`、`talkPeople`、`attachments` と2つのTSVで定義します。talk全体、または初期履歴blockを検索・修復対象にできます。自由入力composerの表示・有効状態とQuick Replyもtalk共通機能です。詳しくは[会話エンジン](conversation.md#talk全体の修復)と[入力欄とQuick Reply](conversation.md#入力欄とquick-reply)を参照してください。それ以外は `contents[].record` に、そのアプリの表示データを書きます。具体的な最小例はデモシナリオを参照してください。
+`message_items`と`chat_items`にtalkのid/name/startを書き、`talk_people`と`talk_blocks`、`talk_flow`、`attachments`で内容を組み立てます。`start`は初期blockの改行区切りです。talk全体を修復する場合はその行のinitial/search/repair_labelを使います。入力欄の表示と入力許可はinput_visible/input_enabledで独立に指定でき、空欄はtrueです。詳しくは[会話エンジン](conversation.md#talk全体の修復)と[入力欄とQuick Reply](conversation.md#入力欄とquick-reply)を参照してください。
 
-`notes` と `photos` の `record` には、任意で `tags` を指定できます。タグは記述順に詳細表示へ並び、多い場合は横へスクロールします。絞り込みには使いません。
+過去履歴の一部分だけを壊す場合は`talk_history`にid、talk、block、initial=repairable、repair_label、searchを書きます。対象blockはそのtalkのstartに一度だけ含まれる必要があり、各発話のtimeも必須です。talk全体の修復との併用、repeatや途中追加blockの部分修復はできません。連続する破損範囲はまとめて表示し、検索結果から開くと復元blockの先頭へ移動します。
 
-```json
-{
-  "title": "駅前で見つけた写真",
-  "imageUrl": "/demo/photo.svg",
-  "tags": ["駅前", "手がかり"]
-}
-```
+### メモ・メール
 
-`mail` はメール単位で `contents` に定義します。`from`、`to`、`subject`、`date`、`body` は必須の表示用文字列で、`cc` は必要なメールだけに指定します。宛先が複数の場合は、作者が1つの文字列へまとめてください。日付は変換や自動ソートをせず、そのまま表示します。メールの一覧順は `contents` の記述順です。
+`note_items`にid/title/bodyを書きます。`mail_items`はメール1通で1行とし、from/to/subject/date/body、必要ならccを書きます。アドレスは不要で、宛先が複数の場合も名前を1セルへまとめます。メール日付は変換や自動ソートをせず表示し、一覧順は表の行順です。
 
-```json
-{
-  "id": "notice_mail",
-  "appId": "mail",
-  "initialState": "repairable",
-  "repairLabel": "破損したメール",
-  "search": ["お知らせメール"],
-  "record": {
-    "from": "案内係",
-    "to": "プレイヤー",
-    "cc": "関係者",
-    "subject": "お知らせ",
-    "date": "2026年8月12日 19:40",
-    "body": "メール本文"
-  }
-}
-```
+`note_items.tags`と`photo_items.tags`は任意の改行区切りです。タグは記述順に詳細表示へ並び、多い場合は横スクロールします。絞込みには使いません。
 
-アルバムの動画は2種類です。従来の `still_video` は静止サムネイルと音声を組み合わせます。実際の映像を再生する場合は `video` と `videoUrl` を使い、`imageUrl`には任意のポスター画像を指定します。どちらも写真・動画選択からメッセージやチャットへ添付できます。
+| 表 | id | titleまたはsubject | その他のセル例 |
+|---|---|---|---|
+| note_items | old_note | 古いメモ | body=`写真の色を確認してください。`、initial=`repairable`、search=`古いメモ` |
+| mail_items | notice_mail | お知らせ | from=`案内係`、to=`プレイヤー`、date=`2026年8月12日 19:40`、body=`メール本文` |
 
-会話台本から実動画を添付する場合は、`attachments` に `type: "video"`、動画の `asset`、対応するアルバム項目の `content`、任意の画像attachmentを示す `poster` を指定します。画像・音声・動画attachmentとアルバム項目の対応はシナリオ生成時に作られ、会話内メディアからアルバム表示へ移動できます。
+### 画像・動画・添付
 
-```json
-{
-  "title": "確認用動画",
-  "mediaKind": "video",
-  "imageUrl": "/media/poster.jpg",
-  "videoUrl": "/media/sample.mp4",
-  "tags": ["動画", "確認用"]
-}
-```
+素材URLは`attachments`のid/type/assetで登録します。typeはimage/audio/video/documentです。`photo_items.image`、audio、videoはURLではなく、そのattachment IDを参照します。
+
+| photo_itemsの指定 | 表示 |
+|---|---|
+| image | 静止画像 |
+| image＋audio | 静止サムネイルと音声を組み合わせた動画（内部形式still_video） |
+| video、必要ならimage | 実動画。imageは任意のポスター画像 |
+
+例えばattachmentsに`id=station_image / type=image / asset=/media/station.webp`を置き、photo_itemsに`id=station_photo / image=station_image / title=駅前の写真`を書きます。descriptionは会話判定・監修用の内容説明であり、アルバムへ表示する本文ではありません。
+
+会話で添付する場合はtalk_blocksのattachmentに同じIDを書きます。attachmentsのcontentは対応するコンテンツID、posterは画像attachment IDです。画像・音声・動画とアルバム項目の対応は生成時に作られ、会話内メディアからアルバムへ移動できます。still_videoと実動画の両方をメッセージ・チャットへ添付できます。
+
+鍵付き添付はattachmentsにlock=passwordとcontentを指定し、`passwords`にそのcontentとpasswordを書きます。document型はbodyが必要です。正解はクライアントへ配らず、到達済み添付の入力をサーバーで判定します。通常の一覧項目を持たない鍵付き添付も定義できます。
 
 ### 電話の字幕と書き起こし
 
-`incomingCalls` の `transcript` は、着信へ応答した後に音声の再生位置と同期して表示する字幕です。着信履歴となる `phone` コンテンツにも同じ形式の `record.transcript` を指定でき、詳細画面で全文をスクロールして読めます。着信と履歴は独立した定義です。字幕や書き起こしが必要な方だけに `transcript` を指定し、省略した場合は音声だけを再生します。
+`incoming_calls`にid/name/audioを、`call_items`に履歴のid/name/kind/at/duration/audioを書きます。audioはaudio型attachmentのIDです。着信と履歴は独立した定義です。
+
+両表の任意のtranscriptセルへ、次のJSON配列を記述します。これは1セル内の字幕データであり、別のシナリオJSON原本ではありません。
 
 ```json
-{
-  "id": "scheduled_call",
-  "name": "案内係",
-  "audioUrl": "/audio/call.wav",
-  "transcript": [
-    { "atMs": 0, "text": "もしもし。" },
-    { "atMs": 1200, "text": "確認したいことがあります。" }
-  ]
-}
+[
+  { "atMs": 0, "text": "もしもし。" },
+  { "atMs": 1200, "text": "確認したいことがあります。" }
+]
 ```
 
-`phone` コンテンツの `record.kind` には `incoming`、`missed`、`outgoing`、`voicemail` を指定できます。`voicemail` は履歴一覧で「留守番電話」と表示し、`audioUrl` と `transcript` の再生・書き起こし機能はほかの着信履歴と共通です。
+着信時は音声位置に同期した字幕を表示し、履歴では全文をスクロールして読めます。字幕は任意で、省略した場合は音声だけです。同じ通話の字幕と履歴を一致させたい場合は同じ配列を使います。
 
-```json
-{
-  "name": "案内係",
-  "kind": "voicemail",
-  "at": "19:48",
-  "durationLabel": "18秒",
-  "audioUrl": "/audio/voicemail.wav",
-  "transcript": [
-    { "atMs": 0, "text": "留守番電話の本文です。" }
-  ]
-}
-```
+`call_items.kind`はincoming/missed/outgoing/voicemailです。voicemailは一覧で「留守番電話」と表示し、audio/transcriptの再生・書き起こし機能は他の履歴と共通です。atは表示時刻、durationは「18秒」などの表示用文字列です。
 
 `atMs` は音声開始からのミリ秒で、昇順に書きます。着信中の字幕同期には使いますが、履歴詳細の書き起こしにはタイムスタンプを表示せず、本文だけを順番に並べます。着信履歴へ案内する場合は、会話blockに `[着信履歴](open:phone:content_id)` のリンクを置けます。
 
 ### ブラウザ
 
-`browser` コンテンツ1件を1つのタブとして表示します。URL入力や任意サイトへの移動はなく、`record.url` と `record.allowedUrls` に指定した同一オリジンのHTMLだけを開けます。HTML内のリンクを押すと同じタブ内に履歴が積まれ、端末上部の戻るボタンで戻れます。
+`browser_items`の1行を1つのタブとして表示します。id/title/urlを書き、タブ内で移動を許可する追加ページはallowed_urlsへ改行区切りで書きます。例はurl=`/pages/guide-a8k3.html`、allowed_urls=`/pages/details-p2m7.html`です。
 
-```json
-{
-  "id": "guide_tab",
-  "appId": "browser",
-  "initialState": "normal",
-  "search": ["案内ページ"],
-  "record": {
-    "title": "案内",
-    "url": "/pages/guide-a8k3.html",
-    "allowedUrls": ["/pages/details-p2m7.html"]
-  }
-}
-```
+URL入力や任意サイトへの移動はなく、指定した同一オリジンのHTMLだけを開けます。HTML内のリンクを押すと同じタブ内に履歴が積まれ、端末上部の戻るボタンで戻れます。
 
 表示するHTMLは `public` 以下へ置きます。未修復タブのURLはPlayerStateへ返りませんが、URLを知っていれば静的ファイルへ直接アクセスできます。未到達ページには作品ごとに推測されにくいファイル名を付けてください。iframe内ではスクリプト、フォーム送信、外部ページ、新しいウィンドウを使用できません。
 
 ## 状態条件による表示
 
-`apps`、`contents`、`talks`、`todos`、`notifications`、`assistantMessages` には任意の `cond` を書けます。条件を満たさない項目はクライアントへ表示されず、検索やAPIの直接呼び出しでも利用できません。
+アプリ、コンテンツ、talk、ToDo、通知、補助案内文などの表に`cond`を書けます。条件を満たさない項目はクライアントへ表示されず、検索やAPIの直接呼出しでも利用できません。
 
-`apps[].badgeCond` に条件式を書くと、条件を満たす間だけホームのアイコンへ未読ドットを表示します。メッセージ・チャットの通常の未読判定とはORで扱われます。作品固有の状態でバッジを点灯したい場合に使います。
+`home_items.badge_cond`に条件式を書くと、条件を満たす間だけホームのアイコンへ未読ドットを表示します。メッセージ・チャットの通常の未読判定とはORで扱われます。例えば`cond=clue_reported`、`badge_cond=new_chat_notice`のように別々の条件を指定できます。
 
-```json
-{
-  "id": "chat",
-  "initialState": "repairable",
-  "cond": "clue_reported && !chat_auth_verified",
-  "badgeCond": "new_chat_notice"
-}
-```
+状態は`state_vars`にid/type/initialを書きます。typeはboolean/integer/string/enumです。enumはvaluesセルに選択肢を改行区切りで書き、条件式とsetの誤記を検査できます。
 
-状態変数は、既定値だけを書く短縮形と、型を明示するobject形式のどちらでも宣言できます。選択肢を固定したい値には `enum` を使うと、条件式と `set` の誤記をビルド時に検出できます。
+| id | type | initial | values |
+|---|---|---|---|
+| clue_reported | boolean | false | 空 |
+| new_chat_notice | boolean | false | 空 |
+| visit_count | integer | 0 | 空 |
+| chapter | enum | opening | openingとendingをセル内改行で列挙 |
+| player_name | string | 空文字 | 空 |
 
-```json
-{
-  "stateVariables": {
-    "clue_reported": false,
-    "new_chat_notice": false,
-    "visit_count": { "type": "integer", "initial": 0 },
-    "chapter": { "type": "enum", "initial": "opening", "values": ["opening", "ending"] },
-    "player_name": { "type": "string", "initial": "" }
-  }
-}
-```
-
-条件式では `!`、`&&`、`||`、`==`、`!=`、整数の大小比較、文字列またはenumに対する `=~` / `!~` の正規表現照合、括弧を使用できます。値だけを条件に書けるのはboolean変数です。`player_input` は会話ruleの `cond` で現在の送信内容を参照する予約変数で、`stateVariables`には宣言できません。ほかの表示条件では空文字として扱われます。
+条件式では `!`、`&&`、`||`、`==`、`!=`、整数の大小比較、文字列またはenumに対する `=~` / `!~` の正規表現照合、括弧を使用できます。値だけを条件に書けるのはboolean変数です。`player_input` は会話ruleの `cond` で現在の送信内容を参照する予約変数で、`state_vars`には宣言できません。ほかの表示条件では空文字として扱われます。
 
 ```text
 clue_reported && visit_count >= 2
@@ -204,61 +174,63 @@ player_input =~ /^(はい|了解)/u
 
 表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。integer変数だけは整数literalによる`count += 1`と`count -= 1`も使えます。右辺の式・状態参照・`++`は使えません。`match` で抽出した文字列は、string変数に限り `player_name = $match.name` で代入できます。
 
-作品固有Stageの表示に必要な状態だけは、最上位の `publicStateVariables` へ状態変数IDを列挙できます。公開値はPlayerStateの `projectState` へ入り、未指定の状態変数はクライアントへ返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。未定義のIDや重複はscenario検証で拒否されます。
-
-```json
-{
-  "publicStateVariables": ["presentation_started"]
-}
-```
+作品固有Stageへ公開する必要がある状態だけは、`state_vars`のpublic列をtrueにします。公開値はPlayerStateの`projectState`へ入り、空欄またはfalseの状態変数は返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。ID重複や型不正はシナリオ検証で拒否されます。
 
 制作中の既存プレイデータを開いた場合も、あとから追加した状態変数は宣言した既定値として評価され、talkは利用可能になった時点で作られます。一度消したToDoや通知は、シナリオ定義を再生成しても勝手に復活しません。
 
 ## 検索語
 
-アプリ、コンテンツ、talkの `search` へ、プレイヤーが入力しそうな語句を列挙します。入力はNFKCで正規化し、プレイヤーの入力に検索語が含まれる場合に一致します。短い入力を長い検索語へ逆向きに一致させることはありません。
+アプリ、コンテンツ、talkのsearchセルへ、語句を改行区切りで列挙します。行同士はOR、同じ行の空白区切り語句はANDです。例えば次のセルは「古いメモ」を含む入力、または「駅前」と「写真」の両方を含む入力に一致します。
 
-```json
-{
-  "id": "old_note",
-  "appId": "notes",
-  "initialState": "repairable",
-  "repairLabel": "古▚▐▀▜メモ",
-  "search": ["古いメモ", "ふるいメモ", "鍵"]
-}
+```text
+古いメモ
+駅前 写真
 ```
 
-最上位の各要素はOR条件です。1つの候補へ複数語をすべて含めさせる場合だけ、内側を配列にします。
+入力はNFKCで正規化し、プレイヤーの入力に検索語が含まれる場合に一致します。短い入力を長い検索語へ逆向きに一致させることはありません。
 
-```json
-{
-  "search": ["古いメモ", ["駅前", "写真"]]
-}
-```
+コンテンツ自身の`cond`を満たしていれば、親アプリが未修復でも検索結果には現れます。その結果を開こうとした時は修復せず、まだ開けない旨を検索AIが返します。
 
-この例は「古いメモ」を含む入力、または「駅前」と「写真」の両方を含む入力へ一致します。コンテンツ自身の `cond` を満たしていれば、親アプリが未修復でも検索結果には現れます。その結果を開こうとした時は修復せず、まだ開けない旨を検索AIが返します。
-
-`repairLabel` は修復前に表示する壊れた名称です。
+`repair_label` は修復前に表示する壊れた名称です。
 
 検索AIの案内文、ヒント、検索結果の前後に出す台詞は、固定の`search_agent` talkとして`talk_blocks.tsv`と`talk_flow.tsv`へ記述します。固定の発見／未発見メッセージはなく、作品に合う文面をblockとして定義できます。検索実行と入力欄制御を含む書き方は[会話エンジン](conversation.md#検索ai-talk)を参照してください。
 
 ## ラジオの再生条件と音声cue
 
-ラジオcontentの `record.playbackCond` が偽の間は音声情報をクライアントへ渡さず、`playbackDisabledLabel` を表示します。投稿フォームは `formDisabledCond` が真の間だけ無効になります。どちらの条件式もサーバーで評価され、条件式自体はクライアントへ公開されません。フォームhookでは照合済みの`event.formId`と`event.contentId`を直接参照し、入力値と`appId`は`event.fields`に入ります。
+`radio_items.playback_cond`が偽の間は音声情報をクライアントへ渡さず、playback_disabled_labelを表示します。投稿フォームはform_disabled_condが真の間だけ無効になります。どちらの条件式もサーバーで評価され、条件式自体はクライアントへ公開されません。
 
-`record.transcript` を指定すると、ラジオ再生位置に同期した字幕を再生画面へ表示します。形式は着信字幕と同じ `{ "atMs": 0, "text": "..." }` の配列です。ラジオには全文書き起こし画面はありません。`transcript` は任意で、省略した番組は字幕欄を表示しません。
+HTMLフォームはform_kind=htmlとし、form_id/form_label/form_urlを記述します。フォームhookでは照合済みの`event.formId`と`event.contentId`を直接参照し、入力値とappIdは`event.fields`に入ります。
 
-`audioCues` は `{ "id": "cue_name", "atMs": 25000 }` の配列です。authoringでは`{ "id": "cue_name", "at": "00:25" }`のように秒、`MM:SS`、`HH:MM:SS`を指定しても、build時に`atMs`へ正規化されます。クライアントには順番と時刻だけを渡し、到達通知を受けたサーバーが `cueId` と `cueTarget`（`content_id:cue_name`）を復元してhookへ渡します。hookはeventを`audio_cue_reached`、targetを`content_id:cue_name`とし、`event.cueId / cueTarget / cueIndex`を確認します。
+transcriptセルに着信字幕と同じJSON配列を指定すると、ラジオ再生位置に同期した字幕を表示します。ラジオには全文書き起こし画面はありません。transcriptは任意で、省略した番組は字幕欄を表示しません。
 
-固定音声と生成音声をつなぐ場合は、`audioSegments` に `{ "kind": "audio", "audioUrl": "/..." }` と `{ "kind": "generated", "genAudioId": "..." }` を並べます。生成音声の状態と再生URLは、ラジオ項目と着信履歴のどちらでもサーバー応答時に解決されます。
+`cues`セルは、cue IDをkey、秒数または`MM:SS`/`HH:MM:SS`をvalueにしたJSON objectです。例えば`{"notice":"00:25","finish":40}`と書きます。build時に時刻順へ並べ、ミリ秒へ正規化します。クライアントには順番と時刻だけを渡し、到達通知を受けたサーバーがcueIdとcueTarget（`content_id:cue_name`）を復元してhookへ渡します。hookはeventをaudio_cue_reached、targetを`content_id:cue_name`とし、`event.cueId / cueTarget / cueIndex`を確認します。
+
+固定音声はaudioセルへaudio attachmentのIDを書きます。複数音声をつなぐ場合は改行区切りで列挙し、生成音声は`gen_audio:音声ID`と書きます。単独の生成音声を使うgen_audio列もあります。定義はgen_audio表のid/title/providerで行い、状態と再生URLはラジオ項目と着信履歴のどちらでもサーバー応答時に解決されます。
 
 ## チャット再認証
 
-`chatAuthGate` の `cond` を満たす間、チャットは再認証画面を表示し、直接投稿も拒否します。`linkSentCond` は認証リンク発行済みの表示に使います。リンク発行はcustom event、認証完了は`message_link_opened` hookで書きます。デモの `send_chat_auth_link` と `verify_chat_auth` が一巡例です。
+project_constantsの`chat_auth.cond`を満たす間、チャットは再認証画面を表示し、直接投稿も拒否します。`chat_auth.link_sent_cond`は認証リンク発行済みの表示に使います。両定数はprivateにします。リンク発行はcustom event、認証完了はmessage_link_opened hookで書きます。デモのhooks表のsend_chat_auth_linkとverify_chat_authが一巡例です。
+
+## 通知・予定・作品固有アプリ
+
+`notifications`はid/app/target/title/bodyと任意のcondで定義します。targetは同じアプリに属するコンテンツIDまたはtalk ID、アプリのトップへ飛ばす場合はアプリIDです。通知を開くと、その対象へ移動します。`todo_items`はid/text/condで内容を定義し、表示対象への追加・削除はhookで行います。
+
+`calendar_items`にはtitle/date/time/place/memoを書きます。dateは作中の日付で、空欄は直前行から継承します。表示する時刻や場所は文字列です。
+
+初期予約は`schedules`のid/event/delay_msで指定します。fieldsは必要な場合だけ、文字列値のJSON objectを1セルへ書きます（例: `{"source":"opening"}`）。eventには対応するscheduled_event hookのtargetを指定します。進行中の予約には後述の`context.schedule.after`を使います。
+
+作品固有アプリはコード側のregistryと画面componentを登録し、home_itemsへアプリを加え、`project_items`へid/app/recordを書きます。recordはそのアプリ固有のJSON objectを1セルに記述する場所です（例: `{"title":"資料","body":"本文"}`）。標準アプリの本文を別JSON原本へ戻すための欄ではありません。registryの検証と公開投影を通し、未修復のrecordをクライアントへ先に出しません。詳細は[作品固有の拡張](extensions.md)を参照してください。
 
 ## hook
 
-`scenario.json` で発火条件を宣言し、選択するシナリオディレクトリの`hooks.ts`に同名の処理を書きます。例えば`XSTORYPHONE_SCENARIO_DIR=scenario/my-story`なら`scenario/my-story/hooks.ts`を使います。hookを宣言しないシナリオでは、このファイルを省略できます。hookの宣言と実装のIDが一致しない場合はビルドエラーになります。ビルド時に選択したhook moduleだけをWorkerへ静的に組み込み、未選択シナリオのhookは配布物へ含めません。
+`hooks`の1行へevent/target/cond/scriptを書きます。処理本文はscriptセルが正本で、別のhooks.tsへ二重に記述しません。idは必要な場合だけ付けられ、省略時は生成します。handlerを自分で宣言せず、セル内に同期処理の本文だけを書いてください。
+
+```ts
+state.set("clue_reported", true);
+talk.addBlock("guide", "received", { mode: "stay" });
+```
+
+セル内ではstate/talk等を直接使えるほか、`context.state`や`context.talk`も使えます。eventは第2引数として参照できます。scriptは型付きhandlerへ生成され、構文検査と`npm run check`の型検査を受けます。await/async/Promise/import/export/fetchを使う非同期scriptは書けません。LLMを使うhookはllm列で明示でき、未指定なら対応するllm呼出しから判定します。
 
 利用できるイベントは次の通りです。
 
@@ -275,7 +247,7 @@ player_input =~ /^(はい|了解)/u
 - `form_submitted`
 - `scheduled_event`
 
-このほか、`clientCallableEvents`や予約処理から呼ぶ作品固有event IDを定義できます。廃止済みの`talk_sent`と`scenario_event`は使用できません。
+このほか、作品Stageや予約処理から呼ぶ作品固有event IDを定義できます。廃止済みのtalk_sentとscenario_eventは使用できません。
 
 hookからは、状態変数、コンテンツ、アプリ、会話block、ToDo、予約、着信、生成音声、終了演出を操作できます。複数の状態更新は`context.state.apply([...])`へまとめられます。ToDoは定義しただけでは表示されず、`context.todo.add(id)` で表示対象へ加え、完了時に `context.todo.remove(id)` で外します。
 
@@ -328,13 +300,7 @@ object自体と各項目は省略できます。上記がそれぞれの既定�
 
 一つのhook dispatch内だけでなく、コンテンツ修復時の`content_repaired`と`content_opened`など、一度の保存へまとまる複数hookでも同じschedule instance IDを複数操作できません。生成音声も、一度の保存で同じIDを複数回`prepare`しないでください。Cloudflare、AWS、browserのすべてで保存前にauthoring errorとして拒否します。
 
-作品固有UIから `ProjectStageContext.dispatchScenarioEvent` で呼ぶcustom eventだけは、シナリオ最上位の `clientCallableEvents` へevent IDを指定します。同じevent名のhookが通常どおり評価されます。音声再生完了、音声cue、着信完了、破損リンク通知はコアUIの標準eventなので指定不要です。予約イベント、メッセージ内リンク、フォーム送信にも指定は不要です。
-
-```json
-{
-  "clientCallableEvents": ["chat_auth_link_requested"]
-}
-```
+作品固有UIから`ProjectStageContext.dispatchScenarioEvent`で呼ぶcustom eventだけは、project_constantsの`event.client_callable`へevent IDを改行区切りで指定します。exposureはprivateにします。同じevent名のhookが通常どおり評価されます。音声再生完了、音声cue、着信完了、破損リンク通知はコアUIの標準eventなので指定不要です。予約イベント、メッセージ内リンク、フォーム送信にも指定は不要です。
 
 音声完了、音声cue到達、通話完了などの背景eventと、予定時刻の状態取得は、一時的な通信失敗時に限定回数だけ再送されます。予定eventは失敗時に同じ行を再利用して待機へ戻り、実行中のまま5分以上経過した場合も再実行対象になります。
 

@@ -52,7 +52,8 @@ const llmParameterOverrides = [
   ["LlmProfileUltraTimeoutMs", "LLM_PROFILE_ULTRA_TIMEOUT_MS"],
   ["LlmAnalyticsEnabled", "LLM_ANALYTICS_ENABLED"],
   ["LlmDebugLogs", "LLM_DEBUG_LOGS"],
-  ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"]
+  ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"],
+  ["LlmHookMaxRequests", "LLM_HOOK_MAX_REQUESTS"]
 ].flatMap(([parameter, environmentVariable]) => {
   const value = process.env[environmentVariable]?.trim();
   return value ? [`${parameter}=${value}`] : [];

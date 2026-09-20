@@ -3357,7 +3357,7 @@
     const thread = kind === "sms"
       ? deviceState.messages.find((item) => item.id === talkId)
       : deviceState.chatThreads.find((item) => item.id === talkId);
-    return (thread?.messages ?? []).slice(-4).map((item) => {
+    return (thread?.messages ?? []).filter((item) => item.body).slice(-2).map((item) => {
       const speaker = item.sender === "owner"
         ? "player"
         : ("senderName" in item ? item.senderName : thread && "contactName" in thread ? thread.contactName : "other");

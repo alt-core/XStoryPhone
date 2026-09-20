@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const rootDir = process.cwd();
-const ignoredDirectories = new Set([".aws-sam", ".git", ".projects", ".wrangler", "dist", "node_modules"]);
+const ignoredDirectories = new Set([".aws-sam", ".git", ".projects", ".wrangler", ".secrets", "dist", "node_modules"]);
 const requiredLegalFiles = ["LICENSE", "THIRD_PARTY_NOTICES.md", "ASSET_CREDITS.md"];
 const textExtensions = new Set([
   "",

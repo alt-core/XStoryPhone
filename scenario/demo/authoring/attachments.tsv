@@ -1,0 +1,10 @@
+comment	id	type	asset	content	lock	title	body	search	search_app	notes	poster
+	rainy_window_image	image	/demo/album/rainy-window.webp	rainy_window							
+	sealed_note_file	image	/demo/sealed-note.svg	sealed_note	password	鍵付きのメモ	鍵付き添付を開封できました。				
+	demo_received_image_attachment	image	/demo/dummy-data.svg	demo_received_image							
+	demo_video_poster	image	/demo/dummy-data.svg								
+	demo_video_attachment	video	/demo/demo-video.mp4	demo_video							demo_video_poster
+	media_6	audio	/system/call-caption-sample.wav								
+	media_7	image	/demo/album/evening-platform.webp								
+	media_8	image	/demo/album/coffee-table.webp								
+	media_9	audio	/system/radio-caption-sample.wav

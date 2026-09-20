@@ -1,0 +1,35 @@
+{
+  "scenarioAuthoring": {
+    "sourceMode": "tsv-export-first",
+    "spreadsheetId": "",
+    "exportDir": "authoring",
+    "tables": {
+      "project_constants": "project_constants",
+      "state_vars": "state_vars",
+      "home_items": "home_items",
+      "message_items": "message_items",
+      "chat_items": "chat_items",
+      "call_items": "call_items",
+      "gen_audio": "gen_audio",
+      "incoming_calls": "incoming_calls",
+      "todo_items": "todo_items",
+      "hooks": "hooks",
+      "passwords": "passwords",
+      "calendar_items": "calendar_items",
+      "photo_items": "photo_items",
+      "note_items": "note_items",
+      "radio_items": "radio_items",
+      "notifications": "notifications",
+      "talk_people": "talk_people",
+      "talk_flow": "talk_flow",
+      "talk_blocks": "talk_blocks",
+      "assistant_messages": "assistant_messages",
+      "attachments": "attachments",
+      "mail_items": "mail_items",
+      "browser_items": "browser_items",
+      "talk_history": "talk_history",
+      "schedules": "schedules",
+      "project_items": "project_items"
+    }
+  }
+}

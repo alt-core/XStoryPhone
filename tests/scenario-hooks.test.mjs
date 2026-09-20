@@ -5,115 +5,47 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { generatedHookImportPath, scenarioHookModulePath } from "../scripts/lib/scenario-hooks.mjs";
+import { buildScenarioHooksModule } from "../scripts/lib/scenario-hooks.mjs";
+import { loadScenarioAuthoring } from "../scripts/lib/scenario-authoring.mjs";
 
-test("選択シナリオのhookだけを使い、旧配置のhookへ戻らない", () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-scenario-hooks-"));
-  try {
-    const scenarioDir = path.join(temporaryRoot, "scenario/story");
-    const generatedDir = path.join(temporaryRoot, "src/generated");
-    fs.mkdirSync(scenarioDir, { recursive: true });
-    fs.mkdirSync(generatedDir, { recursive: true });
-
-    const fallback = path.join(temporaryRoot, "src/project/hooks.ts");
-    fs.mkdirSync(path.dirname(fallback), { recursive: true });
-    fs.writeFileSync(fallback, "throw new Error('旧配置を読み込んではいけません');\n");
-    assert.equal(scenarioHookModulePath(scenarioDir), null);
-
-    const local = path.join(scenarioDir, "hooks.ts");
-    fs.writeFileSync(local, "export const scenarioHookHandlers = {};\n");
-    assert.equal(scenarioHookModulePath(scenarioDir), local);
-    assert.equal(generatedHookImportPath(generatedDir, local), "../../scenario/story/hooks.ts");
-  } finally {
-    fs.rmSync(temporaryRoot, { recursive: true, force: true });
-  }
+test("hook生成はセル本文をそのまま同期handlerへ包み、構文不正を拒否する", async () => {
+  const module = buildScenarioHooksModule({ example: 'state.set("fixture", true);' });
+  assert.match(module, /const \{ state, incoming/u);
+  assert.match(module, /state\.set\("fixture", true\)/u);
+  assert.throws(() => buildScenarioHooksModule({ broken: "if (" }), /構文が不正/u);
+  const empty = buildScenarioHooksModule({});
+  assert.match(empty, /scenarioHookHandlers.*= \{\s*\};/u);
 });
 
-test("scenario buildは選択シナリオのhookを生成し、宣言の不足・余剰を拒否する", () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-scenario-hook-build-"));
+test("scenario buildは選択したhooks.tsvから生成し、手書きhooks.tsを読まない", () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-sheet-hooks-"));
   try {
-    fs.cpSync("scenario", path.join(temporaryRoot, "scenario"), { recursive: true });
-    const scenarioDir = path.join(temporaryRoot, "scenario/demo");
-    const projectHookUrl = pathToFileURL(path.resolve("scenario/demo/hooks.ts")).href;
-    const localHooks = path.join(scenarioDir, "hooks.ts");
-    fs.writeFileSync(localHooks, `export { scenarioHookHandlers } from ${JSON.stringify(projectHookUrl)};\n`);
-
-    const buildScript = path.resolve("scripts/scenario-build.mjs");
-    const localResult = spawnSync(process.execPath, [buildScript], {
-      cwd: temporaryRoot,
-      env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "scenario/demo" },
-      encoding: "utf8"
+    const dir = path.join(temporaryRoot, "scenario/story");
+    fs.cpSync("scenario/demo", dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "hooks.ts"), "throw new Error('旧原本を実行してはいけません');\n");
+    const script = path.resolve("scripts/scenario-build.mjs");
+    const build = () => spawnSync(process.execPath, [script], {
+      cwd: temporaryRoot, env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "scenario/story" }, encoding: "utf8"
     });
-    assert.equal(localResult.status, 0, localResult.stderr);
-    assert.match(
-      fs.readFileSync(path.join(temporaryRoot, "src/generated/scenarioHooks.generated.ts"), "utf8"),
-      /\.\.\/\.\.\/scenario\/demo\/hooks\.ts/u
-    );
-
-    fs.rmSync(localHooks);
-    const fallbackHooks = path.join(temporaryRoot, "src/project/hooks.ts");
-    fs.mkdirSync(path.dirname(fallbackHooks), { recursive: true });
-    fs.writeFileSync(fallbackHooks, `export { scenarioHookHandlers } from ${JSON.stringify(projectHookUrl)};\n`);
-    const fallbackResult = spawnSync(process.execPath, [buildScript], {
-      cwd: temporaryRoot,
-      env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "scenario/demo" },
-      encoding: "utf8"
-    });
-    assert.equal(fallbackResult.status, 1, "旧配置に実装があっても不足エラーになる");
-    assert.match(fallbackResult.stderr, /registryがscenarioと一致しません。不足=/u);
-
-    fs.writeFileSync(localHooks, `import { scenarioHookHandlers as handlers } from ${JSON.stringify(projectHookUrl)};\nexport const scenarioHookHandlers = { ...handlers, unexpected_hook() {} };\n`);
-    const extraResult = spawnSync(process.execPath, [buildScript], {
-      cwd: temporaryRoot,
-      env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "scenario/demo" },
-      encoding: "utf8"
-    });
-    assert.equal(extraResult.status, 1);
-    assert.match(extraResult.stderr, /余分=unexpected_hook/u);
-  } finally {
-    fs.rmSync(temporaryRoot, { recursive: true, force: true });
-  }
+    const valid = build();
+    assert.equal(valid.status, 0, valid.stderr);
+    const generated = fs.readFileSync(path.join(temporaryRoot, "src/generated/scenarioHooks.generated.ts"), "utf8");
+    assert.match(generated, /state\.set\("session_started", true\)/u);
+    assert.doesNotMatch(generated, /export \{ scenarioHookHandlers \} from/u);
+    const file = path.join(dir, "authoring/hooks.tsv");
+    const original = fs.readFileSync(file, "utf8");
+    fs.writeFileSync(file, original.replace("context.state.set", "await context.state.set"));
+    const invalid = build();
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /同期script/u);
+    assert.equal(fs.readFileSync(path.join(temporaryRoot, "src/generated/scenarioHooks.generated.ts"), "utf8"), generated);
+  } finally { fs.rmSync(temporaryRoot, { recursive: true, force: true }); }
 });
 
-test("hook未使用のシナリオはhooks.tsを省略でき、旧配置を読まない", async () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(tmpdir(), "xstoryphone-without-hooks-"));
-  try {
-    const scenarioDir = path.join(temporaryRoot, "scenario/story");
-    const authoringDir = path.join(scenarioDir, "authoring");
-    fs.mkdirSync(authoringDir, { recursive: true });
-    const { project } = JSON.parse(fs.readFileSync("scenario/demo/scenario.json", "utf8"));
-    fs.writeFileSync(path.join(scenarioDir, "scenario.json"), JSON.stringify({
-      schemaVersion: 1,
-      playerMode: "browser",
-      project,
-      apps: [],
-      notifications: [],
-      talks: [{ id: "search_agent", kind: "search_agent", startSteps: ["intro"] }]
-    }));
-    fs.writeFileSync(path.join(authoringDir, "talk_blocks.tsv"), [
-      "comment\tsender\tbody\tattachment\ttime\tdelay_ms\tnotes\tupdated_at\tsource\tquick_replies",
-      "*search_agent",
-      "intro",
-      "\tsearch_agent\thookなしの検証用メッセージです。",
-      ""
-    ].join("\n"));
-    fs.writeFileSync(path.join(authoringDir, "talk_flow.tsv"), [
-      "comment\ttalk\tfrom\tcond\tintent\tcriteria\texample\tmatch\tnext\tmode\tset\tnotes",
-      "\tsearch_agent\tintro\t\t\t\t\t\tintro\tstay",
-      ""
-    ].join("\n"));
-    const oldHooks = path.join(temporaryRoot, "src/project/hooks.ts");
-    fs.mkdirSync(path.dirname(oldHooks), { recursive: true });
-    fs.writeFileSync(oldHooks, "throw new Error('旧配置を読み込んではいけません');\n");
-    const result = spawnSync(process.execPath, [path.resolve("scripts/scenario-build.mjs")], {
-      cwd: temporaryRoot,
-      env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "scenario/story" },
-      encoding: "utf8"
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const generated = await import(pathToFileURL(path.join(temporaryRoot, "src/generated/scenarioHooks.generated.ts")).href);
-    assert.deepEqual(generated.scenarioHookHandlers, {});
-  } finally {
-    fs.rmSync(temporaryRoot, { recursive: true, force: true });
-  }
+test("全hook原本は表のevent/target/cond/scriptで完結する", () => {
+  const { source, hookScripts } = loadScenarioAuthoring("scenario/demo");
+  assert.ok(source.hooks.length > 0);
+  assert.deepEqual([...new Set(source.hooks.map(hook => hook.handler))].sort(), Object.keys(hookScripts).sort());
+  assert.equal(fs.existsSync("scenario/demo/hooks.ts"), false);
+  assert.equal(fs.existsSync("scenario/demo/scenario.json"), false);
 });

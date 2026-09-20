@@ -24,7 +24,7 @@ const myTtsProvider: GeneratedAudioProvider = {
 export const projectGeneratedAudioProviders = [myTtsProvider];
 ```
 
-次に `scenario.json` の `generatedAudio[].provider` を同じIDへ変更します。serverモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserモードは外部生成ジョブを保存せず、`staticUrl` の音声だけを使います。
+次に `gen_audio` シートの `provider` を同じIDへ変更します。serverモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserモードは外部生成ジョブを保存せず、`staticUrl` の音声だけを使います。
 
 ラジオ投稿などの入力を作品固有hookで審査するときは、受理できない入力を`context.form.deny("message_rejected")`で返せます。成立した処理をゲームオーバー演出へ進める場合は`context.effectSequence.gameOver()`、生成音声を準備する受理経路は`context.genAudio.prepare()`を使います。単発の全画面演出には`context.effect.noise()`、`flash(options?)`、`blackout(options?)`を利用できます。フラッシュと暗転のoptionsには`fadeInMs`、`holdMs`、`fadeOutMs`、`intensity`を指定でき、フラッシュだけは6桁HEXの`color`も指定できます。フォームUIと共通APIを保ったまま、LLM審査や外部で生成した音声を使う処理だけを作品側へ置けます。
 
@@ -50,15 +50,9 @@ PhoneStageの表示は次の3種類です。
 
 作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
 
-`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは従来どおり `clientCallableEvents` へ明示してください。
+`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは `project_constants` の `event.client_callable` へセル内改行で列挙してください。
 
-Stage表示に必要な状態変数だけを、scenario最上位の `publicStateVariables` へ列挙します。指定していない状態変数はクライアントへ公開されません。
-
-```json
-{
-  "publicStateVariables": ["presentation_started"]
-}
-```
+Stage表示に必要な状態変数だけ、`state_vars` シートの該当行の `public` を `true` にします。例えば `presentation_started` 行に指定します。指定していない状態変数はクライアントへ公開されません。
 
 ### イベントが受理されなかった場合
 
@@ -87,7 +81,7 @@ type DeviceView = Readonly<{
 
 `home` は標準の閲覧画面が閉じているという意味で、無音・読了・進行確定を保証しません。ラジオはホームでも再生を継続できます。また、通話UIは完了eventの応答より先に閉じるため、ホーム復帰だけを進行確定通知として使わないでください。詳細コンテンツの開閉や音声再生状態は公開しません。
 
-たとえばホーム復帰後に作品演出を始める場合は、公開した待機フラグと `deviceView.screen` を組み合わせます。次は `presentation_waiting` と `presentation_started` を `publicStateVariables` に公開し、`start_presentation` のhookが開始済みフラグを立てる作品の、待機判定部分の例です。既存のphone snippetの描画は残して組み込んでください。
+たとえばホーム復帰後に作品演出を始める場合は、公開した待機フラグと `deviceView.screen` を組み合わせます。次は `presentation_waiting` と `presentation_started` の `state_vars.public` を `true` にし、`start_presentation` のhookが開始済みフラグを立てる作品の、待機判定部分の例です。既存のphone snippetの描画は残して組み込んでください。
 
 ```svelte
 <script lang="ts">
@@ -139,7 +133,7 @@ type DeviceView = Readonly<{
 
 標準アプリのIDと既定アイコンは `src/shared/appRegistry.ts` に集約しています。作品固有appは`src/project/apps.ts`へ1エントリ追加し、`src/project/apps/<app-id>/App.svelte`を置きます。
 
-manifestではID、Lucide icon名、record validator、到達後に公開してよいfieldを返す`publicRecord()`を定義します。シナリオ側は通常の`apps[] / contents[]`を使うため、normal / repairable / hidden、検索、通知、badge、履歴、hookをそのまま利用できます。修復前のrecordは`publicRecord()`へ渡しません。
+manifestではID、Lucide icon名、record validator、到達後に公開してよいfieldを返す`publicRecord()`を定義します。シナリオ側は `home_items` と `project_items` を使い、後者の `record` セルに作品固有fieldのJSONを書きます。normal / repairable / hidden、検索、通知、badge、履歴、hookをそのまま利用できます。修復前のrecordは`publicRecord()`へ渡しません。
 
 componentは共通のitems、ProjectStage context、focus要求、open／blocked／noise handlerだけを受けます。app固有APIが必要なら従来どおり`src/project/routes.ts`へ追加し、registryへroute lifecycleやDI基盤は追加しません。built-in appもregistryへ合わせて書き直しません。
 
@@ -154,8 +148,8 @@ context.schedule.after("show_scheduled_call", 30_000);
 context.incoming.start("scheduled_call");
 ```
 
-`scenario.json` の `incomingCalls` へ表示名と任意の音声URLを定義します。`transcript` に音声開始からのミリ秒と本文を並べると、通話中の字幕として同期表示されます。電話アプリの履歴で音声と全文書き起こしを提供する場合は、別途 `phone` コンテンツの `record.audioUrl` と `record.transcript` に同じ形式で定義します。留守番電話として表示する場合は `record.kind` に `voicemail` を指定します。
+`incoming_calls` シートへ表示名と任意の `audio`（attachmentsの音声ID）を定義します。`transcript` セルに音声開始からのミリ秒と本文のJSON配列を書くと、通話中の字幕として同期表示されます。電話アプリの履歴で音声と全文書き起こしを提供する場合は、別途 `call_items` の `audio / transcript` に同じ形式で定義します。留守番電話として表示する場合は `kind` に `voicemail` を指定します。
 
-初回ログインからの相対時間で開始するものは `initialSchedules` に定義できます。serverモードでは新規プレイヤー作成と同じ保存操作で登録され、既存プレイヤーへの再認証では追加されません。AWS版のserverモードはDynamoDB transactionの上限により98件以下にしてください。`npm run build:aws`がserverモードの件数と過大なfieldsを事前検査します。browserモードはDynamoDBへ保存せず、既存の署名tokenサイズ上限を使います。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。
+初回ログインからの相対時間で開始するものは `schedules` シートに定義できます。serverモードでは新規プレイヤー作成と同じ保存操作で登録され、既存プレイヤーへの再認証では追加されません。AWS版のserverモードはDynamoDB transactionの上限により98件以下にしてください。`npm run build:aws`がserverモードの件数と過大なfieldsを事前検査します。browserモードはDynamoDBへ保存せず、既存の署名tokenサイズ上限を使います。作品固有の発火条件はhookに置き、予約処理と着信UIはコアを再利用します。
 
 予定イベントのhookが例外で失敗した場合、イベントを成功扱いや破棄にはせず、限定再試行後に明示エラーを表示します。handlerや設定を修正して再配備すると、保持していた同じイベントから再実行します。物語上必要なイベントを黙って飛ばす試行回数上限は設けていません。

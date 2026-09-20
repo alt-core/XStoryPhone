@@ -11,6 +11,27 @@ export type StructuredOutputRequest = {
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
   model?: string;
   timeoutMs?: number;
+  observation?: LlmObservation;
+};
+
+export type LlmHashes = { inputHash: string; promptHash: string; schemaHash: string };
+export type LlmObservation = Partial<LlmHashes> & {
+  source: "talk_flow" | "hook_llm";
+  talkId?: string;
+  fromId?: string;
+  ruleId?: string;
+  sampleIndex?: number;
+};
+export type LlmResultObservation = LlmObservation & {
+  taskId: string;
+  status: string;
+  accepted?: boolean;
+  selectedRuleId?: string;
+  finalRuleId?: string;
+  confidence?: number;
+  reasonCode?: string;
+  fallbackReason?: string;
+  sampleCount?: number;
 };
 
 export type StructuredOutputResult =
@@ -20,6 +41,7 @@ export type StructuredOutputResult =
 export type StructuredOutputProvider = {
   id: string;
   completeJson(request: StructuredOutputRequest): Promise<StructuredOutputResult>;
+  observeResult?(result: LlmResultObservation, debug?: Record<string, unknown>): void;
 };
 
 export type LlmProviderEnv = {
@@ -39,6 +61,7 @@ export type LlmProviderEnv = {
   LLM_PROFILE_ULTRA_TIMEOUT_MS?: string;
   LLM_ANALYTICS_ENABLED?: string;
   LLM_DEBUG_LOGS?: string;
+  LLM_HOOK_MAX_REQUESTS?: string;
 };
 
 function cleanText(value: unknown) {
@@ -104,6 +127,45 @@ async function hashText(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export function canonicalLlmJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalLlmJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${canonicalLlmJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+// 保存・観測・監修には同じ論理入力のhashを渡す。HTTP用のwrapperとは区別する。
+export async function llmRequestHashes(input: string, prompt: string, schema: unknown): Promise<LlmHashes> {
+  const [inputHash, promptHash, schemaHash] = await Promise.all([
+    hashText(input), hashText(prompt), hashText(canonicalLlmJson(schema))
+  ]);
+  return { inputHash, promptHash, schemaHash };
+}
+
+export function resolveStructuredOutputConfig(env: LlmProviderEnv, request: Pick<StructuredOutputRequest, "model" | "reasoningEffort" | "timeoutMs"> = {}) {
+  const model = cleanText(request.model) || cleanText(env.LLM_MODEL)
+    || cleanText(env.LLM_PROFILE_FAST_MODEL) || cleanText(env.LLM_PROFILE_SUPER_MODEL) || cleanText(env.LLM_PROFILE_ULTRA_MODEL);
+  const configuredReasoning = new Set(["none", "minimal", "low", "medium", "high"]).has(cleanText(env.LLM_REASONING_EFFORT))
+    ? cleanText(env.LLM_REASONING_EFFORT) as StructuredOutputRequest["reasoningEffort"] : undefined;
+  return {
+    available: Boolean(cleanText(env.LLM_API_KEY) && model),
+    model,
+    baseUrl: (cleanText(env.LLM_BASE_URL) || "https://api.openai.com/v1").replace(/\/+$/u, ""),
+    reasoningEffort: request.reasoningEffort ?? configuredReasoning ?? defaultGeminiOpenAiReasoningEffort(model),
+    timeoutMs: request.timeoutMs && request.timeoutMs >= 500 && request.timeoutMs <= 120_000
+      ? request.timeoutMs : timeoutMs(env.LLM_TIMEOUT_MS)
+  };
+}
+
+function observationLog(value: Partial<LlmHashes>) {
+  return Object.fromEntries(["inputHash", "promptHash", "schemaHash"].flatMap((key) => {
+    const hash = value[key as keyof LlmHashes];
+    return hash ? [[key, hash.slice(0, 12)]] : [];
+  }));
+}
+
 function usageFromPayload(payload: unknown) {
   const usage = payload && typeof payload === "object" ? (payload as { usage?: Record<string, unknown> }).usage : undefined;
   const number = (key: string) => typeof usage?.[key] === "number" ? usage[key] as number : 0;
@@ -119,39 +181,27 @@ function usageFromPayload(payload: unknown) {
 
 export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredOutputProvider | null {
   const apiKey = cleanText(env.LLM_API_KEY);
-  const model = cleanText(env.LLM_MODEL)
-    || cleanText(env.LLM_PROFILE_FAST_MODEL)
-    || cleanText(env.LLM_PROFILE_SUPER_MODEL)
-    || cleanText(env.LLM_PROFILE_ULTRA_MODEL);
-  if (!apiKey || !model) {
+  if (!resolveStructuredOutputConfig(env).available) {
     return null;
   }
-  const baseUrl = cleanText(env.LLM_BASE_URL) || "https://api.openai.com/v1";
-  const requestTimeoutMs = timeoutMs(env.LLM_TIMEOUT_MS);
-  const configuredReasoningEffort = new Set(["none", "minimal", "low", "medium", "high"]).has(cleanText(env.LLM_REASONING_EFFORT))
-    ? cleanText(env.LLM_REASONING_EFFORT) as StructuredOutputRequest["reasoningEffort"]
-    : undefined;
 
   return {
     id: "openai-compatible",
+    observeResult(result, debug) {
+      const summary = { ...result, ...observationLog(result) };
+      if (env.LLM_ANALYTICS_ENABLED === "true") console.log(JSON.stringify({ event: "llm_result", ...summary }));
+      if (env.LLM_DEBUG_LOGS === "true") console.log(JSON.stringify({ event: "llm_result_debug", ...summary, ...(debug ? { debug } : {}) }));
+    },
     async completeJson(request) {
-      const requestModel = cleanText(request.model) || model;
-      const reasoningEffort = request.reasoningEffort
-        ?? configuredReasoningEffort
-        ?? defaultGeminiOpenAiReasoningEffort(requestModel);
-      const timeoutForRequest = request.timeoutMs && request.timeoutMs >= 500 && request.timeoutMs <= 120_000
-        ? request.timeoutMs
-        : requestTimeoutMs;
+      const config = resolveStructuredOutputConfig(env, request);
+      const { model: requestModel, reasoningEffort, baseUrl, timeoutMs: timeoutForRequest } = config;
       const startedAt = Date.now();
       const attempts: Array<{ attempt: number; httpStatus?: number; error?: string; durationMs: number; usage?: ReturnType<typeof usageFromPayload> }> = [];
-      const [inputHash, promptHash, schemaHash] = await Promise.all([
-        hashText(JSON.stringify(request.input)),
-        hashText(request.instructions),
-        hashText(JSON.stringify(request.schema))
-      ]);
+      const hashes = await llmRequestHashes(JSON.stringify(request.input), request.instructions, request.schema);
       const finish = async (result: StructuredOutputResult, payload?: unknown) => {
         const summary = {
           source: "structured_output",
+          ...request.observation,
           model: requestModel,
           taskId: request.taskId,
           outcome: result.ok ? "ready" : result.error,
@@ -164,9 +214,7 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
             totalTokens: sum.totalTokens + (attempt.usage?.totalTokens ?? 0),
             cachedTokens: sum.cachedTokens + (attempt.usage?.cachedTokens ?? 0)
           }), { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0 }),
-          inputHash: inputHash.slice(0, 12),
-          promptHash: promptHash.slice(0, 12),
-          schemaHash: schemaHash.slice(0, 12)
+          ...observationLog({ ...hashes, ...request.observation })
         };
         if (env.LLM_ANALYTICS_ENABLED === "true") console.log(JSON.stringify({ event: "llm_usage", ...summary }));
         if (env.LLM_DEBUG_LOGS === "true") {

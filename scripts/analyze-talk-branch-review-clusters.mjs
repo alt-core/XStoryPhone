@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
-import { currentRuleIdForReviewEvent } from "./lib/review-cluster-rules.mjs";
+import { defaultGeminiOpenAiReasoningEffort } from "../src/worker/product/llmProfiles.ts";
 
 const values = new Map();
 const flags = new Set();
@@ -109,12 +109,13 @@ function normalizeClusters(raw, events) {
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
     const sourceEventIds = Array.isArray(item.event_ids)
-      ? item.event_ids.filter((id) => typeof id === "string" && byId.has(id) && !assigned.has(id))
+      ? [...new Set(item.event_ids.filter((id) => typeof id === "string" && byId.has(id) && !assigned.has(id)))]
       : [];
     if (!sourceEventIds.length) continue;
     sourceEventIds.forEach((id) => assigned.add(id));
     const fit = ["blue", "yellow", "red"].includes(item.fit) ? item.fit : "yellow";
-    const representativeInput = cleanText(item.representative_input) || byId.get(sourceEventIds[0])?.input || "";
+    const representativeInput = sourceEventIds.map((id) => byId.get(id)?.input)
+      .find((input) => input === item.representative_input) || byId.get(sourceEventIds[0])?.input || "";
     clusters.push({ sourceEventIds, fit, representativeInput, reason: cleanText(item.reason, 300) });
   }
   for (const event of events) {
@@ -135,18 +136,24 @@ async function analyzeGroup(group, events, resolved) {
   const model = process.env.LLM_MODEL?.trim() ?? "";
   const llmBaseUrl = (process.env.LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/u, "");
   if (!apiKey || !model) throw new Error("LLM_API_KEY と LLM_MODEL を設定してください。");
+  const configuredReasoning = process.env.LLM_REASONING_EFFORT?.trim();
+  const reasoningEffort = ["none", "minimal", "low", "medium", "high"].includes(configuredReasoning)
+    ? configuredReasoning : defaultGeminiOpenAiReasoningEffort(model);
   const requestInit = {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({
       model,
+      temperature: 0,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [
         {
           role: "system",
           content: [
             "あなたは会話分岐レビュー用の入力整理係です。",
             "実入力を意味が近いもの同士でゆるくクラスタリングしてください。",
-            "fitは、現在の分岐条件と返答に対し、blue=問題なさそう、yellow=少しあやしい、red=合っていなさそう、です。",
+            "representative_inputは必ず、そのクラスタに含めた実入力の本文をそのまま選んでください。",
+            "fitは、現在の場面context・分岐条件・mode・返答に対し、blue=問題なさそう、yellow=少しあやしい、red=合っていなさそう、です。",
             "判定はレビューの手がかりであり、断定しないでください。",
             "event_idsは与えられたIDだけを使い、各IDを1つのクラスタに入れてください。",
             "返信文や新しい分岐本文を生成してはいけません。"
@@ -157,10 +164,12 @@ async function analyzeGroup(group, events, resolved) {
           content: JSON.stringify({
             talk: resolved.talk.label,
             fromId: group.fromId,
+            context: resolved.talk.rules.find((rule) => rule.from === group.fromId && rule.isDefault)?.criteria ?? "",
             branch: {
               intent: resolved.rule.intent || "default",
               criteria: resolved.rule.isDefault ? "他の条件に高確度で一致しない入力" : resolved.rule.criteria,
               notes: resolved.rule.notes,
+              mode: resolved.rule.mode || "advance",
               responsePreview: responsePreview(resolved.rule)
             },
             inputs: events.map((event) => ({ id: event.id, text: event.input }))
@@ -244,16 +253,19 @@ async function loadGroups() {
       if (payload.scenarioRevision !== scenario.worker.revision) {
         throw new Error(`シナリオリビジョンが一致しません: local=${scenario.worker.revision} server=${payload.scenarioRevision}`);
       }
-      const grouped = new Map();
-      for (const event of payload.events ?? []) {
-        const ruleId = currentRuleIdForReviewEvent(talk, fromId, event);
+      for (const [ruleId, inputCount] of Object.entries(payload.inputCounts ?? {})) {
         if (onlyRule && ruleId !== onlyRule) continue;
-        const input = cleanText(event.userInput);
-        if (!event.id || !ruleId || !input) continue;
-        grouped.set(ruleId, [...(grouped.get(ruleId) ?? []), { id: event.id, input }]);
-      }
-      for (const [ruleId, events] of grouped) {
-        groups.push({ talkId: talk.id, fromId, ruleId, events: events.slice(0, limitEvents) });
+        if (!talk.rules.some((rule) => rule.id === ruleId && (rule.from === fromId || rule.from === "*"))) {
+          console.warn(`現行ruleへ自動対応しない過去入力: ${talk.id} / ${fromId} / ${ruleId} (${inputCount}件)`);
+          continue;
+        }
+        const ruleParams = new URLSearchParams({ talkId: talk.id, fromId, ruleId, limit: String(limitEvents) });
+        const selected = listGroupsOnly ? null : await reviewApi(`/api/admin/talk-branch-review/analysis-inputs?${ruleParams}`);
+        if (selected && selected.scenarioRevision !== scenario.worker.revision) throw new Error("集計中にシナリオが更新されました。");
+        const events = (selected?.events ?? []).filter((event) => event.ruleId === ruleId)
+          .map((event) => ({ id: event.id, input: String(event.userInput ?? "").normalize("NFC").trim().slice(0, 2_000) }))
+          .filter((event) => event.id && event.input);
+        groups.push({ talkId: talk.id, fromId, ruleId, inputCount, events });
       }
     }
   }
@@ -292,7 +304,7 @@ if (applyFile) {
 } else {
   const groups = await loadGroups();
   if (listGroupsOnly) {
-    console.table(groups.map((group) => ({ talk: group.talkId, from: group.fromId, rule: group.ruleId, inputs: group.events.length })));
+    console.table(groups.map((group) => ({ talk: group.talkId, from: group.fromId, rule: group.ruleId, inputs: group.inputCount })));
   } else {
     const analysis = {
       formatVersion: 1,
@@ -308,7 +320,8 @@ if (applyFile) {
         console.warn(`未定義の分岐を省略: ${group.talkId} / ${group.fromId} / ${group.ruleId}`);
         continue;
       }
-      console.log(`[${index + 1}/${groups.length}] ${resolved.talk.label} / ${resolved.rule.intent || "default"} (${group.events.length})`);
+      console.log(`[${index + 1}/${groups.length}] ${resolved.talk.label} / ${resolved.rule.intent || "default"} (${group.events.length}/${group.inputCount}件、直近順)`);
+      if (!group.events.length) continue;
       const analyzed = await analyzeGroup(group, group.events, resolved);
       analysis.usage.promptTokens += analyzed.usage.promptTokens;
       analysis.usage.completionTokens += analyzed.usage.completionTokens;

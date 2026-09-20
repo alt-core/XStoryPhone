@@ -16,9 +16,9 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 | 列 | 内容 |
 |---|---|
-| `sender` | `scenario.json` の `talkPeople[].id` |
+| `sender` | `talk_people.tsv` の `id` |
 | `body` | 本文。`{{name}}` 形式で状態値や抽出値を参照可能 |
-| `attachment` | `scenario.json` の `attachments[].id` |
+| `attachment` | `attachments.tsv` の `id` |
 | `time` | 初期履歴に表示する時刻 |
 | `delay_ms` | 相手側発話を順に表示する待ち時間 |
 | `quick_replies` | 改行区切りの返信候補。NPC側blockの最後の発話だけに指定可能 |
@@ -27,27 +27,13 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 本文には `[表示名](open:notes:content_id)` のような内部リンクと、HTTPSの外部リンクを書けます。内部リンクへhookを結び付ける場合は、`open:app_id:content_id;action:action_id` とし、`message_link_opened`のtargetへaction IDを指定します。`{{state_id}}` templateは通常の本文で使い、リンクの表示名には使用しないでください。リンク表示名はtemplate展開されません。
 
-`attachments` で `lock: "password"` を指定すると、会話内にパスワード入力付きの添付を表示できます。答えは対象contentの `record.unlockCode` に書きますが、生成されるクライアントデータからは自動的に除外されます。
+`attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `content / password` に書きます。平文・判定hashはクライアントへ出力しません。
 
 `quick_replies`はセル内改行で選択肢を並べます。表示文字列がそのままプレイヤー発話として送信され、通常の会話ruleで判定されます。本文と同じ`{{state_id}}` templateを使用できます。Quick Reply固有の個数・20文字制限は設けず、空の選択肢、同一message内の重複、定義時点で既存プレイヤー入力上限を超える文字列を拒否します。template展開結果は正規化後に同じ上限へ収めます。
 
 ### talk全体の修復
 
-`talks[]` に `initialState` を指定すると、メッセージまたはチャットのルーム全体を検索・修復対象にできます。省略時は `normal` です。
-
-```json
-{
-  "id": "damaged_room",
-  "kind": "sms",
-  "appId": "messages",
-  "label": "調査担当",
-  "avatarUrl": "/avatars/investigator.svg",
-  "initialState": "repairable",
-  "repairLabel": "調▚▐▀▜当",
-  "search": ["調査担当", "壊れた連絡"],
-  "startBlocks": ["old_messages", "start"]
-}
-```
+`message_items.tsv` または `chat_items.tsv` の `initial` を指定すると、ルーム全体を検索・修復対象にできます。空欄は通常表示です。例えば `id=damaged_room`、`name=調査担当`、`initial=repairable`、`repair_label=調▚▐▀▜当` とし、`search` へ検索語、`start` へ初期block名をセル内改行で並べます。`avatar` は任意の素材pathです。
 
 - `repairable`: 壊れた名称と履歴を持つルームとして一覧に表示し、検索結果を開くと本来の名称・全初期履歴・投稿状態をまとめて復元します。
 - `hidden`: 修復前はルームの存在自体を一覧へ出さず、検索結果を開いた後に表示します。
@@ -57,31 +43,19 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 `cond` が偽の間は破損ルームと検索結果のどちらも出ません。`cond` を満たしても親アプリが未修復なら検索候補だけを提示でき、ルームを開く操作は親アプリが利用可能になるまで拒否します。
 
-`startBlocks` はblock IDの配列です。初期block単位の `cond` は仕様にありません。talk全体の表示条件には `talks[].cond` を使います。
+`start` はセル内改行でblock IDを並べます。空欄なら初期履歴と返答待ち位置を持ちません。初期block単位の `cond` は仕様にありません。talk全体の表示条件には同じitem行の `cond` を使います。
 
 ### 初期履歴blockの修復
 
-`messages` または `chat` のtalkでは、`startBlocks` に含まれるblockをメールやメモと同じ `contents` の修復対象として定義できます。未修復のblock本文、送信者、添付、リンクはクライアントへ送りません。連続する未修復blockは、会話履歴内で一つの「履歴データが破損しています」表示へまとまります。
+`messages` または `chat` のtalkでは、`start` に含まれるblockを `talk_history.tsv` で修復対象にできます。未修復のblock本文、送信者、添付、リンクはクライアントへ送りません。連続する未修復blockは、会話履歴内で一つの「履歴データが破損しています」表示へまとまります。
 
-```json
-{
-  "id": "damaged_history",
-  "appId": "messages",
-  "initialState": "repairable",
-  "repairLabel": "破損した履歴",
-  "search": ["過去の連絡"],
-  "record": {
-    "talk": "guide",
-    "block": "old_history"
-  }
-}
-```
+例えば `id=damaged_history`、`talk=guide`、`block=old_history`、`initial=repairable`、`repair_label=破損した履歴`、`search=過去の連絡` とします。
 
-`record.talk` は対象talkのID、`record.block` はそのtalkの `startBlocks` に一度だけ含まれるblock名です。一つのblockを複数のcontentから修復することはできません。過去履歴として同じ時刻へ復元できるよう、対象blockの全メッセージで `time` を指定してください。
+`talk` は対象talkのID、`block` はそのtalkの `start` に一度だけ含まれるblock名です。一つのblockを複数のcontentから修復することはできません。過去履歴として同じ時刻へ復元できるよう、対象blockの全メッセージで `time` を指定してください。
 
 検索結果から開くとblock内のメッセージを元の位置へ復元し、対象talkを開いて復元blockの先頭を表示します。途中の分岐で追加されるblockとrepeat blockは修復対象にできません。
 
-写真や動画を会話分岐へ使う場合は、シナリオ最上位の `photoDescriptions` に `content id: 説明` を定義します。この説明は会話判定と監修UIだけで使われ、アルバム表示やクライアントデータには含まれません。未定義時は写真タイトルを使った一般的な添付説明になります。
+写真や動画を会話分岐へ使う場合は、`photo_items.tsv` の `description` に説明を書きます。この説明は会話判定と監修UIだけで使われ、アルバム表示やクライアントデータには含まれません。未定義時は写真タイトルを使った一般的な添付説明になります。
 
 通常の分岐とは別のeventから台本を追加する場合は、hookで `context.talk.addBlock("guide", "block_id")` を呼びます。本文をコードへ重複させず、同じblockを監修画面でも確認できます。指定できるのは、そのtalkに属する非repeat blockのうち、repeat派生を含む全表示でtemplateを状態変数だけから解決できるものです。template値は、この呼出時点で固定されます。別talkのblockや、会話入力から抽出したmatch値を必要とするblockは`npm run check`の型検査で拒否されます。
 
@@ -93,17 +67,10 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 メッセージ／チャットの下書き（本文・写真・共有）と送信エラーは会話ごとに保持します。同じアプリ内で会話を切り替えても、送信に失敗した内容が別の相手の入力欄へ移ることはありません。下書きは表示中アプリのメモリだけに置くため、ホーム・別アプリ・ロック画面への移動やリロードで破棄されます。
 
-各talkには、自由入力composerの表示と、talkへの入力許可を独立して設定できます。省略時はどちらも`true`です。
+各talkのitem行の `input_visible` と `input_enabled` で、自由入力composerの表示と、talkへの入力許可を独立して設定できます。空欄はどちらも`true`です。検索AIはproject_constantsの `search_agent.input_visible / search_agent.input_enabled` を使います。
 
-```json
-{
-  "inputVisible": false,
-  "inputEnabled": true
-}
-```
-
-- `inputVisible`: テキスト、写真・動画、共有、送信buttonを含むcomposer一式を表示するか。Quick Replyには影響しません。
-- `inputEnabled`: 通常入力、添付、共有、Quick Replyを受理するか。
+- `input_visible`: テキスト、写真・動画、共有、送信buttonを含むcomposer一式を表示するか。Quick Replyには影響しません。
+- `input_enabled`: 通常入力、添付、共有、Quick Replyを受理するか。
 
 `visible=false / enabled=true`ではcomposerを隠し、Quick Replyだけで進行できます。`enabled=false`ではQuick Replyを消し、composerがvisibleならdisabled表示にします。enableへ戻すと、最新メッセージに付いたQuick Replyが再表示されます。enableしても、未修復talk、チャット再認証中、現在fromに有効ruleがないtalkは投稿可能になりません。
 
@@ -144,7 +111,7 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 
 | 列 | 内容 |
 |---|---|
-| `talk` | `scenario.json` のtalk ID |
+| `talk` | `message_items / chat_items` のID、または固定ID `search_agent` |
 | `from` | 現在のblock。`*` は全地点で使う共通分岐 |
 | `cond` | 状態変数による条件 |
 | `intent` | 監修画面で見る分岐名 |
@@ -160,17 +127,9 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 
 ## 検索AI talk
 
-検索AIは、`scenario.json`の`talks`へ固定IDのtalkを1件だけ定義します。名称と発話者は`project.assistantName`から生成されるため、`label`や`talkPeople`の`search_agent`は指定しません。
+検索AIは固定ID `search_agent` です。`project_constants.tsv` の `search_agent.name` で名称を、`search_agent.start` で初期stepを指定します。発話者も自動生成されるため `talk_people` へ重複定義しません。初期stepは、例えば一つのvalueセルに `/input hide`、`intro`、`/input show` を改行して書きます。
 
-```json
-{
-  "id": "search_agent",
-  "kind": "search_agent",
-  "startSteps": ["/input hide", "intro", "/input show"]
-}
-```
-
-本文は`talk_blocks.tsv`の`*search_agent`以下へ、分岐は通常どおり`talk_flow.tsv`へ書きます。検索AI発話は`sender=search_agent`の本文、`[表示名](open:app_id:content_id)`形式の内部リンク、Quick Replyを扱います。添付、HTTPSの外部リンク、固定の`time`は指定できません。内部リンクは実際に発話が表示された時だけ利用可能になり、同じblockを繰り返しても進行token内の権限は増殖しません。serverモードで公開後に表示済みのbase blockへリンクを追加した場合は、現在台本から本文を復元する既存契約に合わせて権限も補完します。後から追加・変更したrepeat variantと、到達済み本文をIndexedDBへ保持するbrowserモードのリンクは、未表示情報を与えないため再表示後に有効になります。`startSteps`ではblockと`/input`だけを使えます。
+本文は`talk_blocks.tsv`の`*search_agent`以下へ、分岐は通常どおり`talk_flow.tsv`へ書きます。検索AI発話は`sender=search_agent`の本文、`[表示名](open:app_id:content_id)`形式の内部リンク、Quick Replyを扱います。添付、HTTPSの外部リンク、固定の`time`は指定できません。内部リンクは実際に発話が表示された時だけ利用可能になり、同じblockを繰り返しても進行token内の権限は増殖しません。serverモードで公開後に表示済みのbase blockへリンクを追加した場合は、現在台本から本文を復元する既存契約に合わせて権限も補完します。後から追加・変更したrepeat variantと、到達済み本文をIndexedDBへ保持するbrowserモードのリンクは、未表示情報を与えないため再表示後に有効になります。`search_agent.start`ではblockと`/input`だけを使えます。
 
 検索AIの`next`は、セル内で改行した次のstepを上から順に実行します。
 
@@ -183,7 +142,7 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 
 `/if`では、条件全体を囲む外側の括弧が必須です。その閉じ括弧より後ろをblock IDとして扱うため、条件内では通常どおり括弧、文字列、正規表現を使用できます。
 
-一つの`next`で`/search`を使えるのは1回です。検索は表示順にかかわらず先に一度だけ評価され、同じ`next`の`/if`とblock templateでは`search_found`（boolean）と`search_result_count`（integer）を参照できます。これらは一時値であり、`stateVariables`には宣言せず、`/search`のない`next`からは参照できません。検索queryでは状態変数、抽出値、現在の入力を表す`player_input`をtemplateに使えます。
+一つの`next`で`/search`を使えるのは1回です。検索は表示順にかかわらず先に一度だけ評価され、同じ`next`の`/if`とblock templateでは`search_found`（boolean）と`search_result_count`（integer）を参照できます。これらは一時値であり、`state_vars`には宣言せず、`/search`のない`next`からは参照できません。検索queryでは状態変数、抽出値、現在の入力を表す`player_input`をtemplateに使えます。
 
 ```text
 /if (search_found) found
@@ -220,7 +179,7 @@ hookから台本進行と無関係な検索結果を追加する場合は、`con
 
 ## LLMを使う場合
 
-`scenario.json` の `features.llm` を `true` にし、ローカルでは `.dev.vars`、公開時はデプロイ先の環境変数またはsecretへ次を設定します。
+`project_constants.tsv` の `features.llm` を `true` にし、ローカルでは `.dev.vars`、公開時はデプロイ先の環境変数またはsecretへ次を設定します。
 
 ```dotenv
 LLM_API_KEY=...
@@ -232,15 +191,34 @@ LLM_REASONING_EFFORT=low
 
 `LLM_REASONING_EFFORT` は利用する互換providerが対応している場合だけ明示設定します。未設定時は、Gemini 2.5系またはFlash-Lite系の非Proへ`none`、その他のGemini 3系へ`minimal`を安全な既定値として送り、それ以外のmodelには送りません。明示値はこの既定より優先されます。
 
-provider境界は `completeJson` だけです。会話エンジンは、その上に「自然文criteriaの選択」と「matchの抽出」を載せています。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。
+providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「自然文criteriaの選択」と「matchの抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。
 
-自然文criteriaの判定には現在の入力に加えて直前4件までの会話を渡し、短い肯定・否定や指示語の文脈だけを補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
+自然文criteriaの判定には、現在のfrom blockの末尾2件と、表示履歴の直近2件を重複除去して渡します。stayの会話が続いても現在の問いを保持し、短い肯定・否定や指示語の文脈を補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。0〜1の範囲外や候補にないrule IDは、不正応答としてエラーにします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
 
 正規表現ruleはLLMより先に評価されるため、確実に判定できる入力は正規表現へ寄せると、速度と再現性を保てます。
 
 hookの`llm.match`は`fast / super / ultra` profileと`stable / once`を選べます。`stable`は最初の2標本を並行取得して最大5標本から合意を探し、`once`は1標本ずつ評価して最初に採用可能な値を使います。いずれも壊れた応答だけなら障害として扱い、正常な候補が合意しない場合は、fallbackがあればそれを使い、なければエラーにします。fastだけ通常の`LLM_MODEL`へfallbackし、super/ultraは対応するprofile modelが未設定なら利用不能です。serverモードでは同じplayer・model・input・prompt・schemaの成功結果とfallbackを既定30日cacheし、browserモードでは同じHTTP request内だけ再利用します。
 
 `LLM_ANALYTICS_ENABLED=true`では本文を含まないtoken usage・試行回数・hashを構造化logへ出します。`LLM_DEBUG_LOGS=true`では入力・prompt・schema・応答も出るため、調査中だけ有効にし、公開環境では調査後にfalseへ戻してください。API keyやAuthorization headerはdebugにも出しません。
+
+通常logには、provider応答の取得結果に加えて検証後の採否・confidence・理由・標本番号を記録します。hookの保存結果とlogは同じ論理入力・指示・schemaのhashで照合でき、監修試行には選択結果とhashを保存します。生のHTTP payloadや長いprompt全体を監修DBへ複製するわけではありません。debugを無効にしていた期間の生応答は後から復元できません。
+
+### hook LLMの入力・出力制約
+
+`llm.extract` / `llm.screen` の `schema` には `string` / `boolean` / `integer` / `number` / `null` に加え、次を指定できます。
+
+- `string_max_N`: N文字以内の文字列。
+- `hiragana_1_5`: ひらがな・長音1〜5文字。
+- `safe_reading_text`: 240文字以内の文字列。内容の安全性を自動保証する指定ではありません。
+- `string_max_20|null` のような `|` 区切り: いずれかを満たす値。
+
+plain `string` には一律の500文字制限を付けません。長さを制限したい場合は `string_max_N` を明示してください。fallbackにも成功値と同じ検査が適用されます。`llm.match` のfallbackは、そのmatch定義の `null: "no"` 等も満たす必要があります。
+
+入力は非空の `input` を優先し、空または省略なら明示した `source` を使います。`source: "player_message"` は現在のプレイヤー入力、それ以外はeventの文字列fieldを明示して参照します。未知のsourceはエラーです。input/sourceをどちらも指定しなければ空入力になり、event全体を暗黙に送ることはありません。入力・指示を文字数で黙って切り詰めません。
+
+`maxTokens` を省略するとschemaの項目数・文字数から出力予算を見積もります。作者による明示指定も可能です。予算は常にその量を出力・課金する指定ではありませんが、長い出力が可能になる分、費用と待ち時間は増え得ます。
+
+一つのeventで新たに解決できるhook LLM要求数は `LLM_HOOK_MAX_REQUESTS`（既定5）で設定します。同じ要求の再利用、各matchの標本数、通信retry、結果を使ってhookを最後まで実行する再評価は別です。上限を超える新しい要求を始める前に停止し、そのeventの途中effectは確定しません。既に行ったLLM呼出しの費用は取り消せません。
 
 ## 制作確認コマンド
 
@@ -251,3 +229,7 @@ npm run scenario:talk-flow:examples:test
 ```
 
 path dumpはfrom・example・nextの連結、writer reviewは全体の読み順とrepeat・独立block、example testは選択中scenarioの全exampleをlocal mockで確認します。実LLMを呼ぶ場合だけ、example testへ`--live`と表示される長い課金確認flagを明示します。
+
+分岐IDは定義内容から生成する21文字の内部IDです。行番号・notes・exampleの変更では維持し、条件・抽出・状態更新・返答先等の変更では別IDになります。変更前の入力を返信先から推定して新分岐へ混ぜません。並べ替えによる候補優先順や、台詞本文・モデル設定の変更まで同じであることを保証するIDではありません。
+
+任意のcriteria診断と、抽出結果まで含めた追加試験は[制作テスト](authoring-tests.md)を参照してください。

@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { createTalkDrafts, restoreFailedTalkDraft } from "../src/client/apps/talkDrafts.ts";
+import { talkForFocusedContent } from "../src/client/apps/talkContentFocus.ts";
 
 const emptyDraft = { text: "", photoId: "", share: null, error: "" };
 const share = { appId: "notes", contentId: "note-a", title: "Aの共有" };
@@ -31,7 +32,7 @@ function composerHarness(app) {
     .map((statement) => statement.getText(parsed));
   const selection = reactive.filter((statement) =>
     statement.startsWith("$: selectedThread =") || statement.startsWith("$: composer ="));
-  const notification = reactive.find((statement) => statement.includes("const focused = threads.find"));
+  const notification = reactive.find((statement) => statement.includes("talkForFocusedContent(threads, focusContentId)"));
   assert.equal(selection.length, 2);
   assert.ok(notification);
   const code = ts.transpileModule([
@@ -41,20 +42,27 @@ function composerHarness(app) {
   ].join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
   const response = deferred();
   const transmissions = [];
+  const focusCalls = [];
   let scrollCount = 0;
   const draftForThread = createTalkDrafts();
   const context = {
-    threads: ["A", "B"].map((id) => ({ id, contentId: `content-${id}` })),
+    threads: ["A", "B"].map((id) => ({
+      id, contentId: `content-${id}`, messages: [{ attachment: { contentId: `attachment-${id}` } }]
+    })),
     selectedThreadId: "A", selectedThread: undefined, composer: draftForThread("A"),
     draftForThread, restoreFailedTalkDraft, selectedThreadCanPost: true, sending: false,
     get selectedPhoto() { return this.composer.photoId ? { id: this.composer.photoId } : undefined; },
     readDividerArmed: true, readDividerAfterMessageId: "", pickerOpen: false,
     focusContentId: "", focusContentRequestId: 0, focusHistoryRepairId: "",
     lastAppliedFocusContentId: "", lastAppliedFocusContentRequestId: 0,
-    pendingHistoryRepairId: "", lastHistorySignature: "", lastHistoryThreadId: "",
+    pendingHistoryRepairId: "", pendingAttachmentContentId: "", lastHistorySignature: "", lastHistoryThreadId: "",
     lastAppliedShareDraftRequestId: 0, authError: "", unlockError: "",
     flushPendingRead() {}, setPhotoPickerOpen() {}, onNoise() {}, onBlockedContentOpen() {},
     onInitialShareDraftConsumed() {},
+    talkForFocusedContent(threads, contentId) {
+      focusCalls.push(contentId);
+      return talkForFocusedContent(threads, contentId);
+    },
     onSend(talkId, body) { transmissions.push({ talkId, body }); return response.promise; },
     scrollHistoryToBottom() { scrollCount += 1; }
   };
@@ -65,10 +73,13 @@ function composerHarness(app) {
     context, response, transmissions,
     get scrollCount() { return scrollCount; },
     select(talkId, via = "一覧") {
-      if (via === "通知") {
-        context.focusContentId = `content-${talkId}`;
+      if (via === "通知" || via === "添付検索") {
+        context.focusContentId = `${via === "添付検索" ? "attachment" : "content"}-${talkId}`;
         context.focusContentRequestId += 1;
+        const before = focusCalls.length;
         context.applyNotification();
+        assert.equal(focusCalls.length, before + 1, "実componentが本体のfocus helperを一度呼ぶ");
+        assert.equal(focusCalls[before], context.focusContentId);
       } else {
         (context.openThreadPicker ?? context.openRoomPicker)();
         context.selectThread(talkId);
@@ -93,7 +104,7 @@ for (const app of ["MessagesApp", "ChatApp"]) {
     }
   });
 
-  for (const via of ["一覧", "通知"]) {
+  for (const via of ["一覧", "通知", "添付検索"]) {
     test(`${app}: A送信→${via}でB→A失敗は本文・添付・エラーをAへだけ復元する`, async () => {
       for (const initial of [{ text: " Aの本文 " }, { photoId: "photo-a" }, { share }]) {
         const harness = composerHarness(app);

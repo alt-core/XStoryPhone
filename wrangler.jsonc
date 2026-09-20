@@ -25,7 +25,8 @@
         "ALLOWED_ORIGINS": "",
         "LLM_ANALYTICS_ENABLED": "false",
         "LLM_DEBUG_LOGS": "false",
-        "LLM_RESULT_RETENTION_DAYS": "30"
+        "LLM_RESULT_RETENTION_DAYS": "30",
+        "LLM_HOOK_MAX_REQUESTS": "5"
       }
     },
     "stg": {
@@ -49,7 +50,8 @@
         "ALLOWED_ORIGINS": "",
         "LLM_ANALYTICS_ENABLED": "false",
         "LLM_DEBUG_LOGS": "false",
-        "LLM_RESULT_RETENTION_DAYS": "30"
+        "LLM_RESULT_RETENTION_DAYS": "30",
+        "LLM_HOOK_MAX_REQUESTS": "5"
       }
     },
     "prod": {
@@ -73,7 +75,8 @@
         "ALLOWED_ORIGINS": "",
         "LLM_ANALYTICS_ENABLED": "false",
         "LLM_DEBUG_LOGS": "false",
-        "LLM_RESULT_RETENTION_DAYS": "30"
+        "LLM_RESULT_RETENTION_DAYS": "30",
+        "LLM_HOOK_MAX_REQUESTS": "5"
       }
     }
   }

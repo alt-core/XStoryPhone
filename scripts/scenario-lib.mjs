@@ -19,15 +19,16 @@ import {
 } from "./lib/talk-output-steps.mjs";
 import { collectClientImportGraph } from "./lib/client-import-graph.mjs";
 import { clientRevisionFor, transcriptRevisionFor } from "./lib/scenario-revisions.mjs";
-import { activeRows, inheritColumns, loadTsvSheet } from "./lib/tsv-utils.mjs";
+import { activeRows } from "./lib/tsv-utils.mjs";
+import { loadScenarioAuthoring } from "./lib/scenario-authoring.mjs";
+import { assignRuleIds } from "./lib/rule-ids.mjs";
+import { buildScenarioHooksModule, validateHookReferences } from "./lib/scenario-hooks.mjs";
+import { normalizeRadioCues } from "./lib/radio-cues.mjs";
 
 const rootDir = process.cwd();
 const engineRootDir = path.resolve(import.meta.dirname, "..");
 const configuredScenarioDir = String(process.env.XSTORYPHONE_SCENARIO_DIR ?? "scenario/demo").trim() || "scenario/demo";
 const scenarioDir = path.resolve(rootDir, configuredScenarioDir);
-const scenarioPath = path.join(scenarioDir, "scenario.json");
-const talkFlowPath = path.join(scenarioDir, "authoring/talk_flow.tsv");
-const talkBlocksPath = path.join(scenarioDir, "authoring/talk_blocks.tsv");
 const idPattern = /^[a-z][a-z0-9_-]*$/u;
 const engineAppIds = new Set(APP_REGISTRY.map((app) => app.id));
 const projectAppById = new Map(projectApps.map((app) => [app.id, app]));
@@ -44,19 +45,6 @@ const reservedStateVariableIds = new Set([
   "player_input",
   ...Object.keys(searchOutputStateDefinitions)
 ]);
-const talkFlowHeaders = ["comment", "talk", "from", "cond", "intent", "criteria", "example", "match", "next", "mode", "set", "notes"];
-const talkBlockHeaders = ["comment", "sender", "body", "attachment", "time", "delay_ms", "notes", "updated_at", "source", "quick_replies"];
-
-function validateTsvHeaders(label, headers, expected, errors) {
-  const actual = new Set(headers);
-  for (const header of expected) {
-    if (!actual.has(header)) errors.push(`${label}: 必須headerがありません: ${header}`);
-  }
-  for (const header of headers) {
-    if (!expected.includes(header)) errors.push(`${label}: 未知または廃止済みのheaderです: ${header}`);
-  }
-}
-
 function validateObjectKeys(label, value, allowed, errors) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   for (const key of Object.keys(value)) {
@@ -396,17 +384,8 @@ function validateCallTranscript(label, value, errors) {
 }
 
 function cueAtMs(value) {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value * 1_000);
-  if (typeof value !== "string" || !value.trim()) return null;
-  const trimmed = value.trim();
-  if (/^\d+(?:\.\d+)?$/u.test(trimmed)) return Math.round(Number(trimmed) * 1_000);
-  const parts = trimmed.split(":");
-  if (parts.length < 2 || parts.length > 3 || parts.some((part) => !/^\d+(?:\.\d+)?$/u.test(part))) return null;
-  const seconds = Number(parts.at(-1));
-  const minutes = Number(parts.at(-2));
-  const hours = parts.length === 3 ? Number(parts[0]) : 0;
-  if (seconds >= 60 || (parts.length === 3 && minutes >= 60)) return null;
-  return Math.round((hours * 3_600 + minutes * 60 + seconds) * 1_000);
+  try { return normalizeRadioCues({ __rowNumber: "record", cues: JSON.stringify({ cue: value }) })[0].atMs; }
+  catch { return null; }
 }
 
 function isRootRelativeUrl(value) {
@@ -528,14 +507,15 @@ function deviceStateFor(source, publicIds, revision) {
   };
 }
 
-export function loadAndValidateScenario() {
+export function loadAndValidateScenario(overrides = {}) {
   const errors = [];
-  const source = JSON.parse(fs.readFileSync(scenarioPath, "utf8"));
-  const talkFlowSheet = loadTsvSheet(talkFlowPath, { trimHeaders: true, normalizeNewlines: true });
-  const talkBlocksSheet = loadTsvSheet(talkBlocksPath, { trimHeaders: true, normalizeNewlines: true });
-  validateTsvHeaders("talk_flow.tsv", talkFlowSheet.headers, talkFlowHeaders, errors);
-  validateTsvHeaders("talk_blocks.tsv", talkBlocksSheet.headers, talkBlockHeaders, errors);
-  const rawRules = activeRows(inheritColumns(talkFlowSheet.rows, ["talk", "from"]));
+  const authoring = loadScenarioAuthoring(scenarioDir);
+  buildScenarioHooksModule(authoring.hookScripts);
+  // 純粋な検証fixtureの注入。製品CLIは常にSheets由来TSVを読み、JSON原本へfallbackしない。
+  const source = overrides.source ?? authoring.source;
+  const talkFlowSheet = authoring.workbook.talk_flow;
+  const talkBlocksSheet = authoring.workbook.talk_blocks;
+  const rawRules = activeRows(talkFlowSheet.rows);
   const rawBlocks = talkBlocksSheet.rows;
   const blockScope = collectScopedTalkBlocks(rawBlocks, { onError: (error) => errors.push(error) });
 
@@ -543,7 +523,7 @@ export function loadAndValidateScenario() {
     "schemaVersion", "playerMode", "features", "project", "stateVariables", "publicStateVariables",
     "photoDescriptions", "apps", "contents", "talkPeople", "attachments", "talks", "todos",
     "notifications", "assistantMessages", "chatAuthGate", "generatedAudio",
-    "incomingCalls", "initialSchedules", "clientCallableEvents", "hooks"
+    "incomingCalls", "initialSchedules", "clientCallableEvents", "hooks", "projectConstants", "publicProjectConstants", "albumMediaAttachmentLinks"
   ], errors);
   validateObjectKeys("features", source.features, ["llm"], errors);
   if (source.features?.llm !== undefined && typeof source.features.llm !== "boolean") {
@@ -653,7 +633,7 @@ export function loadAndValidateScenario() {
       continue;
     }
     if ((talk.kind !== "sms" && talk.kind !== "chat") || talk.appId !== (talk.kind === "sms" ? "messages" : "chat")) errors.push(`${talk?.id ?? "talk"}: kind と appId の組み合わせが不正です。`);
-    if (!talk?.label || !Array.isArray(talk?.startBlocks) || talk.startBlocks.length === 0) {
+    if (!talk?.label || !Array.isArray(talk?.startBlocks)) {
       errors.push(`${talk?.id ?? "talk"}: label と startBlocks は必須です。`);
     }
     if (Array.isArray(talk?.startBlocks) && talk.startBlocks.some((block) => typeof block !== "string")) {
@@ -699,7 +679,7 @@ export function loadAndValidateScenario() {
     if (projectApp && content?.record && typeof content.record === "object" && !Array.isArray(content.record)) {
       projectApp.validateRecord(content.record, (message) => errors.push(`${content.id}: ${message}`));
     }
-    if (content?.appId === "messages" || content?.appId === "chat") {
+    if ((content?.appId === "messages" || content?.appId === "chat") && !content.record?.attachment) {
       repairableTalkContentIds.add(content.id);
       const record = content?.record && typeof content.record === "object" && !Array.isArray(content.record)
         ? content.record
@@ -727,7 +707,7 @@ export function loadAndValidateScenario() {
   const talkPeopleById = new Map();
   for (const person of authoredTalkPeople) {
     validateObjectKeys(`talkPerson ${person?.id ?? ""}`, person, ["id", "name", "role", "avatar"], errors);
-    if (!idPattern.test(person?.id ?? "") || !person?.name || !["owner", "npc"].includes(person?.role)) {
+    if (!idPattern.test(person?.id ?? "") || !person?.name || !["owner", "npc", "system"].includes(person?.role)) {
       errors.push(`talkPeople が不正です: ${person?.id ?? ""}`);
       continue;
     }
@@ -749,7 +729,12 @@ export function loadAndValidateScenario() {
   const attachments = Array.isArray(source.attachments) ? source.attachments : [];
   const attachmentsById = new Map();
   for (const attachment of attachments) {
-    validateObjectKeys(`attachment ${attachment?.id ?? ""}`, attachment, ["id", "type", "asset", "content", "lock", "title", "body", "poster"], errors);
+    validateObjectKeys(`attachment ${attachment?.id ?? ""}`, attachment, ["id", "type", "asset", "content", "lock", "title", "body", "poster", "search", "searchApp", "cond"], errors);
+    validateCondition(`attachment ${attachment?.id ?? ""}`, attachment?.cond, stateVariableDefinitions, errors);
+    if (attachment.search?.length) {
+      validateSearchTerms(`attachment ${attachment.id}`, attachment.search, errors);
+      if (!attachment.content || !["messages", "chat"].includes(attachment.searchApp)) errors.push(`${attachment.id}: 添付検索にはcontentとmessages/chatのsearchAppが必要です。`);
+    }
     const mediaType = ["image", "audio", "video"].includes(attachment?.type);
     const documentType = attachment?.type === "document";
     if (!idPattern.test(attachment?.id ?? "") || (!mediaType && !documentType) || (mediaType && !attachment?.asset)) {
@@ -774,7 +759,7 @@ export function loadAndValidateScenario() {
     }
     if (attachment.lock === "password") {
       const lockedContent = contents.find((content) => content.id === attachment.content);
-      if (!lockedContent || typeof lockedContent.record?.unlockCode !== "string") {
+      if (!lockedContent || typeof lockedContent.record?.unlockCode !== "string" || !lockedContent.record.unlockCode.trim() || lockedContent.record.unlockCode.length > 80) {
         errors.push(`${attachment.id}: password lockにはunlockCodeを持つcontentが必要です。`);
       }
     }
@@ -1093,7 +1078,7 @@ export function loadAndValidateScenario() {
     validateTextLength(`photoDescriptions.${id}`, description, 300, errors);
   }
 
-  const rules = rawRules.map((row) => {
+  let rules = rawRules.map((row) => {
     const label = `talk_flow.tsv:${row.__rowNumber}`;
     const order = row.__rowNumber;
     const talkSource = sourceTalks.find((talk) => talk?.id === row.talk);
@@ -1199,7 +1184,7 @@ export function loadAndValidateScenario() {
       errors.push(`${label}: search_agentの通常遷移は入力制御を除くnextの最後を無条件blockにしてください。`);
     }
     return {
-      id: stableId("rule", `${row.talk}\0${row.from}\0${order}\0${criteria}\0${row.next}`),
+      id: `validation_row_${order}`,
       talkId: row.talk,
       order,
       from: resolvedFrom,
@@ -1291,7 +1276,7 @@ export function loadAndValidateScenario() {
     const initialFrom = startBlocks.at(-1) ?? "";
     if (startBlocks.some((blockId) => !blockId)) errors.push(`${talk.id}: startBlocks に未定義blockがあります。`);
     if (startBlocks.some((blockId) => isRepeatTalkBlockId(blockScope, blockId))) errors.push(`${talk.id}: repeat生成blockをstartBlocksへ指定できません。`);
-    if (!fromIds.has(initialFrom)) errors.push(`${talk.id}: startBlocksの最後に対応するruleがありません。`);
+    if (initialFrom && !fromIds.has(initialFrom)) errors.push(`${talk.id}: startBlocksの最後に対応するruleがありません。`);
     for (const from of fromIds) {
       const defaults = talkRules.filter((rule) => rule.from === from && rule.isDefault);
       if (defaults.length !== 1) errors.push(`${talk.id}/${from}: default rule は1件必要です。`);
@@ -1362,6 +1347,8 @@ export function loadAndValidateScenario() {
 
   if (errors.length) throw new Error(errors.map((error) => `- ${error}`).join("\n"));
 
+  if (!overrides.source) validateHookReferences(authoring.hookScripts, source, talkBlocks);
+  rules = assignRuleIds(rules);
   const publicIds = {
     content: Object.fromEntries(contents.map((content) => [content.id, stableId("c", content.id)])),
     talk: Object.fromEntries(sourceTalks.map((talk) => [talk.id, stableId("t", talk.id)])),
@@ -1377,6 +1364,11 @@ export function loadAndValidateScenario() {
     generatedAudio: Object.fromEntries(generatedAudio.map((audio) => [audio.id, stableId("g", audio.id)])),
     scenarioEvent: Object.fromEntries(scenarioEventIds.map((eventId) => [eventId, stableId("e", eventId)]))
   };
+  const seenPublicIds = new Set();
+  for (const ids of Object.values(publicIds)) for (const id of Object.values(ids)) {
+    if (seenPublicIds.has(id)) throw new Error(`公開IDが衝突しました: ${id}`);
+    seenPublicIds.add(id);
+  }
   const normalizedApps = apps.map((app) => ({
     ...app,
     icon: app.icon || `project:${app.id}`,
@@ -1417,7 +1409,7 @@ export function loadAndValidateScenario() {
     inputEnabled: talk.inputEnabled ?? true,
     publicId: publicIds.talk[talk.id],
     startBlocks: talk.startBlocks.map((blockKey) => resolveScopedTalkBlockId(blockScope, talk.id, blockKey)),
-    initialFrom: resolveScopedTalkBlockId(blockScope, talk.id, talk.startBlocks.at(-1)),
+    initialFrom: talk.startBlocks.length ? resolveScopedTalkBlockId(blockScope, talk.id, talk.startBlocks.at(-1)) : "",
     rules: rules.filter((rule) => rule.talkId === talk.id).map(({ talkId: _talkId, ...rule }) => rule)
   }));
   const normalizedSearchAgentTalk = {
@@ -1446,11 +1438,11 @@ export function loadAndValidateScenario() {
     cond: String(call.cond ?? "").trim(),
     publicId: publicIds.incomingCall[call.id]
   }));
-  const albumMediaAttachmentLinks = attachments.flatMap((attachment) => {
+  const albumMediaAttachmentLinks = [...(source.albumMediaAttachmentLinks ?? []), ...attachments.flatMap((attachment) => {
     if (attachment.lock || !attachment.content || !["image", "audio", "video"].includes(attachment.type)) return [];
     const content = contents.find((item) => item.id === attachment.content);
     return content?.appId === "photos" ? [{ attachmentId: attachment.id, photoId: content.id }] : [];
-  });
+  })].filter((link, index, links) => !attachmentsById.get(link.attachmentId)?.lock && links.findIndex((candidate) => candidate.attachmentId === link.attachmentId && candidate.photoId === link.photoId) === index);
   const lockedContentPasswords = attachments.flatMap((attachment) => {
     if (attachment.lock !== "password" || !attachment.content) return [];
     const content = contents.find((item) => item.id === attachment.content);
@@ -1459,7 +1451,7 @@ export function loadAndValidateScenario() {
       ? [{ contentId: attachment.content, passwordHash: createHash("sha256").update(password.normalize("NFKC")).digest("hex") }]
       : [];
   });
-  const canonical = JSON.stringify({ source, rules, talkBlocks });
+  const canonical = JSON.stringify({ source, rules, talkBlocks, hookScripts: authoring.hookScripts });
   const revision = createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   const normalizedHooks = hooks.map((hook) => ({
     ...hook,
@@ -1489,6 +1481,7 @@ export function loadAndValidateScenario() {
   if (errors.length) throw new Error(errors.map((error) => `- ${error}`).join("\n"));
   const packageVersion = JSON.parse(fs.readFileSync(path.join(engineRootDir, "package.json"), "utf8")).version ?? "0.0.0";
   const baseProjectConstants = {
+    ...(source.publicProjectConstants ?? {}),
     "project.id": source.project.id,
     "project.name": source.project.name,
     "device.os_name": source.project.osName,
@@ -1498,8 +1491,8 @@ export function loadAndValidateScenario() {
     "device.wallpaper_url": source.project.wallpaperUrl,
     "search_agent.name": source.project.assistantName,
     "player.mode": playerMode,
-    "searchAgent.broken_link_tutorial_body": `ごめんなさい。アプリへのリンクが破損しています。右下の${source.project.assistantName}を開いて「メッセージ」と検索してみてください。`,
-    "searchAgent.broken_link_body": `リンクが破損しています。中身が分かれば、${source.project.assistantName}の検索結果から開けるかもしれません。`
+    "searchAgent.broken_link_tutorial_body": source.projectConstants?.["search_agent.broken_link_tutorial_body"] ?? "",
+    "searchAgent.broken_link_body": source.projectConstants?.["search_agent.broken_link_body"] ?? ""
   };
   const transcriptRevision = transcriptRevisionFor({
     version: 1,
@@ -1527,6 +1520,7 @@ export function loadAndValidateScenario() {
     transcriptRevision,
     playerMode,
     project: source.project,
+    projectConstants: source.projectConstants ?? {},
     apps: normalizedApps,
     projectAppIds: projectApps.map((app) => app.id),
     features: { llm: source.features?.llm === true },
@@ -1588,6 +1582,7 @@ export function loadAndValidateScenario() {
       "client.runtime_revision": clientRevision
     },
     hookIds: [...hookIds].sort(),
+    hookScripts: authoring.hookScripts,
     hookTalkBlocksByTalk,
     projectApps: projectApps.map((app) => ({ id: app.id, icon: app.icon }))
   };

@@ -1,0 +1,28 @@
+comment	id	cond	initial	search	repair_label	notes	image	description	audio	video	title	tags
+	evening_platform			"駅
+ホーム
+夕方
+写真"			media_7	夕暮れの駅のホーム。黄色い点字ブロックと遠くの列車が写っている。			夕方のホーム	"駅
+夕方"
+	rainy_window		repairable	"雨
+窓
+夜
+写真"	暗▚▞▐化された画像		rainy_window_image	雨粒の付いた窓越しに夜景が見え、右下寄りの青い灯りが最も大きく写っている。			雨の日の窓	"雨
+窓"
+	coffee_table			"コーヒー
+ノート
+机
+写真"			media_8	コーヒーカップと開いたノートが木製の机に置かれている。			休憩中	休憩
+	demo_video			"動画
+デモ動画
+カラーバー"			demo_received_image_attachment	プログラムで生成したカラーバーが動くデモ動画。		demo_video_attachment	デモ動画	"動画
+動作確認"
+	demo_received_image	demo_image_received	hidden	"受信画像
+画像受信テスト"			demo_received_image_attachment	メッセージ受信からアルバムへ自動登録されることを確認するダミー画像。			受信したダミー画像	"受信
+ダミーデータ"
+	dummy_photo_1			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ
+	dummy_photo_2			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ
+	dummy_photo_3			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ
+	dummy_photo_4			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ
+	dummy_photo_5			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ
+	dummy_photo_6			ダミーデータ			demo_received_image_attachment				ダミーデータ	ダミーデータ

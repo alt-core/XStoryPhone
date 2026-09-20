@@ -1,0 +1,94 @@
+comment	event	target	cond	script	notes	id	llm
+	session_started		!session_started	"context.state.set(""session_started"", true);
+context.todo.add(""find_old_note"");"		mark_session_started	
+	content_repaired	old_note	!old_note_opened	"context.state.set(""old_note_opened"", true);
+context.todo.remove(""find_old_note"");
+context.todo.add(""find_rainy_window"");
+context.talk.addBlock(""search_agent"", ""stage_photo"", { mode: ""stay"" });"		mark_old_note_opened	
+	content_repaired	rainy_window	!rainy_window_opened	"context.state.set(""rainy_window_opened"", true);
+context.todo.remove(""find_rainy_window"");
+if (context.state.get(""image_color_reported"") !== true) {
+  context.todo.add(""report_clue"");
+  context.talk.addBlock(""search_agent"", ""stage_report"", { mode: ""stay"" });
+}"		mark_rainy_window_opened	
+	talk_turn_completed	search_agent	clue_attachments_pending	"if (context.state.get(""clue_attachments_pending"") !== true) return;
+context.state.set(""clue_attachments_pending"", false);
+context.todo.remove(""find_rainy_window"");
+context.todo.remove(""report_clue"");
+context.todo.add(""unlock_recovery_note"");
+context.talk.addBlock(""guide"", ""clue_attachments"", { mode: ""stay"" });"		deliver_clue_attachments	
+	talk_turn_completed	search_agent		"const command = event.playerInput?.normalize(""NFKC"").trim() ?? """";
+if (command === ""ゲームオーバー演出"") {
+  context.effectSequence.gameOver(""hookから開始したゲームオーバー演出です。"");
+} else if (command === ""オールクリア演出"") {
+  context.effectSequence.allClear(""radio"", ""sample_radio"", false);
+} else if (command === ""ノイズ演出"") {
+  context.effect.noise(500);
+} else if (command === ""フラッシュ演出"") {
+  context.effect.flash();
+} else if (command === ""暗転演出"") {
+  context.effect.blackout();
+} else if (command === ""着信テスト"") {
+  if (context.state.get(""demo_call_completed"") !== true) {
+    context.schedule.after(""show_demo_call"", 1_500, {}, ""manual_demo_call"");
+  }
+} else if (command === ""遅延メッセージ"") {
+  if (context.state.get(""demo_delayed_message_received"") !== true) {
+    context.schedule.after(""deliver_demo_delayed_message"", 3_000, {}, ""manual_delayed_message"");
+  }
+} else if (command === ""画像受信テスト"") {
+  if (context.state.get(""demo_image_received"") !== true) {
+    context.talk.addBlock(""sms_media_receiver"", ""received_image"");
+    context.state.set(""demo_image_received"", true);
+  }
+}"		handle_demo_nav_test_command	
+	talk_turn_completed	guide		"const command = event.playerInput?.normalize(""NFKC"").trim() ?? """";
+if ((command === ""別ルームへ送る"" || command === ""メッセージ連携"") && context.state.get(""demo_sms_message_received"") !== true) {
+  context.talk.addBlock(""sms_receiver"", ""received_from_sms"");
+  context.state.set(""demo_sms_message_received"", true);
+} else if (command === ""チャットへ送る"") {
+  if (context.state.get(""chat_auth_verified"") === true && context.state.get(""demo_chat_cross_received"") !== true) {
+    context.talk.addBlock(""chat_receiver"", ""received_from_sms"");
+    context.state.set(""demo_chat_cross_received"", true);
+  }
+}"		handle_demo_message_test_command	
+	content_unlocked	sealed_note	!sealed_note_unlocked	"context.state.set(""sealed_note_unlocked"", true);
+context.todo.remove(""unlock_recovery_note"");
+context.todo.add(""restore_chat"");
+context.talk.addBlock(""search_agent"", ""stage_chat"", { mode: ""stay"" });"		mark_sealed_note_unlocked	
+	schedule_demo_call			"context.schedule.after(""show_demo_call"", 1_000, {}, ""demo_call_once"");"		schedule_demo_call	
+	scheduled_event	show_demo_call		"context.incoming.start(""demo_call"");"		show_demo_call	
+	scheduled_event	deliver_demo_delayed_message		"if (context.state.get(""demo_delayed_message_received"") === true) return;
+context.talk.addBlock(""sms_receiver"", ""received_delayed"");
+context.state.set(""demo_delayed_message_received"", true);"		deliver_demo_delayed_message	
+	incoming_call_completed	demo_call	!demo_call_completed	"context.state.set(""demo_call_completed"", true);
+context.talk.addBlock(""guide"", ""call_history_guide"", { mode: ""stay"" });
+context.talk.addBlock(""search_agent"", ""call_completed"", { mode: ""stay"" });"		mark_demo_call_completed	
+	demo_form			"context.effectSequence.gameOver(""フォーム送信によるゲームオーバーのデモです。"");"		demo_form_game_over	
+	demo_all_clear			"context.effectSequence.allClear(""radio"", ""sample_radio"", true);"		demo_all_clear	
+	demo_form_reject			"context.form.deny(""message_rejected"");"		demo_form_reject	
+	chat_auth_link_requested		sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified	"context.state.set(""chat_auth_link_sent"", true);
+context.todo.remove(""restore_chat"");
+context.todo.add(""authenticate_chat"");
+context.talk.addBlock(""guide"", ""chat_auth_link"", { mode: ""stay"" });
+context.talk.addBlock(""search_agent"", ""stage_auth"", { mode: ""stay"" });"		send_chat_auth_link	
+	message_link_opened	chat_auth_link_opened	chat_auth_link_sent && !chat_auth_verified	"if (event.actionId === ""chat_auth_link_opened"") {
+  context.state.set(""chat_auth_verified"", true);
+  context.todo.remove(""authenticate_chat"");
+  context.todo.add(""contact_owner"");
+  context.talk.addBlock(""search_agent"", ""stage_contact"", { mode: ""stay"" });
+}"		verify_chat_auth	
+	talk_turn_completed	lobby	demo_completed && !demo_completion_announced	"context.todo.remove(""contact_owner"");
+context.state.set(""demo_completion_announced"", true);
+context.talk.addBlock(""search_agent"", ""stage_done"", { mode: ""stay"" });"		complete_demo_todo	
+	talk_turn_completed	lobby		"const command = event.playerInput?.normalize(""NFKC"").trim() ?? """";
+if (command === ""チャット連携"" && context.state.get(""demo_chat_message_received"") !== true) {
+  context.talk.addBlock(""chat_receiver"", ""received_from_chat"");
+  context.state.set(""demo_chat_message_received"", true);
+} else if (command === ""メッセージへ送る"" && context.state.get(""demo_sms_cross_received"") !== true) {
+  context.talk.addBlock(""sms_receiver"", ""received_from_chat"");
+  context.state.set(""demo_sms_cross_received"", true);
+}"		handle_demo_chat_test_command	
+	audio_playback_completed	sample_radio	!radio_playback_completed	"if (event.contentId === ""sample_radio"") {
+  context.state.set(""radio_playback_completed"", true);
+}"		mark_radio_playback_completed

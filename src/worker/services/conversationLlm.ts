@@ -15,7 +15,7 @@ import {
   talkFlowMatchExtractionResponseSchema
 } from "../product/talkFlowMatchExtraction.ts";
 import { runTalkFlowMatchExtractionSamples } from "../product/llmMatchExtractionRunner.ts";
-import type { StructuredOutputProvider } from "../providers/structuredOutput.ts";
+import { canonicalLlmJson, llmRequestHashes, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
 
 type RecentMessage = { speaker: string; body: string };
 
@@ -41,22 +41,37 @@ export function semanticRuleSelector(
       defaultRuleId: input.defaultRuleId
     };
     const messages = buildTalkFlowLlmMessages(promptInput);
+    const schema = talkFlowLlmResponseSchema(promptInput.rules.map((rule) => rule.id));
+    const hashes = await llmRequestHashes(input.playerInput, canonicalLlmJson(messages), schema);
+    const observation = { source: "talk_flow" as const, talkId: context.talkId, fromId: context.fromId, ...hashes };
     const result = await provider.completeJson({
       taskId: "talk_rule_selection",
       temperature: 0,
       maxTokens: talkFlowLlmRuleSelectionMaxTokens,
       instructions: messages[0]?.content ?? "",
       input: JSON.parse(messages[1]?.content ?? "{}") as Record<string, unknown>,
-      schema: talkFlowLlmResponseSchema(promptInput.rules.map((rule) => rule.id))
+      schema,
+      observation
     });
     if (!result.ok) {
       return { ok: false, error: result.error === "provider_error" ? "provider_error" : "provider_invalid" };
     }
-    if (!parseTalkFlowLlmDecision(result.value)) {
+    const confidence = result.value.confidence;
+    const decision = typeof confidence === "number" && Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
+      ? parseTalkFlowLlmDecision(result.value) : null;
+    if (!decision || !promptInput.rules.some((rule) => rule.id === decision.rule_id)) {
+      provider.observeResult?.({ ...observation, taskId: "talk_rule_selection", status: "invalid_response" });
       return { ok: false, error: "provider_invalid" };
     }
-    const selected = selectTalkFlowRuleFromLlmDecision(result.value, promptInput);
-    return { ok: true, ruleId: selected.ruleId };
+    const selected = selectTalkFlowRuleFromLlmDecision(decision, promptInput);
+    const reviewSelection = {
+      decision, accepted: selected.accepted, selectedRuleId: decision.rule_id,
+      finalRuleId: selected.ruleId, ...(selected.fallbackReason ? { fallbackReason: selected.fallbackReason } : {}), ...hashes
+    };
+    provider.observeResult?.({ ...observation, taskId: "talk_rule_selection", status: selected.accepted ? "accepted" : "fallback",
+      accepted: selected.accepted, selectedRuleId: decision.rule_id, finalRuleId: selected.ruleId,
+      confidence: decision.confidence, reasonCode: decision.reason_code, fallbackReason: selected.fallbackReason });
+    return { ok: true, ruleId: selected.ruleId, reviewSelection };
   };
 }
 
@@ -65,21 +80,24 @@ export async function extractTalkRuleMatch(
   rule: TalkRule,
   playerInput: string,
   context: readonly RecentMessage[] = [],
-  talkContext: { talkId?: string; fromId?: string } = {}
+  talkContext: { talkId?: string; fromId?: string; onResult?: (result: { status: string; sampleCount: number; inputHash: string; promptHash: string; schemaHash: string }) => void } = {}
 ) {
   const parsedSpec = parseTalkFlowMatchSpec(rule.match);
   if (!parsedSpec.ok) return { ok: false as const, error: "provider_invalid" as const };
   const { spec } = parsedSpec;
-
-  async function sample() {
-    const messages = buildTalkFlowMatchExtractionMessages({
+  const messages = buildTalkFlowMatchExtractionMessages({
       talkId: talkContext.talkId ?? "",
       fromId: talkContext.fromId ?? rule.from,
       ruleId: rule.id,
       playerInput,
       recentMessages: context,
       spec
-    });
+  });
+  const schema = talkFlowMatchExtractionResponseSchema(spec);
+  const hashes = await llmRequestHashes(playerInput, canonicalLlmJson(messages), schema);
+
+  async function sample(sampleIndex: number) {
+    const observation = { source: "talk_flow" as const, talkId: talkContext.talkId, fromId: talkContext.fromId, ruleId: rule.id, sampleIndex, ...hashes };
     const result = await provider.completeJson({
       taskId: "talk_match_extraction",
       operation: "match_extraction",
@@ -87,16 +105,24 @@ export async function extractTalkRuleMatch(
       maxTokens: Math.max(512, Math.min(2_048, 256 + spec.items.length * 256)),
       instructions: messages[0]?.content ?? "",
       input: JSON.parse(messages[1]?.content ?? "{}") as Record<string, unknown>,
-      schema: talkFlowMatchExtractionResponseSchema(spec)
+      schema,
+      observation
     });
     if (!result.ok) return { status: result.error } as const;
     const output = parseTalkFlowMatchOutput(result.value, spec);
+    provider.observeResult?.({ ...observation, taskId: "talk_match_extraction", status: output.ok ? "sample_ready" : "invalid_response" }, { output: output.ok ? output.output : null });
     return output.ok
       ? { status: "ready" as const, output: output.output }
       : { status: "invalid_response" as const };
   }
 
   const result = await runTalkFlowMatchExtractionSamples(spec, rule.set, sample);
+  const status = result.ok ? "ready" : result.reason;
+  talkContext.onResult?.({ status, sampleCount: result.sampleCount, ...hashes });
+  provider.observeResult?.({ source: "talk_flow", taskId: "talk_match_extraction", talkId: talkContext.talkId,
+    fromId: talkContext.fromId, ruleId: rule.id, status, sampleCount: result.sampleCount,
+    ...hashes
+  }, { outputs: result.outputs, selected: result.ok ? result.matchGroups : null });
   if (result.ok) return { ok: true as const, values: result.matchGroups };
   return result.reason === "invalid_response"
     ? { ok: false as const, error: "provider_invalid" as const }

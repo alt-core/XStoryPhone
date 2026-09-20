@@ -1404,6 +1404,25 @@ export function contentByInternalId(internalId: string) {
   return workerScenario.contents.find((content) => content.id === internalId) ?? null;
 }
 
+// 添付の表示先はcontentの所有appとは限らない。既存の露出能力と表示済blockで確認する。
+function visibleTalkAttachmentMatches(publicContentId: string, appId: string, state: StoredPlayerState) {
+  if (appId !== "messages" && appId !== "chat") return false;
+  const content = contentByPublicId(publicContentId);
+  if (!content || !conditionMet(content.cond, state) || !state.revealedAttachmentContentIds.includes(content.id)) return false;
+  return workerScenario.talks.some((talk) => {
+    if (!isDeviceTalk(talk) || talk.appId !== appId || !talkAvailable(talk, state)) return false;
+    const stored = state.talks[talk.id];
+    if (!stored) return false;
+    const matches = (message: { attachment?: ScenarioMessageAttachment | null }) => message.attachment?.contentId === content.id;
+    if (visibleTalkMessagesForState(talk, state).some(matches)) return true;
+    return Object.entries(stored.blockDisplayCounts).some(([blockId, count]) => {
+      if (!Number.isInteger(count) || count <= 0 || blocksById.get(blockId)?.talkId !== talk.id) return false;
+      const displayedIds = [blockId, ...(workerScenario.repeatTalkBlocks[blockId] ?? []).slice(0, count - 1)];
+      return displayedIds.some((id) => messageTemplatesForBlock(id).some(matches));
+    });
+  });
+}
+
 export function observedAlbumMediaContentIds(
   talk: ScenarioTalk,
   state: StoredPlayerState,
@@ -1503,7 +1522,25 @@ export function searchScenario(query: string, state: StoredPlayerState) {
       title: talk.label,
       repairable: talk.initialState !== "normal" && !state.repairedContentIds.includes(talk.id)
     }));
-  return [...appResults, ...contentResults, ...talkResults];
+  const attachmentResults = workerScenario.attachments.flatMap((attachment) => {
+    const content = attachment.content ? contentByInternalId(attachment.content) : null;
+    if (!content || !attachment.searchApp || !attachment.search?.length
+      || !conditionMet(attachment.cond, state) || !termsMatch(attachment.search, value)) return [];
+    return [{
+      contentId: content.publicId,
+      appId: attachment.searchApp,
+      targetKind: "content" as const,
+      ...(attachment.title ? { title: attachment.title } : {}),
+      repairable: false
+    }];
+  });
+  const seen = new Set<string>();
+  return [...appResults, ...contentResults, ...talkResults, ...attachmentResults].filter((result) => {
+    const key = `${result.appId}:${result.contentId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function repairTarget(publicContentId: string, appId: string) {
@@ -1512,7 +1549,7 @@ export function repairTarget(publicContentId: string, appId: string) {
     return { kind: "app" as const, internalId: app.id, appId: app.id };
   }
   const content = contentByPublicId(publicContentId);
-  if (content && content.appId === appId && content.initialState !== "normal") {
+  if (content && content.appId === appId && content.initialState !== "normal" && typeof content.record.attachment !== "string") {
     return { kind: "content" as const, internalId: content.id, appId: content.appId };
   }
   const talk = talkByPublicId(publicContentId);
@@ -1526,6 +1563,8 @@ export function openTargetExists(publicContentId: string, appId: string, state: 
   const app = appById(publicContentId);
   if (app?.id === appId) return conditionMet(app.cond, state);
   const content = contentByPublicId(publicContentId);
+  if (content && typeof content.record.attachment === "string") return visibleTalkAttachmentMatches(publicContentId, appId, state);
+  if (content && content.appId !== appId && visibleTalkAttachmentMatches(publicContentId, appId, state)) return true;
   if (content?.appId === appId) {
     const historyRepair = talkHistoryRepairByContentId.get(content.id);
     return conditionMet(content.cond, state)

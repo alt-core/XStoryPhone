@@ -695,6 +695,12 @@ export function talkBranchReviewPageHtml() {
       context.className = 'criteria context';
       context.textContent = detail.context || '';
       pane.appendChild(context);
+      if (detail.totalInputCount > detail.inputPreviewLimit) {
+        pane.appendChild(ruleMeta('分岐件数は保存済み全入力。未集計のプレビューは直近' + detail.inputPreviewLimit + '件です。保存済みクラスタの根拠は期間にかかわらず取得します。'));
+      }
+      if (detail.unassignedInputCount) {
+        pane.appendChild(ruleMeta('現行rule IDに一致しない過去入力: ' + detail.unassignedInputCount + '件。現行分岐へ推定で混ぜず、入力レビューに保持しています。'));
+      }
       if (branch.cond) {
         pane.appendChild(ruleMeta('cond: ' + branch.cond));
       }

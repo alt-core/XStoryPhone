@@ -79,6 +79,10 @@ Parameters:
   LlmResultRetentionDays:
     Type: String
     Default: ""
+  LlmHookMaxRequests:
+    Type: Number
+    Default: 5
+    MinValue: 1
   ReservedConcurrency:
     Type: Number
     Default: 5
@@ -180,6 +184,7 @@ Resources:
           LLM_ANALYTICS_ENABLED: !Ref LlmAnalyticsEnabled
           LLM_DEBUG_LOGS: !Ref LlmDebugLogs
           LLM_RESULT_RETENTION_DAYS: !Ref LlmResultRetentionDays
+          LLM_HOOK_MAX_REQUESTS: !Ref LlmHookMaxRequests
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref AppTable

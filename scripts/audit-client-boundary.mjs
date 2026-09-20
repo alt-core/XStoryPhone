@@ -46,10 +46,14 @@ const publicInitialValues = new Set([
 ]);
 const publicSystemValues = new Set([
   "/system/call-caption-sample.wav",
-  "/system/incoming-call-bell.wav"
+  "/system/incoming-call-bell.wav",
+  // 作者がclientからの呼出しを許可したevent名は、公開APIの指定値として使う。
+  ...scenario.worker.clientCallableEvents
 ]);
 const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed", "search_agent"]);
 const protectedValues = new Set([
+  ...stringLeaves(scenario.worker.projectConstants),
+  ...stringLeaves(scenario.worker.lockedContentPasswords),
   ...scenario.worker.apps.flatMap((app) => stringLeaves({
     label: app.label,
     repairLabel: app.repairLabel,
@@ -110,7 +114,11 @@ for (const relativeBuildDir of process.argv.slice(2)) {
     failures.push(`クライアントbuildがありません: ${relativeBuildDir}`);
     continue;
   }
-  const bundleFiles = filesIn(buildDir).filter((file) => new Set([".css", ".html", ".js"]).has(path.extname(file)));
+  const buildFiles = filesIn(buildDir);
+  for (const file of buildFiles.filter((item) => item.endsWith(".map"))) {
+    failures.push(`${relativeBuildDir}: 公開成果物へsource mapを含めないでください: ${path.relative(buildDir, file)}`);
+  }
+  const bundleFiles = buildFiles.filter((file) => new Set([".css", ".html", ".js"]).has(path.extname(file)));
   const bundle = bundleFiles.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   for (const value of protectedValues) {
     if (bundle.includes(value)) failures.push(`${relativeBuildDir}: 未到達シナリオ値がclient buildへ混入しています: ${JSON.stringify(value)}`);

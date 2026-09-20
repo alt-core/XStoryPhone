@@ -250,7 +250,7 @@ reviewTest("D1版の入力ログ確認は会話入力の本文で絞り込む", 
     status: "completed",
     matched: false
   }, true);
-  const rows = await store.playerInputEvents({ playerId: "player-1", query: "灯り", limit: 100 });
+  const { items: rows } = await store.playerInputEvents({ playerId: "player-1", query: "灯り", limit: 100 });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].userInput, "黄色い灯り");
   assert.equal(rows[0].appId, null);

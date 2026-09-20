@@ -41,11 +41,11 @@ test("provider障害は早期終了し、全応答破損と正常候補の不一
       ? { status: "provider_error" }
       : { status: "ready", output: { value: "値" } };
   });
-  assert.deepEqual(providerError, { ok: false, reason: "provider_error", outputs: [] });
+  assert.deepEqual(providerError, { ok: false, reason: "provider_error", outputs: [], sampleCount: 2 });
   assert.equal(providerCalls, 2);
 
   const invalid = await runTalkFlowMatchExtractionSamples(spec, [], async () => ({ status: "invalid_response" }));
-  assert.deepEqual(invalid, { ok: false, reason: "invalid_response", outputs: [] });
+  assert.deepEqual(invalid, { ok: false, reason: "invalid_response", outputs: [], sampleCount: 5 });
 
   let index = 0;
   const values = ["A", "B", "C", "D", "E"];

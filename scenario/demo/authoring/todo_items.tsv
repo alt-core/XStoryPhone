@@ -1,0 +1,8 @@
+comment	id	text	cond	notes
+	find_old_note	ナビで「古いメモ」を検索する	!old_note_opened	
+	find_rainy_window	ナビで「雨」と検索し、写真の灯りの色を確かめる	old_note_opened && !rainy_window_opened && !image_color_reported	
+	report_clue	ナビに写真の灯りの色を伝える	rainy_window_opened && !image_color_reported	
+	unlock_recovery_note	パスワード「0420」で鍵付きメモを開く	image_color_reported && !sealed_note_unlocked	
+	restore_chat	「チャット」を検索して開き、再認証リンクを発行する	sealed_note_unlocked && !chat_auth_link_sent	
+	authenticate_chat	メッセージに届いたリンクからチャットを開く	chat_auth_link_sent && !chat_auth_verified	
+	contact_owner	サンプルルームでメッセージを送る	chat_auth_verified && !demo_completed

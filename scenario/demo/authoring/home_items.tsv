@@ -1,0 +1,20 @@
+comment	id	cond	initial	search	repair_label	notes	label	icon	accent	badge_cond
+	phone			"電話
+着信"			電話	phone	#67d78e	
+	messages			メッセージ			メッセージ	message_circle	#5cc8a7	
+	mail			"メール
+電子メール"			メール	mail	#aebcff	
+	notes			"メモアプリ
+ノートアプリ"			メモ	notebook_pen	#8fd2ff	
+	photos			"アルバム
+写真"			アルバム	album	#f0b35d	
+	calendar			"予定
+スケジュール"			スケジュール	calendar_days	#f07178	
+	radio			"ラジオ
+放送"			ラジオ	radio	#f4c86a	
+	browser			"ブラウザ
+タブ
+Web"			ブラウザ	globe_2	#79b9ff	
+	chat	sealed_note_unlocked	repairable	"チャット
+ロビー
+掲示板"	チャ▗▛▞▐▀		チャット	message_square_text	#7ee093

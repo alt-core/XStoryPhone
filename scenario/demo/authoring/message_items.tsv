@@ -1,0 +1,13 @@
+comment	id	cond	initial	search	repair_label	notes	name	avatar	start	input_visible	input_enabled
+	guide			"デモ連絡先
+連絡先"			デモ連絡先		"history_archive_a
+history_archive_b
+intro"		
+	sms_receiver						テスト受信箱		start		
+	sms_media_receiver						画像受信		start		
+	dummy_sms_1						ダミーデータ		start		
+	dummy_sms_2						ダミーデータ		start		
+	dummy_sms_3						ダミーデータ		start		
+	dummy_sms_4						ダミーデータ		start		
+	dummy_sms_5						ダミーデータ		start		
+	dummy_sms_6						ダミーデータ		start

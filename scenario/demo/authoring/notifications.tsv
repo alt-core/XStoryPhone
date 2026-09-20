@@ -1,0 +1,9 @@
+comment	id	app	target	title	body	cond	notes
+	clue_attachments	messages	guide	デモ連絡先	確認用の画像と鍵付き添付が届きました。	image_color_reported && !sealed_note_unlocked	
+	chat_auth	messages	guide	デモ連絡先	再認証用のリンクを発行しました。	chat_auth_link_sent && !chat_auth_verified	
+	demo_sms_message_received	messages	sms_receiver	テスト受信箱	別のメッセージルームから新着メッセージが届きました。	demo_sms_message_received	
+	demo_sms_cross_received	messages	sms_receiver	テスト受信箱	チャットからメッセージアプリへ新着が届きました。	demo_sms_cross_received	
+	demo_delayed_message_received	messages	sms_receiver	テスト受信箱	遅延イベントから新着メッセージが届きました。	demo_delayed_message_received	
+	demo_image_received	messages	sms_media_receiver	画像受信	アルバム未登録の画像が届きました。	demo_image_received	
+	demo_chat_message_received	chat	chat_receiver	連携受信ログ	別のチャットルームから新着が届きました。	demo_chat_message_received	
+	demo_chat_cross_received	chat	chat_receiver	連携受信ログ	メッセージアプリからチャットへ新着が届きました。	demo_chat_cross_received

@@ -27,6 +27,7 @@ import { copyStoredPlayerState, sha256 } from "./store.ts";
 import { createStructuredOutputProvider } from "../worker/providers/structuredOutput.ts";
 import {
   hookLlmModelVersion,
+  hookLlmRequestHashes,
   HookLlmUnavailableError,
   resolveHookLlmRequest,
   type HookLlmRequest
@@ -73,6 +74,7 @@ import { createGeneratedAudioIntent, dispatchGeneratedAudioIntent, publicGenerat
 import { runScenarioHooks, type ScenarioHookResult } from "../worker/services/scenarioHooks.ts";
 import { internalizeTalkCommand, semanticInputForTalkCommand, talkCommandAvailable } from "../worker/services/talkCommand.ts";
 import { resolveScenarioTalkRule } from "../worker/services/talkResolver.ts";
+import { talkFlowRecentMessages } from "../worker/services/talkContext.ts";
 import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../worker/services/talkOutput.ts";
 import { searchAgentPlayerMessageEvent } from "../worker/talkEvents.ts";
 import { latestTalkDeliveredAt, nextTalkMessageSentAt } from "../worker/talkMessageClock.ts";
@@ -224,16 +226,20 @@ async function recentMessagesForTalk(
   transcriptKey: string,
   clientValue: unknown
 ) {
-  if (browserMode()) return cleanRecentMessages(clientValue);
-  const transcript = await dependencies(c).store.loadTranscript(player.id, `talk:${talkId}`, transcriptKey);
   const talk = workerScenario.talks.find((item) => item.id === talkId);
   if (!talk) return [];
+  const withFromContext = (recent: readonly { speaker: string; body: string }[]) => talkFlowRecentMessages(
+    talk, player.state.talks[talkId]?.from ?? "",
+    effectiveStateValues(workerScenario.stateVariables, player.state.stateValues), recent
+  );
+  if (browserMode()) return withFromContext(cleanRecentMessages(clientValue));
+  const transcript = await dependencies(c).store.loadTranscript(player.id, `talk:${talkId}`, transcriptKey);
   if (isSearchAgentTalk(talk)) {
     const timeline = publicSearchAgentTimelineItems(
       transcript.messages.filter((message): message is StoredSearchAgentEvent => message.kind === "search_agent"),
       talk.publicId
     ).slice(-4);
-    return timeline.map((item) => {
+    return withFromContext(timeline.map((item) => {
       const body = item.kind === "message"
         ? item.body
         : item.results.length
@@ -243,16 +249,16 @@ async function recentMessagesForTalk(
         speaker: item.kind === "message" && item.sender === "owner" ? "player" : talk.label,
         body: cleanText(body, 500)
       };
-    });
+    }));
   }
-  return visibleTalkMessagesForState(
+  return withFromContext(visibleTalkMessagesForState(
     talk,
     player.state,
     transcript.messages.filter((message): message is StoredTalkEvent => "event_type" in message)
-  ).slice(-4).map((message) => ({
-    speaker: message.sender === "owner" ? "player" : message.senderName || "other",
+  ).filter((message) => message.body).slice(-2).map((message) => ({
+    speaker: message.sender === "owner" ? "player" : message.senderName || talk.label || "other",
     body: message.body
-  }));
+  })));
 }
 
 function initialScheduledEvents(now = Date.now()): InitialScheduledEvent[] {
@@ -558,14 +564,13 @@ async function applyHookResult(
       taskId: request.taskId,
       kind: request.kind,
       modelVersion: hookLlmModelVersion(llmEnv, request),
-      inputHash: await sha256(request.input),
-      promptHash: await sha256(request.kind === "match" ? request.rawMatch : request.instructions),
-      schemaHash: await sha256(request.kind === "match" ? request.rawMatch : JSON.stringify(request.schema)),
+      ...await hookLlmRequestHashes(request),
       status: resolved.status,
       output: resolved.output,
       errorCode: resolved.errorCode ?? null,
       expiresAt: new Date(Date.now() + Math.max(1, retentionDays) * 86_400_000).toISOString()
     });
+    await cleanupHookLlmCache(c);
     return record.output;
   };
   const result = await runScenarioHooks(state, event, {
@@ -1420,6 +1425,7 @@ app.post("/api/talk/send", async (c) => {
       nextFromId: nextFrom,
       responseSnapshot: {
         source: selection.source,
+        reviewSelection: selection.reviewSelection,
         match: selection.matchGroups,
         outputSteps: selection.rule.outputSteps,
         nextBlocks: selection.rule.nextBlocks,
@@ -1601,6 +1607,7 @@ app.post("/api/talk/send", async (c) => {
     nextFromId: nextFrom,
     responseSnapshot: {
       source: selection.source,
+      reviewSelection: selection.reviewSelection,
       match: selection.matchGroups,
       outputSteps: selection.rule.outputSteps,
       nextBlocks: selection.rule.nextBlocks,

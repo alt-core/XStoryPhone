@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import type { ServerEnv } from "../../server/store.ts";
+import { decodeReviewCursor } from "../../server/store.ts";
 import { isProductionEnvironment } from "../../server/environment.ts";
 import { talkBranchReviewPageHtml } from "./talkBranchReviewPage.ts";
 import { playerInputReviewPageHtml } from "./playerInputReviewPage.ts";
@@ -102,13 +103,38 @@ function inputReviewFilters(c: AppContext) {
   const playerId = cleanId(c.req.query("playerId"), 160);
   const talkId = cleanId(c.req.query("talkId"), 160);
   const query = cleanMessage(c.req.query("q"), 200);
+  const status = cleanId(c.req.query("status"), 80);
+  const cursor = cleanId(c.req.query("cursor"), 4096);
+  decodeReviewCursor(cursor);
+  const date = (key: string) => {
+    const raw = c.req.query(key)?.trim();
+    if (!raw) return undefined;
+    if (!Number.isFinite(Date.parse(raw))) throw new Error("invalid_review_filter");
+    return new Date(raw).toISOString();
+  };
+  const before = date("before");
+  const after = date("after");
+  if (before && after && after >= before) throw new Error("invalid_review_filter");
   const limit = Math.max(1, Math.min(500, Number.parseInt(c.req.query("limit") ?? "100", 10) || 100));
   return {
     ...(playerId ? { playerId } : {}),
     ...(talkId ? { talkId } : {}),
     ...(query ? { query } : {}),
+    ...(status ? { status } : {}),
+    ...(before ? { before } : {}),
+    ...(after ? { after } : {}),
+    ...(cursor ? { cursor } : {}),
     limit
   };
+}
+
+async function inputReviewPage(c: AppContext) {
+  try {
+    return await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
+  } catch (error) {
+    if (error instanceof Error && ["invalid_review_cursor", "invalid_review_filter"].includes(error.message)) return null;
+    throw error;
+  }
 }
 
 function csvCell(value: unknown) {
@@ -132,14 +158,16 @@ export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
   app.get("/api/admin/player-input-review/events", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const items = await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
-    return c.json({ ok: true, items });
+    const page = await inputReviewPage(c);
+    return page ? c.json({ ok: true, ...page }) : c.json({ ok: false, error: "invalid_request" }, 400);
   });
 
   app.get("/api/admin/player-input-review.csv", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const items = await dependencies(c).store.playerInputEvents(inputReviewFilters(c));
+    const page = await inputReviewPage(c);
+    if (!page) return c.json({ ok: false, error: "invalid_request" }, 400);
+    const { items } = page;
     const rows = [
       ["occurred_at", "user_input", "matched", "talk_id", "from_id", "rule_id", "next_from_id", "player_id", "response_snapshot_json"],
       ...items.map((item) => [
@@ -178,7 +206,9 @@ export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const talkId = cleanId(c.req.query("talkId"));
     const fromId = cleanId(c.req.query("fromId"));
-    const result = await talkBranchReviewAnalysisInputs(dependencies(c).store, talkId, fromId);
+    const ruleId = cleanId(c.req.query("ruleId"));
+    const limit = Math.max(1, Math.min(500, Number.parseInt(c.req.query("limit") ?? "500", 10) || 500));
+    const result = await talkBranchReviewAnalysisInputs(dependencies(c).store, talkId, fromId, ruleId || undefined, limit);
     return result
       ? c.json({ ok: true, ...result })
       : c.json({ ok: false, error: "not_found" }, 404);

@@ -4,12 +4,14 @@ import type {
   HookLlmCacheRecord,
   InitialScheduledEvent,
   InputEventRecord,
-  PlayerInputReviewEvent,
+  PlayerInputReviewFilters,
+  PlayerInputReviewPage,
   PlayerCommitEffects,
   PlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
   ReviewInputEvent,
+  ReviewInputQuery,
   ReviewJudgment,
   ReviewJudgmentFilter,
   ReviewJudgmentStatus,
@@ -21,6 +23,8 @@ import type {
   TranscriptAppend
 } from "../../server/store.ts";
 import {
+  decodeReviewCursor,
+  encodeReviewCursor,
   MAX_SESSIONS_PER_PLAYER,
   limitedTranscript,
   isSearchAgentTranscriptConflictError,
@@ -502,12 +506,7 @@ export class D1Store implements AppStore {
     ).run();
   }
 
-  async playerInputEvents(filters: {
-    playerId?: string;
-    talkId?: string;
-    query?: string;
-    limit: number;
-  }): Promise<PlayerInputReviewEvent[]> {
+  async playerInputEvents(filters: PlayerInputReviewFilters): Promise<PlayerInputReviewPage> {
     const clauses = ["event_type = 'talk_send'"];
     const values: unknown[] = [];
     if (filters.playerId) {
@@ -518,11 +517,23 @@ export class D1Store implements AppStore {
       clauses.push("talk_id = ?");
       values.push(filters.talkId);
     }
-    if (filters.query) {
-      clauses.push("instr(normalized_input, ?) > 0");
-      values.push(filters.query.normalize("NFC").trim().toLocaleLowerCase("ja"));
+    for (const [field, operator, value] of [
+      ["status", "=", filters.status], ["occurred_at", "<", filters.before], ["occurred_at", ">=", filters.after]
+    ] as const) {
+      if (value) { clauses.push(`${field} ${operator} ?`); values.push(value); }
     }
-    values.push(filters.limit);
+    const cursor = decodeReviewCursor(filters.cursor);
+    if (cursor) {
+      if (!cursor.at || !cursor.id || Object.keys(cursor).length !== 2) throw new Error("invalid_review_cursor");
+      clauses.push("(occurred_at < ? OR (occurred_at = ? AND id < ?))");
+      values.push(cursor.at, cursor.at, cursor.id);
+    }
+    if (filters.query) {
+      clauses.push("(instr(normalized_input, ?) > 0 OR instr(lower(response_snapshot_json), ?) > 0)");
+      const query = filters.query.normalize("NFC").trim().toLocaleLowerCase("ja");
+      values.push(query, query);
+    }
+    values.push(filters.limit + 1);
     const result = await this.db.prepare(
       `SELECT id, player_id, occurred_at, app_id, talk_id, from_id, user_input,
               status, matched, rule_id, next_from_id, response_snapshot_json
@@ -543,20 +554,26 @@ export class D1Store implements AppStore {
       next_from_id: string | null;
       response_snapshot_json: string;
     }>();
-    return (result.results ?? []).map((row) => ({
-      id: row.id,
-      playerId: row.player_id,
-      occurredAt: row.occurred_at,
-      appId: row.app_id,
-      talkId: row.talk_id,
-      fromId: row.from_id,
-      userInput: row.user_input,
-      status: row.status,
-      matched: row.matched === 1,
-      ruleId: row.rule_id,
-      nextFromId: row.next_from_id,
-      responseSnapshot: jsonRecord(row.response_snapshot_json)
-    }));
+    const rows = result.results ?? [];
+    const selected = rows.slice(0, filters.limit);
+    const last = selected[selected.length - 1];
+    return {
+      nextCursor: rows.length > filters.limit && last ? encodeReviewCursor({ at: last.occurred_at, id: last.id }) : null,
+      items: selected.map((row) => ({
+        id: row.id,
+        playerId: row.player_id,
+        occurredAt: row.occurred_at,
+        appId: row.app_id,
+        talkId: row.talk_id,
+        fromId: row.from_id,
+        userInput: row.user_input,
+        status: row.status,
+        matched: row.matched === 1,
+        ruleId: row.rule_id,
+        nextFromId: row.next_from_id,
+        responseSnapshot: jsonRecord(row.response_snapshot_json)
+      }))
+    };
   }
 
   private generatedAudioSelect() {
@@ -660,13 +677,39 @@ export class D1Store implements AppStore {
     }));
   }
 
-  async reviewInputEvents(talkId: string, fromId: string): Promise<ReviewInputEvent[]> {
+  async reviewInputCounts(talkId: string, fromId: string) {
+    const result = await this.db.prepare(
+      "SELECT rule_id, COUNT(*) AS count FROM player_input_events WHERE event_type = 'talk_send' AND talk_id = ? AND from_id = ? AND rule_id IS NOT NULL GROUP BY rule_id"
+    ).bind(talkId, fromId).all<{ rule_id: string; count: number }>();
+    return Object.fromEntries((result.results ?? []).map((row) => [row.rule_id, row.count]));
+  }
+
+  async reviewInputEvents(talkId: string, fromId: string, query: ReviewInputQuery = {}): Promise<ReviewInputEvent[]> {
+    if (query.ids) {
+      const rows: ReviewInputEvent[] = [];
+      const ids = [...new Set(query.ids)];
+      // D1のbind数上限に収める。根拠件数自体を切り捨てる上限ではない。
+      for (let offset = 0; offset < ids.length; offset += 80) {
+        const batch = ids.slice(offset, offset + 80);
+        rows.push(...await this.loadReviewInputEvents(talkId, fromId, { ...query, ids: batch }));
+      }
+      return rows;
+    }
+    return this.loadReviewInputEvents(talkId, fromId, query);
+  }
+
+  private async loadReviewInputEvents(talkId: string, fromId: string, query: ReviewInputQuery): Promise<ReviewInputEvent[]> {
+    const where = ["event_type = 'talk_send'", "talk_id = ?", "from_id = ?", "rule_id IS NOT NULL"];
+    const values: unknown[] = [talkId, fromId];
+    if (query.ruleId) { where.push("rule_id = ?"); values.push(query.ruleId); }
+    if (query.ids) { where.push(`id IN (${query.ids.map(() => "?").join(",")})`); values.push(...query.ids); }
+    if (!query.ids) values.push(query.limit ?? 1000);
     const result = await this.db.prepare(
       `SELECT id, rule_id, user_input, normalized_input, response_snapshot_json
        FROM player_input_events
-       WHERE event_type = 'talk_send' AND talk_id = ? AND from_id = ? AND rule_id IS NOT NULL
-       ORDER BY occurred_at DESC LIMIT 1000`
-    ).bind(talkId, fromId).all<{ id: string; rule_id: string; user_input: string; normalized_input: string; response_snapshot_json: string }>();
+       WHERE ${where.join(" AND ")}
+       ORDER BY occurred_at DESC, id DESC ${query.ids ? "" : "LIMIT ?"}`
+    ).bind(...values).all<{ id: string; rule_id: string; user_input: string; normalized_input: string; response_snapshot_json: string }>();
     return (result.results ?? []).map((row) => ({
       id: row.id,
       ruleId: row.rule_id,
@@ -676,12 +719,21 @@ export class D1Store implements AppStore {
     }));
   }
 
-  async reviewTrialInputs(talkId: string, fromId: string): Promise<ReviewTrialInput[]> {
+  async reviewTrialInputs(talkId: string, fromId: string, ids?: readonly string[]): Promise<ReviewTrialInput[]> {
+    if (ids && !ids.length) return [];
+    if (ids && ids.length > 80) {
+      const rows: ReviewTrialInput[] = [];
+      for (let offset = 0; offset < ids.length; offset += 80) rows.push(...await this.reviewTrialInputs(talkId, fromId, ids.slice(offset, offset + 80)));
+      return rows;
+    }
     const result = await this.db.prepare(
-      `SELECT id, actual_rule_id, user_input FROM talk_branch_review_trial_inputs
-       WHERE talk_id = ? AND from_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 500`
-    ).bind(talkId, fromId).all<{ id: string; actual_rule_id: string; user_input: string }>();
-    return (result.results ?? []).map((row) => ({ id: row.id, actualRuleId: row.actual_rule_id, userInput: row.user_input }));
+      `SELECT id, actual_rule_id, user_input, response_snapshot_json FROM talk_branch_review_trial_inputs
+       WHERE talk_id = ? AND from_id = ? AND status = 'active'
+       ${ids ? `AND id IN (${ids.map(() => "?").join(",")})` : ""}
+       ORDER BY created_at DESC, id DESC ${ids ? "" : "LIMIT 500"}`
+    ).bind(talkId, fromId, ...(ids ?? [])).all<{ id: string; actual_rule_id: string; user_input: string; response_snapshot_json: string }>();
+    return (result.results ?? []).map((row) => ({ id: row.id, actualRuleId: row.actual_rule_id, userInput: row.user_input,
+      responseSnapshot: jsonRecord(row.response_snapshot_json) }));
   }
 
   async reviewClusters(talkId: string, fromId: string, scenarioRevision: string): Promise<ReviewCluster[]> {
@@ -781,12 +833,12 @@ export class D1Store implements AppStore {
 
   async updateReviewJudgment(talkId: string, fromId: string, id: string, input: { comment: string; newBranchNote: string; reviewerLabel: string; updatedAt: string }) {
     await this.db.prepare(
-      "UPDATE talk_branch_review_judgments SET comment = ?, new_branch_note = ?, reviewer_label = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ?"
+      "UPDATE talk_branch_review_judgments SET comment = ?, new_branch_note = ?, reviewer_label = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ? AND status = 'open'"
     ).bind(input.comment, input.newBranchNote, input.reviewerLabel, input.updatedAt, id, talkId, fromId).run();
   }
 
-  async updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string) {
-    await this.db.prepare("UPDATE talk_branch_review_judgments SET status = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ?")
+  async updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string, onlyOpen = false) {
+    await this.db.prepare(`UPDATE talk_branch_review_judgments SET status = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ?${onlyOpen ? " AND status = 'open'" : ""}`)
       .bind(status, updatedAt, id, talkId, fromId).run();
   }
 
@@ -798,7 +850,7 @@ export class D1Store implements AppStore {
   }
 
   async updateReviewJudgmentSourceIds(talkId: string, fromId: string, id: string, sourceEventIds: string[], updatedAt: string) {
-    await this.db.prepare("UPDATE talk_branch_review_judgments SET source_event_ids_json = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ?")
+    await this.db.prepare("UPDATE talk_branch_review_judgments SET source_event_ids_json = ?, updated_at = ? WHERE id = ? AND talk_id = ? AND from_id = ? AND status = 'open'")
       .bind(JSON.stringify(sourceEventIds), updatedAt, id, talkId, fromId).run();
   }
 

@@ -182,6 +182,39 @@ export type PlayerInputReviewEvent = {
   responseSnapshot: Record<string, unknown>;
 };
 
+export type PlayerInputReviewFilters = {
+  playerId?: string;
+  talkId?: string;
+  status?: string;
+  query?: string;
+  before?: string;
+  after?: string;
+  cursor?: string;
+  limit: number;
+};
+
+export type PlayerInputReviewPage = {
+  items: PlayerInputReviewEvent[];
+  nextCursor: string | null;
+};
+
+// 継続位置は認可情報ではない。DB固有の位置だけをopaqueな文字列で受け渡す。
+export function encodeReviewCursor(value: Record<string, string>) {
+  return btoa(encodeURIComponent(JSON.stringify(value)));
+}
+
+export function decodeReviewCursor(value: string | undefined): Record<string, string> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(atob(value)));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+      || Object.values(parsed).some((item) => typeof item !== "string")) throw new Error();
+    return parsed as Record<string, string>;
+  } catch {
+    throw new Error("invalid_review_cursor");
+  }
+}
+
 export type GeneratedAudioJob = {
   id: string;
   audioId: string;
@@ -241,10 +274,13 @@ export type ReviewInputEvent = {
   responseSnapshot: Record<string, unknown>;
 };
 
+export type ReviewInputQuery = { limit?: number; ruleId?: string; ids?: readonly string[] };
+
 export type ReviewTrialInput = {
   id: string;
   actualRuleId: string;
   userInput: string;
+  responseSnapshot: Record<string, unknown>;
 };
 
 export type HookLlmCacheRecord = {
@@ -314,20 +350,16 @@ export interface AppStore {
   requeueScheduledEvent(playerId: string, id: string): Promise<void>;
 
   recordInputEvent(event: InputEventRecord, enabled: boolean): Promise<void>;
-  playerInputEvents(filters: {
-    playerId?: string;
-    talkId?: string;
-    query?: string;
-    limit: number;
-  }): Promise<PlayerInputReviewEvent[]>;
+  playerInputEvents(filters: PlayerInputReviewFilters): Promise<PlayerInputReviewPage>;
 
   generatedAudioJob(playerId: string, audioId: string): Promise<GeneratedAudioJob | null>;
   saveGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<void>;
   generatedAudioJobs(playerId: string): Promise<GeneratedAudioJob[]>;
 
   reviewJudgments(filter: ReviewJudgmentFilter): Promise<ReviewJudgment[]>;
-  reviewInputEvents(talkId: string, fromId: string): Promise<ReviewInputEvent[]>;
-  reviewTrialInputs(talkId: string, fromId: string): Promise<ReviewTrialInput[]>;
+  reviewInputCounts(talkId: string, fromId: string): Promise<Record<string, number>>;
+  reviewInputEvents(talkId: string, fromId: string, query?: ReviewInputQuery): Promise<ReviewInputEvent[]>;
+  reviewTrialInputs(talkId: string, fromId: string, ids?: readonly string[]): Promise<ReviewTrialInput[]>;
   reviewClusters(talkId: string, fromId: string, scenarioRevision: string): Promise<ReviewCluster[]>;
   replaceReviewClusters(
     talkId: string,
@@ -348,7 +380,7 @@ export interface AppStore {
   }): Promise<void>;
   saveReviewJudgment(judgment: ReviewJudgment): Promise<void>;
   updateReviewJudgment(talkId: string, fromId: string, id: string, input: { comment: string; newBranchNote: string; reviewerLabel: string; updatedAt: string }): Promise<void>;
-  updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string): Promise<void>;
+  updateReviewJudgmentStatus(talkId: string, fromId: string, id: string, status: ReviewJudgmentStatus, updatedAt: string, onlyOpen?: boolean): Promise<void>;
   deleteReviewTrialInput(talkId: string, fromId: string, id: string, updatedAt: string): Promise<boolean>;
   updateReviewJudgmentSourceIds(talkId: string, fromId: string, id: string, sourceEventIds: string[], updatedAt: string): Promise<void>;
 }
@@ -378,6 +410,7 @@ export type AppConfig = {
     LLM_PROFILE_ULTRA_TIMEOUT_MS?: string;
     LLM_ANALYTICS_ENABLED?: string;
     LLM_DEBUG_LOGS?: string;
+    LLM_HOOK_MAX_REQUESTS?: string;
   };
 };
 

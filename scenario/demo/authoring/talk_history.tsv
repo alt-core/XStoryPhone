@@ -1,0 +1,7 @@
+comment	id	cond	initial	search	repair_label	notes	talk	block
+	guide_history_archive_a		repairable	"消えた連絡記録
+履歴修復A"	破損した履歴		guide	history_archive_a
+	guide_history_archive_b		repairable	"連続破損の記録
+履歴修復B"	破損した履歴		guide	history_archive_b
+	lobby_history_archive	sealed_note_unlocked	repairable	"消えた談話記録
+チャット履歴修復"	破損した履歴		lobby	history_archive

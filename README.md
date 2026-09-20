@@ -8,7 +8,7 @@ XStoryPhoneは、仮想スマートフォンを舞台に物語を作るための
 
 - 電話、メッセージ、メール、メモ、アルバム、スケジュール、ラジオ、チャット、ブラウザの各UI
 - 検索AIオーバーレイと、検索結果を開いた時だけ行うデータ修復
-- JSONとTSVによるシナリオ作成
+- Google Sheetsを正本に、取得した全表TSVからシナリオを生成
 - 状態条件によるアプリ、コンテンツ、会話、通知、検索AIの台本の出し分け
 - 正規表現だけでも運用できる会話分岐と、任意のLLM provider
 - 全talk共通の入力欄制御とQuick Reply
@@ -38,10 +38,10 @@ npm run dev
 ## 最初に編集する場所
 
 1. `scenario/demo/` を `scenario/my-story/` などの作品用ディレクトリへ複製します。
-2. 作品用の `scenario.json` で、作品名、OS名、アプリ、コンテンツ、通知、hookを編集します。
-3. `authoring/talk_blocks.tsv` で会話本文、添付、表示間隔を編集します。
-4. `authoring/talk_flow.tsv` で会話分岐を編集します。
-5. `scenario/my-story/hooks.ts` に作品固有の状態変化を書きます。
+2. 作品用の `scenario.source.json` に、SheetとローカルTSVの対応・取得先を設定します。本文やコンテンツをJSONへ二重に書きません。
+3. Google Sheetsの `project_constants`、`home_items`、`note_items`、`photo_items` などで端末設定とコンテンツを制作します。デモは取得済みTSVを同梱しているため、接続設定なしでもローカル起動できます。
+4. `talk_blocks` で会話本文・添付・Quick Reply・表示間隔を、`talk_flow` で分岐を、`hooks.script` で進行処理を編集します。
+5. 明示的にpullしたTSVを検証・ビルドします。ローカル修正のcompare/putを含む手順は[Google Sheetsでの制作](docs/xstoryphone/spreadsheet-authoring.md)を参照してください。buildやdeployはSheetを上書きしません。
 6. 端末外の画面が必要な作品では、`src/project/ProjectStage.svelte` に作品固有Stageを追加します。
 7. 作品固有アプリが必要なら、`src/project/apps.ts`へ1エントリ追加し、規約pathへcomponentを置きます。
 8. `public/demo/` のデモ素材を作品の素材へ置き換えます。
@@ -73,6 +73,7 @@ npm test
 ## XStoryPhoneのドキュメント
 
 - [シナリオ作成](docs/xstoryphone/scenario.md)
+- [Google Sheetsでの制作・同期](docs/xstoryphone/spreadsheet-authoring.md)
 - [プレイヤー進行の保存モード](docs/xstoryphone/player-modes.md)
 - [会話エンジン](docs/xstoryphone/conversation.md)
 - [運営レビュー](docs/xstoryphone/review.md)

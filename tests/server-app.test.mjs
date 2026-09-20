@@ -128,15 +128,19 @@ class MemoryStore {
   }
   async playerInputEvents(filters) {
     this.playerInputReviewFilters = filters;
-    return this.playerInputReviewRows;
+    return { items: this.playerInputReviewRows, nextCursor: null };
   }
   async generatedAudioJob(_playerId, audioId) { return structuredClone(this.audioJobs.get(audioId) ?? null); }
   async saveGeneratedAudioJob(_playerId, job) { this.audioJobs.set(job.audioId, structuredClone(job)); }
   async generatedAudioJobs() { return [...this.audioJobs.values()].map((job) => structuredClone(job)); }
   async reviewJudgments() { return this.reviewJudgmentRows; }
-  async reviewInputEvents(talkId, fromId) {
+  async reviewInputCounts() {
+    return this.reviewEvents.reduce((counts, event) => ({ ...counts, [event.ruleId]: (counts[event.ruleId] ?? 0) + 1 }), {});
+  }
+  async reviewInputEvents(talkId, fromId, query = {}) {
     this.reviewInputRequests.push([talkId, fromId]);
-    return this.reviewEvents;
+    return this.reviewEvents.filter((event) => (!query.ruleId || event.ruleId === query.ruleId)
+      && (!query.ids || query.ids.includes(event.id))).slice(0, query.ids ? undefined : query.limit ?? 1000);
   }
   async reviewTrialInputs(talkId, fromId) {
     this.reviewTrialRequests.push([talkId, fromId]);
@@ -2427,7 +2431,7 @@ test("監修集計APIは認証・revision・入力所属を検証してStoreへ�
   assert.equal(unknownSource.status, 400);
 });
 
-test("旧rule IDの監修入力は保存snapshotから現在ruleへ一意に割り当てる", async () => {
+test("旧rule IDの入力はsnapshotが同じでも現在ruleへ推定で混ぜない", async () => {
   const store = new MemoryStore();
   const talk = workerScenario.talks[0];
   const rule = talk.rules.find((item) => item.from !== "*" && item.outputSteps.length > 0);
@@ -2453,9 +2457,11 @@ test("旧rule IDの監修入力は保存snapshotから現在ruleへ一意に割�
 
   const detailResponse = await app.request(`http://localhost/api/admin/talk-branch-review/from?${params}`);
   assert.equal(detailResponse.status, 200);
-  const branch = (await detailResponse.json()).detail.branches.find((item) => item.ruleId === rule.id);
-  assert.equal(branch.inputCount, 1);
-  assert.deepEqual(branch.clusters.flatMap((cluster) => cluster.sourceEventIds), ["legacy-event"]);
+  const detail = (await detailResponse.json()).detail;
+  const branch = detail.branches.find((item) => item.ruleId === rule.id);
+  assert.equal(branch.inputCount, 0);
+  assert.equal(detail.unassignedInputCount, 2);
+  assert.deepEqual(branch.clusters.flatMap((cluster) => cluster.sourceEventIds), []);
 
   const replacement = {
     talkId: talk.id,
@@ -2476,8 +2482,8 @@ test("旧rule IDの監修入力は保存snapshotから現在ruleへ一意に割�
     headers: { "content-type": "application/json" },
     body: JSON.stringify(replacement)
   });
-  assert.equal(saved.status, 200);
-  assert.deepEqual(store.replacedClusters?.[4][0].sourceEventIds, ["legacy-event"]);
+  assert.equal(saved.status, 400);
+  assert.equal(store.replacedClusters, null);
 
   const unresolved = await app.request("http://localhost/api/admin/talk-branch-review/clusters", {
     method: "POST",

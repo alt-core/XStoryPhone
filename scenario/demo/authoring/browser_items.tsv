@@ -1,0 +1,13 @@
+comment	id	cond	initial	search	repair_label	notes	title	url	allowed_urls
+	browser_guide			"ブラウザ
+タブ
+Web
+案内"			ブラウザ操作ガイド	/demo/browser/start.html	/demo/browser/details.html
+	dummy_browser_1			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	dummy_browser_2			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	dummy_browser_3			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	dummy_browser_4			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	dummy_browser_5			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	dummy_browser_6			ダミーデータ			ダミーデータ	/demo/browser/dummy.html	
+	browser_archive		repairable	"アーカイブタブ
+ブラウザの記録"	タ▚▐▀▜ブ		アーカイブ	/demo/browser/archive-k7m2q.html
