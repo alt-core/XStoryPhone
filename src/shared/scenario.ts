@@ -249,7 +249,7 @@ export type WorkerScenario = ClientScenario & {
   hooks: readonly ScenarioHookDefinition[];
   generatedAudio: readonly GeneratedAudioDefinition[];
   albumMediaAttachmentLinks: readonly { attachmentId: string; photoId: string }[];
-  lockedContentPasswords: readonly (PartOwned & { contentId: string; answers: readonly string[]; loadParts: readonly string[]; answerIndex?: StaticAnswerIndex })[];
+  lockedContentPasswords: readonly (PartOwned & { contentId: string; target: "attachment" | "content"; answers: readonly string[]; loadParts: readonly string[]; answerIndex?: StaticAnswerIndex })[];
   publicIds: {
     content: Record<string, string>;
     talk: Record<string, string>;

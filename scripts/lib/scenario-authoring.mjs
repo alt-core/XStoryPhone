@@ -5,6 +5,7 @@ import { activeRows, loadTsvSheet, splitList, text } from "./tsv-utils.mjs";
 import { applyScenarioAuthoringSheetInheritance } from "./scenario-authoring-inheritance.mjs";
 import { normalizeRadioCues } from "./radio-cues.mjs";
 import { answerCandidates } from "../../src/shared/talkCriteria.ts";
+import { projectApps } from "../../src/project/apps.ts";
 
 // Sheetsの制作表を入力とし、現在の共通実行modelへ変換する。JSONは接続設定だけ。
 const common = ["comment", "id", "cond", "initial", "search", "repair_label", "notes"];
@@ -243,6 +244,7 @@ export function compileScenarioAuthoring(workbook) {
     contents.push(item(row, talk.appId, { talk: talk.id, block: text(row, "block") }));
   }
   for (const row of rows("project_items")) contents.push(item(row, text(row, "app"), jsonCell(row, "record", {})));
+  const projectContentIds = new Set(rows("project_items").map(row => text(row, "id")));
   const passwords = new Set();
   for (const row of rows("passwords")) {
     const id = text(row, "content");
@@ -253,7 +255,8 @@ export function compileScenarioAuthoring(workbook) {
     passwords.add(id);
     let content = contents.find((content) => content.id === id);
     const attachment = attachments.find((attachment) => attachment.content === id && attachment.lock === "password");
-    if (!attachment) throw new Error(`passwords.${id}: lock=passwordの添付がありません。`);
+    const projectContent = content && projectContentIds.has(id) && projectApps.some(app => app.id === content.appId);
+    if (!attachment && !projectContent) throw new Error(`passwords.${id}: lock=passwordの添付、またはproject_itemsの作品アプリのコンテンツが必要です。`);
     if (!content) {
       // item行を持たない添付も、非公開の開封データとして保持する。一覧には出さない。
       content = { id, appId: attachment.searchApp || "messages", initialState: "hidden", cond: "", search: [], record: { attachment: attachment.id } };

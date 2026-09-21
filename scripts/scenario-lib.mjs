@@ -680,7 +680,8 @@ export function loadAndValidateScenario(overrides = {}) {
     validateRecord(usesStandardMedia(content.appId) ? {...content,record:resolveMediaRecord(content.record, source.attachments)} : content, errors);
     const projectApp = projectAppById.get(content?.appId);
     if (projectApp && content?.record && typeof content.record === "object" && !Array.isArray(content.record)) {
-      projectApp.validateRecord(content.record, (message) => errors.push(`${content.id}: ${message}`));
+      const { unlockCode: _password, unlockLoadParts: _parts, ...record } = content.record;
+      projectApp.validateRecord(record, (message) => errors.push(`${content.id}: ${message}`));
     }
     if ((content?.appId === "messages" || content?.appId === "chat") && !content.record?.attachment) {
       repairableTalkContentIds.add(content.id);
@@ -1465,12 +1466,12 @@ export function loadAndValidateScenario(overrides = {}) {
     const content = contents.find((item) => item.id === attachment.content);
     return content?.appId === "photos" ? [{ attachmentId: attachment.id, photoId: content.id }] : [];
   })].filter((link, index, links) => !attachmentsById.get(link.attachmentId)?.lock && links.findIndex((candidate) => candidate.attachmentId === link.attachmentId && candidate.photoId === link.photoId) === index);
-  const lockedContentPasswords = attachments.flatMap((attachment) => {
-    if (attachment.lock !== "password" || !attachment.content) return [];
-    const content = contents.find((item) => item.id === attachment.content);
-    const password = typeof content?.record?.unlockCode === "string" ? content.record.unlockCode : "";
+  const lockedContentPasswords = contents.flatMap((content) => {
+    const attachment = attachments.find(item => item.lock === "password" && item.content === content.id);
+    if (!attachment && !projectAppById.has(content.appId)) return [];
+    const password = typeof content.record?.unlockCode === "string" ? content.record.unlockCode : "";
     return password
-      ? [{ contentId: attachment.content, answers: answerCandidates(password, true).map(candidate => candidate.value), loadParts: content.record.unlockLoadParts ?? [] }]
+      ? [{ contentId: content.id, target: attachment ? "attachment" : "content", answers: answerCandidates(password, true).map(candidate => candidate.value), loadParts: content.record.unlockLoadParts ?? [] }]
       : [];
   });
   const canonical = JSON.stringify({ source, rules, talkBlocks, hookScripts: authoring.hookScripts });

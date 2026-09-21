@@ -21,4 +21,8 @@ export type ProjectStageContext = {
     eventId: string,
     fields?: Record<string, string>
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  unlockContent: (
+    contentId: string,
+    password: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 };

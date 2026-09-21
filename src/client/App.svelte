@@ -333,7 +333,8 @@
     playerState,
     projectState: playerState?.projectState ?? {},
     deviceView,
-    dispatchScenarioEvent: dispatchProjectScenarioEvent
+    dispatchScenarioEvent: dispatchProjectScenarioEvent,
+    unlockContent: unlockProjectContent
   };
   $: if (displayedTalkTarget && activeAppId !== displayedTalkTarget.appId) {
     displayedTalkTarget = null;
@@ -3441,27 +3442,39 @@
     return handleTalkSend("sms", talkId, message, "この会話には返信できません。");
   }
 
-  async function handleContentUnlock(contentId: string, password: string) {
-    if (!uiState.sessionToken) {
-      return { ok: false, error: "ロック解除後に開けます。" };
-    }
-
+  async function requestContentUnlock(contentId: string, password: string): Promise<Awaited<ReturnType<typeof unlockContent>>> {
+    if (globalErrorVisible) return { ok: false, error: "unlock_unavailable" };
+    const sessionToken = uiState.sessionToken;
+    const generation = playerOperationGeneration;
+    if (!sessionToken) return { ok: false, error: "unauthorized" };
     let result: Awaited<ReturnType<typeof unlockContent>>;
     try {
-      result = await unlockContent(uiState.sessionToken, contentId, password);
+      result = await unlockContent(sessionToken, contentId, password);
     } catch {
-      return { ok: false, error: "開けませんでした。もう一度お試しください。" };
+      return { ok: false, error: "unlock_unavailable" };
     }
-
+    if (globalErrorVisible || generation !== playerOperationGeneration || sessionToken !== uiState.sessionToken) {
+      return { ok: false, error: "unlock_unavailable" };
+    }
     if (!result.ok) {
       applyErrorPlayerState(result);
-      return { ok: false, error: result.status === 400 && result.error === "invalid"
-        ? "パスワードを確認してください。"
-        : "開けませんでした。もう一度お試しください。" };
+      return result;
     }
-
     applyPlayerState(result.playerState);
     enqueuePresentation(result.presentation);
+    return result;
+  }
+
+  async function unlockProjectContent(contentId: string, password: string) {
+    const result = await requestContentUnlock(contentId, password);
+    return result.ok ? { ok: true as const } : { ok: false as const, error: result.error };
+  }
+
+  async function handleContentUnlock(contentId: string, password: string) {
+    if (!uiState.sessionToken) return { ok: false, error: "ロック解除後に開けます。" };
+    const result = await requestContentUnlock(contentId, password);
+    if (!result.ok) return { ok: false, error: result.status === 400 && result.error === "invalid"
+      ? "パスワードを確認してください。" : "開けませんでした。もう一度お試しください。" };
     return { ok: true };
   }
 

@@ -3,7 +3,7 @@ import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
   "revision": "5b32a29799efc5c2",
-  "clientRevision": "client_fb12607f02e1f578",
+  "clientRevision": "client_de4a14aa7fe2af7a",
   "transcriptRevision": "transcript_ac357c85435ce829",
   "playerMode": "browser",
   "project": {
@@ -5219,6 +5219,7 @@ export const workerScenario: WorkerScenario = {
   "lockedContentPasswords": [
     {
       "contentId": "sealed_note",
+      "target": "attachment",
       "answers": [
         "0420"
       ],

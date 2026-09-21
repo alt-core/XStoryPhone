@@ -57,7 +57,8 @@ const publicSystemValues = new Set([
 const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed", "search_agent"]);
 const protectedValues = new Set([
   ...stringLeaves(scenario.worker.projectConstants),
-  ...stringLeaves(scenario.worker.lockedContentPasswords),
+  // 対象IDはStageの公開APIで指定する識別子。判定種別等の構造値を秘密文言と混同しない。
+  ...scenario.worker.lockedContentPasswords.flatMap(({answers, loadParts}) => stringLeaves({answers, loadParts})),
   ...scenario.worker.apps.flatMap((app) => stringLeaves({
     label: app.label,
     repairLabel: app.repairLabel,

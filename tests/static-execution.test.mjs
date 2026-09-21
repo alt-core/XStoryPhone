@@ -162,6 +162,35 @@ test("passwordの複数候補はsecretと同じ照合で、必要partの取得�
   assert.equal(unlocked.playerState.projectState.part_seen, true);
 });
 
+test("Stage用passwordは利用可能な作品contentだけを受け付け、正答後の既存hookとpart取得を通る",async t=>{
+  const f=await filesFixture(t,scenario=>{
+    const w=scenario.worker;
+    w.apps.push({id:"case_files",label:"装置",icon:"project:case_files",accent:"#888",initialState:"normal",search:[],cond:"",badgeCond:""});
+    w.contents.push({id:"keypad",publicId:"c_keypad",appId:"case_files",initialState:"normal",part:"base",cond:"",search:[],record:{title:"入力装置",body:"番号を入力"}},
+      {id:"inactive_keypad",publicId:"c_inactive",appId:"case_files",initialState:"normal",part:"base",cond:"old_note_opened",search:[],record:{title:"未有効",body:""}});
+    w.publicIds.content.keypad="c_keypad";w.publicIds.content.inactive_keypad="c_inactive";
+    w.lockedContentPasswords.push({contentId:"keypad",target:"content",answers:["stage-secret-4286"],loadParts:["evidence"],part:"base"},
+      {contentId:"inactive_keypad",target:"content",answers:["stage-secret-4286"],loadParts:["evidence"],part:"base"});
+    w.hooks.push({event:"content_unlocked",target:"keypad",cond:"",part:"evidence",order:1001,handler:"stage_unlocked",llm:false});
+    scenario.hookScripts.stage_unlocked='state.set("old_note_opened", true);';
+  });
+  assert.ok(!fs.readFileSync(path.join(f.outputDir,f.manifest.base),"utf8").includes("stage-secret-4286"));
+  const execution=createStaticPlayerExecution(f.options);await execution.initialize();
+  await request(execution,"/api/session/start");
+  const before=f.requests.length;
+  const unlock=(contentId,password)=>execution.request("/api/content/unlock",{method:"POST",body:JSON.stringify({contentId,password})});
+  assert.equal((await unlock("inactive_keypad","stage-secret-4286")).status,409);
+  assert.equal((await unlock("keypad","wrong")).status,400);
+  assert.equal(f.requests.length,before,"不可・誤答は回答ファイルを取りに行かない");
+  const response=await unlock("keypad","stage-secret-4286");assert.equal(response.status,200);
+  const {playerState}=await response.json();
+  assert.equal(playerState.projectState.part_seen,true);
+  assert.ok(playerState.contentStates.some(item=>item.contentId==="c_keypad"&&item.state==="unlocked"));
+  assert.ok(playerState.visibleDeviceState.projectApps.case_files.some(item=>item.id==="c_inactive"),"取得part側のcontent_unlockedが条件フラグを進める");
+  assert.ok(!JSON.stringify(playerState.searchAgentMessages).includes("stage-secret-4286"));
+  assert.ok(!JSON.stringify(playerState.smsMessages).includes("stage-secret-4286"));
+});
+
 test("load_part空欄のpasswordも回答JSONで照合し、先行配布の演出用途を禁止しない", async t => {
   const f = await filesFixture(t, ({ worker }) => {
     const attachment = worker.attachments.find(item => item.content === "sealed_note");

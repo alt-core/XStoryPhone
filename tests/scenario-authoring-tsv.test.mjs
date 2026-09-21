@@ -46,6 +46,20 @@ test("メモ本文の改行・quoteと素材参照、stateの型・空欄継承�
   assert.equal(resolveMediaRecord(updated.contents.find(c => c.id === photo.id).record,updated.attachments).imageUrl, "/fixture/unreached-image.webp");
 });
 
+test("passwordsは作品アプリの入力口を添付なしで定義し、正答を公開recordへ混ぜない", () => {
+  const {workbook}=loadScenarioAuthoring("scenario/demo");
+  workbook.home_items.rows.push({id:"case_files",label:"装置",accent:"#888888",initial:"normal"});
+  workbook.project_items.rows.push({id:"keypad",app:"case_files",initial:"normal",record:JSON.stringify({title:"入力装置",body:"番号を入力"})});
+  workbook.passwords.rows.push({content:"keypad",password:'"0420"',load_part:""});
+  const {source}=compileScenarioAuthoring(workbook);
+  const {worker}=loadAndValidateScenario({source});
+  assert.deepEqual(worker.lockedContentPasswords.find(item=>item.contentId==="keypad"),{
+    contentId:"keypad",target:"content",answers:["0420"],loadParts:[],part:"base"
+  });
+  assert.deepEqual(worker.contents.find(item=>item.id==="keypad").record,{title:"入力装置",body:"番号を入力"});
+  assert.equal(worker.lockedContentPasswords.find(item=>item.contentId==="sealed_note").target,"attachment");
+});
+
 test("TSVの表・列・素材参照を欠落させても成功扱いにしない", () => fixture((dir) => {
   const note = path.join(dir, "authoring/note_items.tsv");
   const before = fs.readFileSync(note, "utf8");

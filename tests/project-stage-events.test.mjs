@@ -4,6 +4,28 @@ import { componentFunctionHarness } from "./helpers/component-script-harness.mjs
 
 const appUrl = new URL("../src/client/App.svelte", import.meta.url);
 
+test("Stage解錠は状態と演出を共通適用し、拒否理由と遅着の破棄を保つ",async()=>{
+  const states=[],presentations=[];
+  let response={ok:true,state:"unlocked",playerState:{stateVersion:2},presentation:{effects:[]}};
+  const context=componentFunctionHarness(appUrl,["requestContentUnlock","unlockProjectContent","applyErrorPlayerState","isUnauthorizedFailure","requiresPlayerEntry"],{
+    uiState:{sessionToken:"session"},playerOperationGeneration:0,globalErrorVisible:false,
+    async unlockContent(_session,id,password){assert.equal(id,"keypad");assert.equal(password,"0420");return response;},
+    applyPlayerState(state){states.push(state);},enqueuePresentation(value){presentations.push(value);},
+    showBrowserProgressSizeError(){},clearUnauthorizedPlayerUi(){assert.fail("正常拒否で認証を消さない");}
+  });
+  assert.equal((await context.unlockProjectContent("keypad","0420")).ok,true);
+  assert.deepEqual(states,[response.playerState]);assert.deepEqual(presentations,[response.presentation]);
+  for(const [status,error] of [[400,"invalid"],[409,"incoming_call_active"],[422,"unauthorized"]]){
+    response={ok:false,status,error,playerState:{stateVersion:3}};
+    assert.equal((await context.unlockProjectContent("keypad","0420")).error,error);
+    assert.equal(states.at(-1).stateVersion,3);assert.equal(context.globalErrorVisible,false);
+  }
+  const count=states.length;
+  context.unlockContent=async()=>{context.playerOperationGeneration++;return {ok:true,playerState:{stateVersion:4}};};
+  assert.equal((await context.unlockProjectContent("keypad","0420")).ok,false);
+  assert.equal(states.length,count);
+});
+
 function stageHarness(response) {
   const states = [];
   const errors = [];

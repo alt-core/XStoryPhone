@@ -28,7 +28,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `call_items` | 着信履歴・留守番電話、音声、書き起こし |
 | `gen_audio` / `incoming_calls` | 生成音声定義／着信・字幕 |
 | `todo_items` / `notifications` | ToDo／通知 |
-| `hooks` / `passwords` | eventと同期script／鍵付き添付の正解 |
+| `hooks` / `passwords` | eventと同期script／添付・作品アプリの入力口の正答 |
 | `calendar_items` / `photo_items` / `note_items` | 予定／画像・動画／メモ |
 | `radio_items` | ラジオの音声、cue、字幕、投稿フォーム |
 | `talk_people` / `talk_flow` / `talk_blocks` | 発話者／分岐／台本・添付・Quick Reply |
@@ -121,6 +121,8 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 会話で添付する場合はtalk_blocksのattachmentに同じIDを書きます。attachmentsのcontentは対応するコンテンツID、posterは画像attachment IDです。画像・音声・動画とアルバム項目の対応は生成時に作られ、会話内メディアからアルバムへ移動できます。still_videoと実動画の両方をメッセージ・チャットへ添付できます。
 
 鍵付き添付はattachmentsにlock=passwordとcontentを指定し、`passwords`にcontent、引用符付きpassword候補、load_partを書きます。候補と複数partはセル内改行で列挙します。load_part空欄は追加取得なしです。document型はbodyが必要です。server/browserの判定はAPI側で行い、staticは[回答JSON方式](static.md)を使います。通常の一覧項目を持たない鍵付き添付も定義できます。
+
+`passwords.content`には、登録済み作品アプリの`project_items.id`も指定できます。この場合は添付行なしで、[Stageの入力装置から解錠](extensions.md#stageの入力装置からpasswordを判定する)できます。対象は条件を満たし、取得済み・利用可能であることが必要です。正答や未取得本文を公開recordへ記述しないでください。
 
 ### 電話の字幕と書き起こし
 

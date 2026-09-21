@@ -17,5 +17,5 @@ export const demoProjectConstantsGenerated = {
   "device.lock_pin_length": 0,
   "searchAgent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
   "searchAgent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
-  "client.runtime_revision": "client_fb12607f02e1f578"
+  "client.runtime_revision": "client_de4a14aa7fe2af7a"
 } as const;

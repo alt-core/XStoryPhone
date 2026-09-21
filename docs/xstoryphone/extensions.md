@@ -50,9 +50,35 @@ PhoneStageの表示は次の3種類です。
 
 作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
 
-`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは `project_constants` の `event.client_callable` へセル内改行で列挙してください。
+`context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent`、`unlockContent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは `project_constants` の `event.client_callable` へセル内改行で列挙してください。
 
 Stage表示に必要な状態変数だけ、`state_vars` シートの該当行の `public` を `true` にします。例えば `presentation_started` 行に指定します。指定していない状態変数はクライアントへ公開されません。
+
+### Stageの入力装置からpasswordを判定する
+
+`context.unlockContent(contentId, password)`は、添付の解錠と同じ判定・part取得・hook・状態適用を使います。server/browser/static共通です。作品アプリの入力口は`project_items`へ1件として定義し、`passwords.content`にそのIDを指定してください。`src/project/apps.ts`に登録した作品アプリが対象で、添付行は不要です。例:
+
+| id | app | initial | record |
+|---|---|---|---|
+| keypad | case_files | normal | `{"title":"入力装置","body":"番号を入力してください"}` |
+
+`passwords`では`content=keypad`、`password`に引用符付きの正答候補、`load_part`に正答後の取得先を書きます。複数候補・追加取得なしの空欄も、添付と同じ仕様です。
+
+```ts
+const result = await context.unlockContent("keypad", enteredValue);
+if (!result.ok) {
+  // 入力を残し、invalid（誤答）等に応じて作品側の文面を表示する。
+  rejection = result.error;
+}
+```
+
+作品アプリではTSVのID、またはPlayerState上の公開IDを渡せます。入力口とpassword入口は取得済みにし、アプリとコンテンツが利用可能で、condを満たしている必要があります。repairableな入力口は先に修復してください。会話に登場させる必要はありません。従来の鍵付き添付は、引き続き会話内で表示済みであることが必要です。
+
+成功時は`{ ok: true }`、不受理時は`{ ok: false, error }`です。誤答・利用不能・着信中断・hook拒否は致命エラーへ倒さず、応答のPlayerStateがあればコアへ適用してから返します。通信失敗は`unlock_unavailable`で返し、Stageは二重送信を抑止しながら再操作を案内してください。自動再送は行いません。実際の認証失効・保存障害等は既存の共通処理に従います。
+
+`load_part`の取得、`part_loaded`、`content_unlocked`は既存の順序で実行されます。新しいpartに置いた`content_unlocked`も呼ばれます。入力文字列を会話履歴へ追加しません。staticでは正答をStageやhookへ直書きせず、`passwords`の回答JSON方式を使ってください。入力口のrecordは判定前にも公開されるため、隠したい本文・素材は取得先partへ置きます。
+
+解錠済みかは既存の`context.playerState.contentStates`で、対象の公開IDと`state === "unlocked"`を確認できます。TSV IDで表示を管理したい場合は、`content_unlocked`で公開状態変数を立てる方法も使えます。解錠の再送でhookが呼ばれることはあるため、一度だけの演出は状態変数で守ってください。
 
 ### イベントが受理されなかった場合
 

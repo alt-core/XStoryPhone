@@ -1066,12 +1066,15 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const body = c.body;
     const contentId = cleanText(body?.contentId, 160);
     const password = cleanText(body?.password, 100);
-    const content = contentByPublicId(contentId);
+    // Stageは作品のTSV IDで入力口を指定できる。既存UIは公開IDのまま使う。
+    const authoredContent = contentByInternalId(contentId);
+    const content = contentByPublicId(contentId)
+      ?? (authoredContent && runtime.workerScenario.projectAppIds.includes(authoredContent.appId) ? authoredContent : null);
     const passwordDefinition = content ? lockedContentPassword(content.id) : undefined;
-    const attachmentVisible = content
-      && openTargetExists(content.publicId, content.appId, player.state)
-      && player.state.revealedAttachmentContentIds.includes(content.id);
-    if (!content || !attachmentVisible) {
+    const available = content && passwordDefinition && (passwordDefinition.target === "content"
+      ? contentAvailable(content, player.state)
+      : openTargetExists(content.publicId, content.appId, player.state) && player.state.revealedAttachmentContentIds.includes(content.id));
+    if (!content || !available) {
       return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
     }
     const loadParts = password && passwordDefinition
