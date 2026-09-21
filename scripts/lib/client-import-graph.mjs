@@ -33,7 +33,7 @@ function resolveImport(fromFile, specifier) {
   return null;
 }
 
-export function collectClientImportGraph(root, entry = path.join(root, "src/client/main.ts")) {
+export function collectClientImportGraph(root, entry = path.join(root, "src/client/main.ts"), options = {}) {
   const reachable = new Set();
   const pending = [entry];
   const unresolved = [];
@@ -41,7 +41,9 @@ export function collectClientImportGraph(root, entry = path.join(root, "src/clie
     const file = pending.pop();
     if (!file || reachable.has(file)) continue;
     reachable.add(file);
-    const source = fs.readFileSync(file, "utf8");
+    const source = file === path.join(root, "src/client/generated/playerExecution.generated.ts") && options.executionMode
+      ? options.executionMode === "static" ? 'export { localPlayerExecution } from "../../static/clientExecution.ts";' : ""
+      : fs.readFileSync(file, "utf8");
     for (const pattern of importPatterns) {
       for (const match of source.matchAll(pattern)) {
         if (!match[1].startsWith(".")) continue;

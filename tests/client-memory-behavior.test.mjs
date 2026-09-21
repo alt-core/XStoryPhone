@@ -102,6 +102,7 @@ test("memoryのAPI通信だけCookieとHTTP cacheを使わず、JSON token等の
   for (const memory of [false, true]) {
     const requests = [];
     const context = moduleFunctions("../src/client/system/playerApi.ts", ["fetchPlayerApi"], {
+      localPlayerExecution: undefined,
       isMemoryStorage: memory,
       apiUrl: (path) => `https://api.example.com${path}`,
       fetch(url, init) { requests.push({ url, init }); return Promise.resolve("response"); }

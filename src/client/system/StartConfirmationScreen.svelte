@@ -5,6 +5,7 @@
   export let variant: "confirmation" | "hold" = "confirmation";
   export let onConfirm: () => void | Promise<{ ok: boolean; error?: string }> = () => {};
   export let browserMode = false;
+  export let staticMode = false;
   export let memoryMode = false;
 
   let busy = false;
@@ -42,7 +43,7 @@
     <div class="confirmation-panel">
       <section class="confirmation-block">
         <ShieldCheck size={20} strokeWidth={2.1} aria-hidden="true" />
-        <p>{browserMode ? "検索語や会話入力は、判定のためサーバで処理します。" : "ゲームの進行や会話分岐の調整のため、入力内容をサーバで処理・保存します。"}個人を特定できる情報は入力しないようお願いします。</p>
+        <p>{staticMode ? "入力の判定はこのブラウザー内で行います。進行に必要なファイルの読み込みには通信します。" : browserMode ? "検索語や会話入力は、判定のためサーバで処理します。" : "ゲームの進行や会話分岐の調整のため、入力内容をサーバで処理・保存します。"}個人を特定できる情報は入力しないようお願いします。</p>
       </section>
 
       <section class="confirmation-block">

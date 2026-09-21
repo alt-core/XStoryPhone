@@ -25,9 +25,13 @@ function stateType(definition) {
 
 try {
   const scenario = loadAndValidateScenario();
+  for (const warning of scenario.partWarnings) console.warn(`[part確認] ${warning}`);
   const hooksModule = buildScenarioHooksModule(scenario.hookScripts);
   fs.mkdirSync(sharedGeneratedDir, { recursive: true });
   fs.mkdirSync(clientGeneratedDir, { recursive: true });
+  writeIfChanged(path.join(clientGeneratedDir, "playerExecution.generated.ts"), scenario.worker.playerMode === "static"
+    ? '// scenario:build により生成。\nexport { localPlayerExecution } from "../../static/clientExecution.ts";\n'
+    : '// scenario:build により生成。\nimport type { LocalPlayerExecution } from "../system/playerExecution.ts";\nexport const localPlayerExecution: LocalPlayerExecution | undefined = undefined;\n');
   writeIfChanged(
     path.join(sharedGeneratedDir, "workerScenario.generated.ts"),
     `// scenario:build により生成されます。直接編集しないでください。\nimport type { WorkerScenario } from "../shared/scenario";\n\nexport const workerScenario: WorkerScenario = ${JSON.stringify(scenario.worker, null, 2)};\n`

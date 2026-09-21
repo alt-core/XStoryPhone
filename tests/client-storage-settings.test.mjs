@@ -21,14 +21,15 @@ test("クライアント保存は未指定なら現行の保存名とpersistent�
   assert.equal(prefixStorageKey("xstoryphone.ui", ""), "xstoryphone.ui");
 });
 
-test("memoryはbrowser専用とし、未知値や空白を黙って補正しない", () => {
+test("memoryはbrowser/staticで使え、未知値や空白を黙って補正しない", () => {
+  assert.equal(resolveClientStorageSettings("static", { VITE_XSTORYPHONE_CLIENT_STORAGE: "memory" }).mode, "memory");
   assert.deepEqual(resolveClientStorageSettings("browser", {
     VITE_XSTORYPHONE_CLIENT_STORAGE: "memory",
     VITE_XSTORYPHONE_STORAGE_PREFIX: "作品-prod"
   }), { mode: "memory", prefix: "作品-prod" });
   assert.throws(() => resolveClientStorageSettings("server", {
     VITE_XSTORYPHONE_CLIENT_STORAGE: "memory"
-  }), /browser モード専用/u);
+  }), /browser\/static モード専用/u);
   for (const mode of ["", "Memory", "persist", " memory", "memory ", "persistent\n"]) {
     assert.throws(() => resolveClientStorageSettings("browser", {
       VITE_XSTORYPHONE_CLIENT_STORAGE: mode
@@ -62,6 +63,7 @@ function configForPlayer(playerMode) {
       if (name.endsWith("/shared/clientStorage.ts")) return { resolveClientStorageSettings };
       if (name.endsWith("/shared/deploymentUrls.ts")) return { normalizeHttpOrigin, normalizeStaticBase };
       if (name.endsWith("/static-build-assets.ts")) return { staticBuildAssets };
+      if (name.endsWith("/static-execution-assets.ts")) return { staticExecutionAssets: () => ({ name: "test-static-execution" }) };
       throw new Error(`未定義のimport: ${name}`);
     }
   };
@@ -83,7 +85,7 @@ test("Viteが実際に読む.envとshell値を、生成projectのplayer.modeと�
   try {
     writeFileSync(path.join(directory, ".env"), "VITE_XSTORYPHONE_CLIENT_STORAGE=memory\nVITE_XSTORYPHONE_STORAGE_PREFIX=env-project\n");
     for (const command of ["serve", "build"]) {
-      await assert.rejects(resolve("server", command), /browser モード専用/u);
+      await assert.rejects(resolve("server", command), /browser\/static モード専用/u);
     }
     const browserConfig = await resolve("browser");
     assert.equal(browserConfig.env.VITE_XSTORYPHONE_CLIENT_STORAGE, "memory");

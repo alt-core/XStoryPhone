@@ -8,6 +8,7 @@ import type {
   PlayerInputReviewPage,
   PlayerCommitEffects,
   PlayerRecord,
+  SessionPlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
   ReviewInputEvent,
@@ -50,8 +51,8 @@ type AttributeValue = {
 
 type DynamoItem = Record<string, AttributeValue>;
 type BatchWriteRequest =
-  | { DeleteRequest: { Key: DynamoItem } }
-  | { PutRequest: { Item: DynamoItem } };
+  | { DeleteRequest: { Key: DynamoItem; }; }
+  | { PutRequest: { Item: DynamoItem; }; };
 type DynamoResult = {
   Item?: DynamoItem;
   Items?: DynamoItem[];
@@ -211,13 +212,13 @@ export class DynamoStore implements AppStore {
     }
   }
 
-  private async deleteKeys(keys: Array<{ PK: string; SK: string }>) {
+  private async deleteKeys(keys: Array<{ PK: string; SK: string; }>) {
     await this.batchWrite(keys.map((key) => ({ DeleteRequest: { Key: item(key) } })));
   }
 
   async createPasscodeSession(
     accessCode: string,
-    initialState: StoredPlayerState,
+    initialState: StoredPlayerState | null,
     initialSchedules: readonly InitialScheduledEvent[] = []
   ) {
     const accessCodeHash = await sha256(`xstoryphone:access-code:v1:${accessCode}`);
@@ -247,6 +248,7 @@ export class DynamoStore implements AppStore {
                   playerId,
                   state: initialState,
                   stateVersion: 0,
+                  generation: 0,
                   createdAt: now,
                   updatedAt: now
                 }),
@@ -261,6 +263,7 @@ export class DynamoStore implements AppStore {
                   SK: `SCHEDULE#${schedule.id}`,
                   entityType: "SCHEDULE",
                   scheduleId: schedule.id,
+                  instanceId: crypto.randomUUID(),
                   eventId: schedule.eventId,
                   fields: schedule.fields,
                   dueAt: schedule.dueAt,
@@ -283,6 +286,7 @@ export class DynamoStore implements AppStore {
     }
 
     const playerId = stringValue(access.playerId);
+    const sessionGeneration = Number((await this.get(playerPk(playerId), "STATE"))?.generation ?? 0);
     const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/gu, "");
     const tokenHash = await sha256(sessionToken);
     const now = nowIso();
@@ -294,6 +298,7 @@ export class DynamoStore implements AppStore {
         entityType: "SESSION",
         playerId,
         tokenHash,
+        generation: sessionGeneration,
         createdAt: now,
         lastSeenAt: now,
         GSI1PK: playerPk(playerId),
@@ -349,13 +354,16 @@ export class DynamoStore implements AppStore {
     await this.deleteKeys(stale);
   }
 
-  async playerForSession(sessionToken: string): Promise<PlayerRecord | null> {
+  async playerForSession(sessionToken: string, purpose: "play" | "reset" = "play"): Promise<SessionPlayerRecord | null> {
     const tokenHash = await sha256(sessionToken);
     const session = await this.get(`SESSION#${tokenHash}`, "META");
     if (!session) return null;
     const playerId = stringValue(session.playerId);
     const row = await this.get(playerPk(playerId), "STATE");
     if (!row) return null;
+    const generation = Number(row.generation ?? 0);
+    const sessionGeneration = Number(session.generation ?? 0);
+    if (sessionGeneration !== generation && !(purpose === "reset" && row.resetting === true && sessionGeneration === generation - 1)) return null;
     const now = nowIso();
     try {
       await this.transport.execute("UpdateItem", {
@@ -370,9 +378,58 @@ export class DynamoStore implements AppStore {
     }
     return {
       id: playerId,
-      state: normalizeStoredState(row.state as StoredPlayerState),
+      state: row.state === null ? null : normalizeStoredState(row.state as StoredPlayerState),
+      resetting: row.resetting === true,
+      sessionGeneration: generation,
       stateVersion: Number(row.stateVersion)
     };
+  }
+
+  async resetPlayerProgress(player: SessionPlayerRecord) {
+    let generation = player.sessionGeneration;
+    let clearing = player.resetting;
+    try {
+      if (!player.resetting) {
+        await this.transport.execute("UpdateItem", {
+          TableName: this.tableName, Key: item({ PK: playerPk(player.id), SK: "STATE" }),
+          UpdateExpression: "SET #state = :empty, resetting = :yes, generation = :generation, stateVersion = :nextVersion, updatedAt = :now",
+          ConditionExpression: "stateVersion = :version",
+          ExpressionAttributeNames: { "#state": "state" },
+          ExpressionAttributeValues: item({ ":empty": null, ":yes": true, ":generation": generation + 1, ":version": player.stateVersion, ":nextVersion": player.stateVersion + 1, ":now": nowIso() })
+        });
+        generation += 1;
+        clearing = true;
+      }
+      const rows = (await Promise.all(["SCHEDULE#", "AUDIO#", "TRANSCRIPT#", "HOOK_LLM_RESULT#"].map(prefix => this.queryPk(playerPk(player.id), prefix)))).flat();
+      // 別の再試行が消去を完了した後、遅い清掃が新しいプレイを消さない。
+      for (let index = 0; index < rows.length; index += 98) {
+        await this.transport.execute("TransactWriteItems", {
+          TransactItems: [
+            { ConditionCheck: {
+              TableName: this.tableName,
+              Key: item({ PK: playerPk(player.id), SK: "STATE" }),
+              ConditionExpression: "resetting = :yes AND generation = :generation",
+              ExpressionAttributeValues: item({ ":yes": true, ":generation": generation })
+            } },
+            ...rows.slice(index, index + 98).map(row => ({ Delete: {
+              TableName: this.tableName,
+              Key: item({ PK: stringValue(row.PK), SK: stringValue(row.SK) })
+            } }))
+          ]
+        });
+      }
+      await this.transport.execute("UpdateItem", {
+        TableName: this.tableName, Key: item({ PK: playerPk(player.id), SK: "STATE" }),
+        UpdateExpression: "SET resetting = :no, updatedAt = :now ADD stateVersion :one",
+        ConditionExpression: "resetting = :yes AND generation = :generation",
+        ExpressionAttributeValues: item({ ":yes": true, ":no": false, ":generation": generation, ":one": 1, ":now": nowIso() })
+      });
+      return true;
+    } catch (error) {
+      if (!conditionalFailure(error)) throw error;
+      const current = await this.get(playerPk(player.id), "STATE");
+      return clearing && Number(current?.generation) === generation && current?.resetting === false;
+    }
   }
 
   async loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript> {
@@ -386,10 +443,10 @@ export class DynamoStore implements AppStore {
       transcriptKey,
       messages: streamId.startsWith("talk:")
         ? [...messages].sort((left, right) => (
-            "event_type" in left && "event_type" in right
-              ? left.delivered_at.localeCompare(right.delivered_at) || left.id.localeCompare(right.id)
-              : 0
-          ))
+          "event_type" in left && "event_type" in right
+            ? left.delivered_at.localeCompare(right.delivered_at) || left.id.localeCompare(right.id)
+            : 0
+        ))
         : messages
     });
   }
@@ -473,11 +530,11 @@ export class DynamoStore implements AppStore {
               Update: effect.type === "queue" ? {
                 TableName: this.tableName,
                 Key: item({ PK: playerPk(player.id), SK: `SCHEDULE#${effect.id}` }),
-                UpdateExpression: "SET entityType = :entity, scheduleId = :scheduleId, eventId = :eventId, #fields = :fields, dueAt = :dueAt, #status = :queued, updatedAt = :now, createdAt = if_not_exists(createdAt, :now)",
+                UpdateExpression: "SET entityType = :entity, scheduleId = :scheduleId, instanceId = :instance, eventId = :eventId, #fields = :fields, dueAt = :dueAt, #status = :queued, updatedAt = :now, createdAt = if_not_exists(createdAt, :now)",
                 ConditionExpression: "attribute_not_exists(#status) OR #status <> :completed",
                 ExpressionAttributeNames: { "#fields": "fields", "#status": "status" },
                 ExpressionAttributeValues: item({
-                  ":entity": "SCHEDULE", ":scheduleId": effect.id, ":eventId": effect.eventId,
+                  ":entity": "SCHEDULE", ":scheduleId": effect.id, ":instance": crypto.randomUUID(), ":eventId": effect.eventId,
                   ":fields": effect.fields, ":dueAt": effect.dueAt, ":queued": "queued", ":completed": "completed", ":now": now
                 })
               } : {
@@ -517,17 +574,6 @@ export class DynamoStore implements AppStore {
       if (conditionalFailure(error)) return false;
       throw error;
     }
-  }
-
-  async clearPlayerRuntimeJobs(playerId: string) {
-    const rows = [
-      ...await this.queryPk(playerPk(playerId), "SCHEDULE#"),
-      ...await this.queryPk(playerPk(playerId), "AUDIO#"),
-      ...await this.queryPk(playerPk(playerId), "TRANSCRIPT#"),
-      ...await this.queryPk(playerPk(playerId), "HOOK_LLM_RESULT#")
-    ];
-    await this.deleteKeys(rows
-      .map((row) => ({ PK: stringValue(row.PK), SK: stringValue(row.SK) })));
   }
 
   async loadHookLlmResult(playerId: string, cacheKey: string, at: string) {
@@ -587,11 +633,11 @@ export class DynamoStore implements AppStore {
       await this.transport.execute("UpdateItem", {
         TableName: this.tableName,
         Key: item({ PK: playerPk(playerId), SK: `SCHEDULE#${scheduleId}` }),
-        UpdateExpression: "SET entityType = :entity, scheduleId = :scheduleId, eventId = :eventId, #fields = :fields, dueAt = :dueAt, #status = :queued, updatedAt = :now, createdAt = if_not_exists(createdAt, :now)",
+        UpdateExpression: "SET entityType = :entity, scheduleId = :scheduleId, instanceId = :instance, eventId = :eventId, #fields = :fields, dueAt = :dueAt, #status = :queued, updatedAt = :now, createdAt = if_not_exists(createdAt, :now)",
         ConditionExpression: "attribute_not_exists(#status) OR #status <> :completed",
         ExpressionAttributeNames: { "#fields": "fields", "#status": "status" },
         ExpressionAttributeValues: item({
-          ":entity": "SCHEDULE", ":scheduleId": scheduleId, ":eventId": eventId, ":fields": fields,
+          ":entity": "SCHEDULE", ":scheduleId": scheduleId, ":instance": crypto.randomUUID(), ":eventId": eventId, ":fields": fields,
           ":dueAt": dueAt, ":queued": "queued", ":completed": "completed", ":now": now
         })
       });
@@ -634,7 +680,7 @@ export class DynamoStore implements AppStore {
       .sort((left, right) => stringValue(left.dueAt).localeCompare(stringValue(right.dueAt)))
       .slice(0, 5)
       .map((row) => ({
-        id: stringValue(row.scheduleId),
+        id: JSON.stringify([stringValue(row.scheduleId), stringValue(row.instanceId)]),
         scheduleId: stringValue(row.scheduleId),
         eventId: stringValue(row.eventId),
         fields: row.fields && typeof row.fields === "object" && !Array.isArray(row.fields)
@@ -644,16 +690,17 @@ export class DynamoStore implements AppStore {
   }
 
   async claimScheduledEvent(playerId: string, id: string) {
+    const [scheduleId, instanceId] = this.scheduleHandle(id);
     const now = nowIso();
     try {
       await this.transport.execute("UpdateItem", {
         TableName: this.tableName,
-        Key: item({ PK: playerPk(playerId), SK: `SCHEDULE#${id}` }),
+        Key: item({ PK: playerPk(playerId), SK: `SCHEDULE#${scheduleId}` }),
         UpdateExpression: "SET #status = :running, updatedAt = :now",
-        ConditionExpression: "#status = :queued OR (#status = :running AND updatedAt <= :cutoff)",
+        ConditionExpression: "instanceId = :instance AND (#status = :queued OR (#status = :running AND updatedAt <= :cutoff))",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: item({
-          ":running": "running", ":queued": "queued", ":now": now, ":cutoff": scheduledEventLeaseCutoff(now)
+          ":running": "running", ":queued": "queued", ":now": now, ":cutoff": scheduledEventLeaseCutoff(now), ":instance": instanceId
         })
       });
       return true;
@@ -672,18 +719,25 @@ export class DynamoStore implements AppStore {
   }
 
   private async updateScheduleStatus(playerId: string, id: string, status: "completed" | "queued") {
+    const [scheduleId, instanceId] = this.scheduleHandle(id);
     try {
       await this.transport.execute("UpdateItem", {
         TableName: this.tableName,
-        Key: item({ PK: playerPk(playerId), SK: `SCHEDULE#${id}` }),
+        Key: item({ PK: playerPk(playerId), SK: `SCHEDULE#${scheduleId}` }),
         UpdateExpression: "SET #status = :status, updatedAt = :now",
-        ConditionExpression: "#status = :running",
+        ConditionExpression: "#status = :running AND instanceId = :instance",
         ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: item({ ":status": status, ":running": "running", ":now": nowIso() })
+        ExpressionAttributeValues: item({ ":status": status, ":running": "running", ":now": nowIso(), ":instance": instanceId })
       });
     } catch (error) {
       if (!conditionalFailure(error)) throw error;
     }
+  }
+
+  private scheduleHandle(id: string): [string, string] {
+    const value: unknown = JSON.parse(id);
+    if (!Array.isArray(value) || value.length !== 2 || value.some(item => typeof item !== "string" || !item)) throw new Error("scheduled_event_handle_invalid");
+    return value as [string, string];
   }
 
   async recordInputEvent(event: InputEventRecord, enabled: boolean) {
@@ -792,6 +846,17 @@ export class DynamoStore implements AppStore {
     return (await this.queryPk(playerPk(playerId), "AUDIO#")).map((row) => this.audioFrom(row));
   }
 
+  async updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob) {
+    try {
+      await this.transport.execute("PutItem", {
+        TableName: this.tableName, Item: item({ PK: playerPk(playerId), SK: `AUDIO#${job.audioId}`, entityType: "AUDIO", ...job, updatedAt: nowIso() }),
+        ConditionExpression: "id = :id AND inputHash = :hash AND provider = :provider",
+        ExpressionAttributeValues: item({ ":id": job.id, ":hash": job.inputHash, ":provider": job.provider })
+      });
+      return true;
+    } catch (error) { if (conditionalFailure(error)) return false; throw error; }
+  }
+
   private audioFrom(row: Record<string, unknown>): GeneratedAudioJob {
     return {
       id: stringValue(row.id),
@@ -879,9 +944,11 @@ export class DynamoStore implements AppStore {
       .filter((row) => row.status === "active" && (!ids || ids.has(stringValue(row.id))))
       .sort((left, right) => stringValue(right.createdAt).localeCompare(stringValue(left.createdAt)))
       .slice(0, ids ? undefined : 500)
-      .map((row) => ({ id: stringValue(row.id), actualRuleId: stringValue(row.actualRuleId), userInput: stringValue(row.userInput),
+      .map((row) => ({
+        id: stringValue(row.id), actualRuleId: stringValue(row.actualRuleId), userInput: stringValue(row.userInput),
         responseSnapshot: row.responseSnapshot && typeof row.responseSnapshot === "object" && !Array.isArray(row.responseSnapshot)
-          ? row.responseSnapshot as Record<string, unknown> : {} }));
+          ? row.responseSnapshot as Record<string, unknown> : {}
+      }));
   }
 
   async reviewClusters(talkId: string, fromId: string, scenarioRevision: string): Promise<ReviewCluster[]> {
@@ -990,7 +1057,7 @@ export class DynamoStore implements AppStore {
     }
   }
 
-  async updateReviewJudgment(talkId: string, fromId: string, id: string, input: { comment: string; newBranchNote: string; reviewerLabel: string; updatedAt: string }) {
+  async updateReviewJudgment(talkId: string, fromId: string, id: string, input: { comment: string; newBranchNote: string; reviewerLabel: string; updatedAt: string; }) {
     await this.updateReviewJudgmentItem(talkId, fromId, id, {
       UpdateExpression: "SET #comment = :comment, newBranchNote = :note, reviewerLabel = :label, updatedAt = :now",
       ExpressionAttributeNames: { "#comment": "comment" },

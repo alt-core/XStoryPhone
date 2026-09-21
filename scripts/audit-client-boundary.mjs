@@ -2,16 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import { collectClientImportGraph } from "./lib/client-import-graph.mjs";
+import { auditStaticDistribution } from "./lib/static-audit.mjs";
 
 const root = process.cwd();
-const graph = collectClientImportGraph(root);
+const scenario = loadAndValidateScenario();
+const staticExecution = scenario.worker.playerMode === "static";
+const graph = collectClientImportGraph(root, undefined, { executionMode: scenario.worker.playerMode });
 const reachable = new Set(graph.files);
 const unresolved = graph.unresolved;
 
 const forbiddenImports = [...reachable]
   .map((file) => path.relative(root, file))
-  .filter((file) => file.startsWith("src/worker/") || file === "src/generated/workerScenario.generated.ts" || file.startsWith("scenario/"));
-const scenario = loadAndValidateScenario();
+  .filter((file) => (!staticExecution && file.startsWith("src/worker/")) || file === "src/generated/workerScenario.generated.ts"
+    || file === "src/generated/scenarioHooks.generated.ts" || file === "src/generated/hookContext.generated.ts"
+    || file.startsWith("scenario/") || (staticExecution && file.startsWith("src/worker/admin/")));
 const deviceState = scenario.deviceState;
 const leakedInitialCollections = [
   "messages",
@@ -117,6 +121,11 @@ for (const relativeBuildDir of process.argv.slice(2)) {
   const buildFiles = filesIn(buildDir);
   for (const file of buildFiles.filter((item) => item.endsWith(".map"))) {
     failures.push(`${relativeBuildDir}: 公開成果物へsource mapを含めないでください: ${path.relative(buildDir, file)}`);
+  }
+  if (staticExecution) {
+    try { failures.push(...auditStaticDistribution(buildDir, scenario.worker, scenario.hookScripts)); }
+    catch (error) { failures.push(`static配布監査を完了できません: ${error.message}`); }
+    continue;
   }
   const bundleFiles = buildFiles.filter((file) => new Set([".css", ".html", ".js"]).has(path.extname(file)));
   const bundle = bundleFiles.map((file) => fs.readFileSync(file, "utf8")).join("\n");

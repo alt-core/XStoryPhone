@@ -14,8 +14,11 @@ export function assignRuleIds(rules, digest = (value) => createHash("sha256").up
     const definition = JSON.stringify(canonical({
       talk: rule.talkId, from: rule.from, isDefault: rule.isDefault,
       cond: rule.cond, intent: rule.intent, criteria: rule.criteria,
-      match: rule.match ? JSON.parse(rule.match) : null,
-      outputSteps: rule.outputSteps, mode: rule.mode, set: rule.set
+      match: rule.match ? rule.match.startsWith("/") ? rule.match : JSON.parse(rule.match) : null,
+      outputSteps: rule.outputSteps, mode: rule.mode, set: rule.set,
+      ...(rule.type === "secret" || (rule.type === "match" && !rule.criteria.startsWith("/")) ? { type: rule.type } : {}),
+      ...(rule.part && rule.part !== "base" ? { part: rule.part } : {}),
+      ...(rule.loadParts?.length ? { loadParts: rule.loadParts } : {})
     }));
     const occurrence = counts.get(definition) ?? 0;
     counts.set(definition, occurrence + 1);

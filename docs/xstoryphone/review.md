@@ -21,6 +21,8 @@
 
 シミュレーターの入力は監修用ストレージへ保存され、実プレイログとは区別されます。検索AIでは、入力時に選ばれる条件blockと検索結果件数も表示します。検索は監修用の状態presetに対して評価し、プレイヤーの進行状態や発見済み情報は変更しません。
 
+partを使う作品では、試行欄に「取得済part」を指定します。初期値はbaseだけで、選択した分岐に必要そうなpartを自動で補いません。判定は取得前の集合、secretのset・出力は今回の/loadを含む集合で実行し、その前提をsnapshotへ残します。part_loadedを含むhook全体の確認は、実プレイで行ってください。
+
 試行レコードには、setと抽出値を反映した返信本文、添付、Quick Reply、入力、抽出結果、選択根拠を保存します。LLMを使った場合はdecision/confidence/reasonと照合用hashも含みます。長いpromptやHTTP応答全体を通常のDB記録へ複製しません。後から確認する場合は、認証付きの`/api/admin/talk-branch-review/from?talkId=...&fromId=...`の`branches[].trialInputs[].responseSnapshot`、または指示のJSONレポートの`sourceInputs[].responseSnapshot`を参照してください。これは監修時の条件presetに基づく試行結果で、任意の本番プレイヤーの状態やhook副作用を再現するものではありません。
 
 ## 実プレイ入力の一覧

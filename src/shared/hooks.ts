@@ -1,5 +1,6 @@
 export type ScenarioEventPayload = {
   eventId: string;
+  partId?: string;
   scheduleId?: string;
   scheduleInstanceId?: string;
   contentId?: string;

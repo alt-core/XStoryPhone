@@ -72,8 +72,8 @@ test("hook出力予算はschemaから見積もり、明示値を保持する", (
 
 test("不正なconfidenceと候補外IDは正当な低確信fallbackと区別する", async () => {
   const rules = [
-    { id: "end", from: "from", isDefault: false, intent: "終了", criteria: "終了", mode: "game_over" },
-    { id: "default", from: "from", isDefault: true, intent: "", criteria: "現在の場面", mode: "" }
+    { id: "end", from: "from", isDefault: false, intent: "終了", type: "ai", criteria: "終了", mode: "game_over" },
+    { id: "default", from: "from", isDefault: true, intent: "", type: "default", criteria: "現在の場面", mode: "" }
   ];
   const input = { playerInput: "入力", rules, defaultRuleId: "default", recentMessages: [] };
   for (const decision of [
@@ -89,16 +89,16 @@ test("不正なconfidenceと候補外IDは正当な低確信fallbackと区別す
   assert.equal(result.reviewSelection.decision.confidence, 0.85);
   assert.match(result.reviewSelection.inputHash, /^[0-9a-f]{64}$/);
   const changed = await semanticRuleSelector(createFakeStructuredOutputProvider(() => ({ rule_id: "end", confidence: 0.85, reason_code: "matched_intent" })))(
-    { ...input, rules: [rules[0], { ...rules[1], criteria: "変更した場面" }] }
+    { ...input, rules: [rules[0], { ...rules[1], type: "ai", criteria: "変更した場面" }] }
   );
   assert.equal(result.reviewSelection.inputHash, changed.reviewSelection.inputHash);
   assert.notEqual(result.reviewSelection.promptHash, changed.reviewSelection.promptHash, "候補/場面の変更をprompt hashが識別する");
 });
 
 test("抽出no_match後も元LLMの採択と最終default、標本数を監修へ返す", async () => {
-  const common = { from: "from", order: 1, cond: "", intent: "", criteria: "", match: "", set: [], mode: "", nextBlocks: [], outputSteps: [], nextFromId: "from", notes: "", example: "" };
+  const common = { from: "from", order: 1, cond: "", intent: "", type: "default", criteria: "", match: "", set: [], mode: "", nextBlocks: [], outputSteps: [], nextFromId: "from", notes: "", example: "" };
   const rules = [
-    { ...common, id: "choice", isDefault: false, intent: "名前", criteria: "名前入力", match: '{"name":"名前"}' },
+    { ...common, id: "choice", isDefault: false, intent: "名前", type: "ai", criteria: "名前入力", match: '{"name":"名前"}' },
     { ...common, id: "default", order: 2, isDefault: true }
   ];
   let samples = 0;
@@ -119,9 +119,9 @@ test("抽出no_match後も元LLMの採択と最終default、標本数を監修�
 });
 
 test("regex採択後のAI抽出も観測と監修へ同じhashを返す", async () => {
-  const common = { from: "from", order: 1, cond: "", intent: "", criteria: "", match: "", set: [], mode: "", nextBlocks: [], outputSteps: [], nextFromId: "from", notes: "", example: "" };
+  const common = { from: "from", order: 1, cond: "", intent: "", type: "default", criteria: "", match: "", set: [], mode: "", nextBlocks: [], outputSteps: [], nextFromId: "from", notes: "", example: "" };
   const rules = [
-    { ...common, id: "regex-choice", isDefault: false, intent: "名前", criteria: "/入力/u", match: '{"name":"名前"}' },
+    { ...common, id: "regex-choice", isDefault: false, intent: "名前", type: "match", criteria: "/入力/u", match: '{"name":"名前"}' },
     { ...common, id: "default", order: 2, isDefault: true }
   ];
   const observations = [];
@@ -208,7 +208,9 @@ test("本文なし添付が続いてもserverとclientの文脈入口は直前�
     const text = fs.readFileSync(new URL(file, import.meta.url), "utf8");
     const source = file.endsWith(".svelte") ? text.match(/<script[^>]*>([\s\S]*?)<\/script>/u)[1] : text;
     const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const declaration = parsed.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
+    let declaration;
+    const visit = node => { if (ts.isFunctionDeclaration(node) && node.name?.text === name) declaration = node; ts.forEachChild(node, visit); };
+    visit(parsed);
     assert.ok(declaration);
     const compiled = ts.transpileModule(declaration.getText(parsed), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
@@ -219,11 +221,11 @@ test("本文なし添付が続いてもserverとclientの文脈入口は直前�
     deviceState: { messages: [{ id: "talk", contactName: "相手", messages }], chatThreads: [] }
   });
   assert.deepEqual(client("sms", "talk").map((message) => message.body), ["前の入力", "直前の説明"]);
-  const server = loadFunction("../src/server/app.ts", "recentMessagesForTalk", {
-    workerScenario: { talks: [{ id: "talk", kind: "sms", label: "相手" }], stateVariables: {} },
+  const server = loadFunction("../src/server/playerApp.ts", "recentMessagesForTalk", {
+    runtime: {workerScenario: { talks: [{ id: "talk", kind: "sms", label: "相手" }], stateVariables: {} }},
     talkFlowRecentMessages,
-    effectiveStateValues: () => ({}), browserMode: () => false,
-    dependencies: () => ({ store: { loadTranscript: async () => ({ messages: [] }) } }),
+    effectiveStateValues: () => ({}), clientProgressMode: () => false,
+    storeFor: () => ({ loadTranscript: async () => ({ messages: [] }) }),
     isSearchAgentTalk: () => false,
     visibleTalkMessagesForState: () => messages
   });

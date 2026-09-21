@@ -5,6 +5,7 @@ import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
 import { encodeBrowserProgress } from "../src/server/browserProgress.ts";
 import { mergeTranscriptAppend } from "../src/server/store.ts";
 import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
+import { staticAudioSample } from "../src/shared/staticAudio.ts";
 import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
 const configuredPlayerMode = workerScenario.playerMode;
@@ -61,6 +62,12 @@ class MemoryStore {
     this.playerCalls += 1;
     return token === "memory-token" ? structuredClone(this.player) : null;
   }
+  async resetPlayerProgress(player) {
+    if (player.stateVersion !== this.player.stateVersion) return false;
+    this.player = {...this.player, state:null, stateVersion:player.stateVersion+1};
+    this.transcripts.clear(); this.schedules=[]; this.audioJobs.clear();
+    return true;
+  }
   async loadTranscript(playerId, streamId, transcriptKey) {
     const transcript = this.transcripts.get(`${playerId}\0${streamId}`);
     return transcript?.transcriptKey === transcriptKey
@@ -100,7 +107,6 @@ class MemoryStore {
     for (const job of effects.generatedAudioJobs ?? []) this.audioJobs.set(job.audioId, structuredClone(job));
     return true;
   }
-  async clearPlayerRuntimeJobs() { this.schedules = []; }
   async queueScheduledEvent(playerId, scheduleId, eventId, fields, dueAt) {
     this.schedules.push({ id: scheduleId, scheduleId, eventId, fields, dueAt, playerId, status: "queued" });
   }
@@ -132,6 +138,10 @@ class MemoryStore {
   }
   async generatedAudioJob(_playerId, audioId) { return structuredClone(this.audioJobs.get(audioId) ?? null); }
   async saveGeneratedAudioJob(_playerId, job) { this.audioJobs.set(job.audioId, structuredClone(job)); }
+  async updateGeneratedAudioJob(_playerId, job) {
+    if (this.audioJobs.get(job.audioId)?.id !== job.id) return false;
+    this.audioJobs.set(job.audioId, structuredClone(job)); return true;
+  }
   async generatedAudioJobs() { return [...this.audioJobs.values()].map((job) => structuredClone(job)); }
   async reviewJudgments() { return this.reviewJudgmentRows; }
   async reviewInputCounts() {
@@ -155,6 +165,65 @@ class MemoryStore {
   async deleteReviewTrialInput() { return false; }
   async updateReviewJudgmentSourceIds() {}
 }
+
+test("server/browserも取得済partだけで会話・hook・公開状態を処理する", async () => {
+  const original = structuredClone(workerScenario);
+  const handlers = { ...scenarioHookHandlers };
+  try {
+    workerScenario.parts = ["base", "evidence"];
+    workerScenario.hooks = [{ event: "part_loaded", target: "evidence", cond: "", part: "evidence", order: 1, handler: "part_fixture", llm: false }];
+    workerScenario.stateVariables.part_probe = false;
+    workerScenario.stateVariableDefinitions.part_probe = { type: "boolean" };
+    workerScenario.stateVariableParts.part_probe = "evidence";
+    workerScenario.publicStateVariables.push("part_probe");
+    scenarioHookHandlers.part_fixture = context => context.state.set("part_probe", true);
+    const talk = workerScenario.talks.find(item => item.kind === "search_agent");
+    const blockId = "search_agent::part_probe";
+    workerScenario.talkBlocks.push({ id: blockId, talkId: talk.id, blockKey: "part_probe", part: "evidence", order: 1000,
+      messages: [{ id: "part_probe", sender: "search_agent", body: "取得後だけの返信", attachmentId: "", sentAt: "" }] });
+    talk.rules.unshift({ id: "part-probe-rule", type: "secret", part: "base", order: 0, from: talk.initialFrom, isDefault: false,
+      cond: "", criteria: '"鍵"', match: "", loadParts: ["evidence"], nextBlocks: [blockId], outputSteps: [{ kind: "block", blockId }], nextFromId: blockId, mode: "stay", set: [] });
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      const store = new MemoryStore();
+      const app = createApp({ store, config: { appEnv: "development", llm: {}, playerInputLogging: false } });
+      let token;
+      const call = async (route, fields = {}) => {
+        const response = await app.request(`http://localhost/api/${route}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token ?? ""}` },
+          body: JSON.stringify({ ...fields, ...(mode === "browser" && token ? { progressToken: token } : {}) }) });
+        assert.equal(response.status, 200);
+        const payload = await response.json();
+        token = payload.playerState?.progressToken ?? payload.sessionToken ?? token;
+        return payload.playerState;
+      };
+      let state = await call("session/start", { serialCode: "1234" });
+      assert.equal(state.projectState.part_probe, undefined);
+      const control = state.talks.find(item => item.kind === "search_agent");
+      state = await call("talk/send", { talkId: control.talkId, turnKey: control.turnKey, message: "鍵" });
+      assert.equal(state.projectState.part_probe, true);
+      assert.ok(JSON.stringify(state.transcriptDeltas).includes("取得後だけの返信"));
+      assert.equal((await call("player-state")).projectState.part_probe, true);
+      if (mode === "browser") assert.equal(store.createCalls, 0);
+      else assert.deepEqual(store.player.state.loadedPartIds, ["base", "evidence"]);
+    }
+  } finally {
+    Object.assign(workerScenario, original);
+    for (const key of Object.keys(scenarioHookHandlers)) delete scenarioHookHandlers[key];
+    Object.assign(scenarioHookHandlers, handlers);
+  }
+});
+
+test("後partの固定サンプル音声も、既知URLから認証なしで同じ音源を取得できる", async () => {
+  const original = structuredClone(workerScenario.generatedAudio);
+  try {
+    workerScenario.generatedAudio.push({ id: "future_audio", publicId: "a_future_audio", provider: "static", part: "future" });
+    const app = createApp({ store: new MemoryStore(), config: { appEnv: "development", llm: {} } });
+    const response = await app.request("http://localhost/api/generated-audio/static/a_future_audio.wav");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "audio/wav");
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), staticAudioSample());
+  } finally { workerScenario.generatedAudio = original; }
+});
 
 async function searchAgentRequest(app, init) {
   const request = JSON.parse(init.body ?? "{}");
@@ -324,7 +393,7 @@ test("search agentの内部リンクは表示済み能力を照合して既存AP
   }
 });
 
-test("serverの初期scheduleは新規player作成と同じStore操作へ渡す", async () => {
+test("serverの初期scheduleは認証では保存せず、開始状態と同じcommitへ渡す", async () => {
   const schedule = {
     id: "test_initial_schedule",
     eventId: "show_demo_call",
@@ -334,6 +403,7 @@ test("serverの初期scheduleは新規player作成と同じStore操作へ渡す"
   workerScenario.initialSchedules.push(schedule);
   try {
     const store = new MemoryStore();
+    store.player.state = null;
     const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
     const before = Date.now();
     const response = await app.request("http://localhost/api/session/start", {
@@ -342,10 +412,10 @@ test("serverの初期scheduleは新規player作成と同じStore操作へ渡す"
       body: JSON.stringify({ serialCode: "1234" })
     });
     assert.equal(response.status, 200);
-    assert.equal(store.initialScheduleSeeds.length, 1);
+    assert.equal(store.initialScheduleSeeds.length, 0);
     assert.equal(store.schedules.length, 1);
-    assert.deepEqual(store.initialScheduleSeeds[0].fields, { source: "initial" });
-    assert.ok(Date.parse(store.initialScheduleSeeds[0].dueAt) >= before + schedule.delayMs);
+    assert.deepEqual(store.schedules[0].fields, { source: "initial" });
+    assert.ok(Date.parse(store.schedules[0].dueAt) >= before + schedule.delayMs);
   } finally {
     workerScenario.initialSchedules.splice(workerScenario.initialSchedules.indexOf(schedule), 1);
   }
@@ -526,7 +596,8 @@ test("テストプレイ用進行リセットはdevとstgだけで公開ホス�
     assert.equal(response.status, 200, `${appEnv}ではリセットできる`);
     const body = await response.json();
     assert.equal(body.ok, true);
-    assert.deepEqual(body.playerState.todos.map((todo) => todo.id), ["find_old_note"]);
+    assert.equal(body.playerState, undefined, "resetは開始済み状態を返さない");
+    assert.equal(store.player.state, null);
   }
 
   for (const appEnv of ["prod", "production"]) {
@@ -837,7 +908,7 @@ test("browserのsearch agent入力はtalk turnとしてblock・結果card・stat
   }
 });
 
-test("browserのテスト用リセットは更新前の履歴deltaを新しいstreamへ混ぜない", async () => {
+test("browserのリセットはAPIで再初期化せず、次回は通常開始の新streamを得る", async () => {
   const originalMode = workerScenario.playerMode;
   const secret = "reset-stream-replacement-test-secret";
   workerScenario.playerMode = "browser";
@@ -871,8 +942,10 @@ test("browserのテスト用リセットは更新前の履歴deltaを新しいst
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ progressToken })
     });
-    assert.equal(response.status, 200);
-    const body = await response.json();
+    assert.equal(response.status, 404, "進行消去はローカル保存層が担当する");
+    const restart = await app.request("http://localhost/api/session/start", {method:"POST"});
+    assert.equal(restart.status, 200);
+    const body = await restart.json();
     const searchDeltas = body.playerState.transcriptDeltas.filter((delta) => delta.kind === "search_agent");
     assert.equal(searchDeltas.length, 1);
     assert.equal(new Set(searchDeltas.map((delta) => delta.transcriptKey)).size, 1);
@@ -1255,7 +1328,7 @@ test("talk flowのgame_overは一時会話をpresentation sequenceで返す", as
     ...baseRule,
     id: "test-game-over-rule",
     intent: "ゲームオーバー確認",
-    criteria: "/^終了$/u",
+    type: "match", criteria: "/^終了$/u",
     example: "終了",
     isDefault: false,
     mode: "game_over",

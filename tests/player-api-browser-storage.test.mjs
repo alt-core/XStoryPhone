@@ -130,18 +130,6 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
         playerState: responseState({ token: "token-3", stateVersion: 3, talkLastSeq: 2 })
       }
     },
-    {
-      status: 200,
-      body: {
-        ok: true,
-        playerState: responseState({
-          token: "token-4",
-          stateVersion: 4,
-          talkTranscriptKey: "talk-reset",
-          searchTalkTranscriptKey: "search-reset"
-        })
-      }
-    },
     { status: 401, body: { ok: false, error: "unauthorized" } }
   ];
   const originalFetch = globalThis.fetch;
@@ -167,16 +155,11 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
     assert.deepEqual(loaded.playerState.smsMessages.map((message) => message.seq), [2]);
     assert.deepEqual(JSON.parse(requests[1].init.body), { progressToken: "token-1" });
 
-    const rejectedReset = await api.resetPlayerState(storage.BROWSER_PLAYER_MARKER);
+    const rejectedReset = await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER);
     assert.equal(rejectedReset.ok, false);
     assert.equal(rejectedReset.status, 422);
     assert.deepEqual(rejectedReset.playerState.smsMessages.map((message) => message.seq), [2]);
     assert.equal(await storage.prepareBrowserPlayerRequest(), "token-3");
-
-    const reset = await api.resetPlayerState(storage.BROWSER_PLAYER_MARKER);
-    assert.equal(reset.ok, true);
-    assert.deepEqual(reset.playerState.smsMessages, []);
-    assert.equal(await storage.prepareBrowserPlayerRequest(), "token-4");
 
     let clearedCount = 0;
     windowTarget.addEventListener(storage.BROWSER_PLAYER_CLEARED_EVENT, () => { clearedCount += 1; });
@@ -184,7 +167,7 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
     await assert.rejects(api.loadPlayerState(storage.BROWSER_PLAYER_MARKER),
       (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "unauthorized");
     assert.equal(storage.loadBrowserPlayerMarker(), storage.BROWSER_PLAYER_MARKER);
-    assert.equal(await storage.prepareBrowserPlayerRequest(), "token-4");
+    assert.equal(await storage.prepareBrowserPlayerRequest(), "token-3");
     assert.deepEqual(storage.loadCachedBrowserPlayerState(), beforeUnauthorized);
     assert.equal(clearedCount, 0, "認証エラーで開始前画面へ戻す通知を出さない");
 
@@ -196,10 +179,10 @@ test("browser player APIはcommit後だけ表示状態を返し、認証失敗�
     // 設定を直してリロードすれば、消さずに保持していたtokenから続行する。
     api = await import("../src/client/system/playerApi.ts?after-reload");
     responses.push({ status: 200, body: { ok: true, playerState: responseState({
-      token: "token-5", stateVersion: 5, talkTranscriptKey: "talk-reset", searchTalkTranscriptKey: "search-reset"
+      token: "token-5", stateVersion: 5, talkLastSeq:2
     }) } });
     assert.equal((await api.loadPlayerState(storage.BROWSER_PLAYER_MARKER)).ok, true);
-    assert.equal(JSON.parse(requests.at(-1).init.body).progressToken, "token-4");
+    assert.equal(JSON.parse(requests.at(-1).init.body).progressToken, "token-3");
     assert.equal(await storage.prepareBrowserPlayerRequest(), "token-5");
 
     await storage.clearBrowserPlayerStorage();

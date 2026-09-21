@@ -127,9 +127,9 @@ test("使用頻度の低いTSV列も素材・フォーム・宛先・入力UIへ
   assert.equal(actual.attachment.cond, "session_started");
   assert.deepEqual(actual.attachment.search, [["資料", "写真"]]);
   assert.equal(actual.photo.mediaKind, "still_video");
-  assert.equal(actual.photo.imageUrl, "/fixture/image.webp");
-  assert.equal(actual.photo.audioUrl, "/fixture/audio.wav");
-  assert.deepEqual(actual.radio.audioSegments, [{ kind: "audio", audioUrl: "/fixture/audio.wav" }, { kind: "generated", genAudioId: "fixture_voice" }]);
+  assert.equal(actual.photo.imageAttachmentId, "fixture_image");
+  assert.equal(actual.photo.audioAttachmentId, "fixture_audio");
+  assert.deepEqual(actual.radio.audioSegments, [{ kind: "audio", audioAttachmentId: "fixture_audio" }, { kind: "generated", genAudioId: "fixture_voice" }]);
   assert.deepEqual(actual.radio.form, { id: "fixture_form", kind: "html", label: "投稿", url: "/fixture/form.html" });
   assert.equal(actual.cc, "控えの宛先");
   assert.deepEqual(actual.cue, [{ id: "cue", atMs: 62500 }]);
@@ -168,12 +168,11 @@ test("空のパスワードを成功したbuildとして解錠不能な状態へ
   assert.match(result.stderr, /password|パスワード/u);
 }));
 
-test("passwordsの前後空白だけを除き、先頭0と内部空白を保持してhash化する", () => withAuthoring(({ edit, invoke }) => {
-  edit("passwords", (rows) => { rows.find((row) => !row.comment).password = "  00 42  "; });
-  const result = invoke('console.log(JSON.stringify(result.worker.lockedContentPasswords.map(x=>x.passwordHash)));');
+test("passwordsはsecretと同じ正規化で、先頭0と内部空白を保持する", () => withAuthoring(({ edit, invoke }) => {
+  edit("passwords", (rows) => { rows.find((row) => !row.comment).password = '"  00 42  "\n"ＡＢＣ"\n"abc"'; });
+  const result = invoke('console.log(JSON.stringify(result.worker.lockedContentPasswords.flatMap(x=>x.answers)));');
   assert.equal(result.status, 0, result.stderr);
-  const expected = createHash("sha256").update("00 42".normalize("NFKC")).digest("hex");
-  assert.ok(JSON.parse(result.stdout).includes(expected));
+  assert.deepEqual(JSON.parse(result.stdout), ["00 42", "abc"]);
 }));
 
 test("integer stateの指数・16進・小数表記を元の整数literalとして受理しない", () => {

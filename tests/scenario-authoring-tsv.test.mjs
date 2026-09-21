@@ -7,6 +7,7 @@ import test from "node:test";
 import { loadScenarioAuthoring, compileScenarioAuthoring } from "../scripts/lib/scenario-authoring.mjs";
 import { loadAndValidateScenario } from "../scripts/scenario-lib.mjs";
 import { assignRuleIds } from "../scripts/lib/rule-ids.mjs";
+import { resolveMediaRecord } from "../src/shared/scenarioMedia.ts";
 
 function fixture(run) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xstoryphone-all-tables-"));
@@ -22,7 +23,7 @@ test("Google Sheets原本の全表を取得TSVとして読み込み、JSONを読
   assert.equal(Object.keys(workbook).length, 26);
   for (const id of ["project_constants", "state_vars", "home_items", "message_items", "chat_items", "call_items", "gen_audio", "incoming_calls", "todo_items", "hooks", "passwords", "calendar_items", "photo_items", "note_items", "radio_items", "notifications", "talk_people", "talk_flow", "talk_blocks", "assistant_messages", "attachments"]) assert.ok(workbook[id], id);
   assert.equal(source.contents.find(c => c.id === "old_note").record.title, "古いメモ");
-  assert.equal(source.contents.find(c => c.id === "rainy_window").record.imageUrl, "/demo/album/rainy-window.webp");
+  assert.equal(resolveMediaRecord(source.contents.find(c => c.id === "rainy_window").record,source.attachments).imageUrl, "/demo/album/rainy-window.webp");
   assert.ok(hookScripts.mark_session_started.includes('state.set("session_started", true)'));
   assert.equal(source.talkPeople.find(p => p.id === "guide").name, "デモ連絡先");
   fs.writeFileSync(path.join(dir, "scenario.json"), "壊れた旧形式は原本として読まない");
@@ -41,7 +42,8 @@ test("メモ本文の改行・quoteと素材参照、stateの型・空欄継承�
   const attachment = copy.attachments.rows.find(a => a.type === "image");
   attachment.asset = "/fixture/unreached-image.webp";
   const photo = copy.photo_items.rows.find(p => p.image === attachment.id);
-  assert.equal(compileScenarioAuthoring(copy).source.contents.find(c => c.id === photo.id).record.imageUrl, "/fixture/unreached-image.webp");
+  const updated=compileScenarioAuthoring(copy).source;
+  assert.equal(resolveMediaRecord(updated.contents.find(c => c.id === photo.id).record,updated.attachments).imageUrl, "/fixture/unreached-image.webp");
 });
 
 test("TSVの表・列・素材参照を欠落させても成功扱いにしない", () => fixture((dir) => {

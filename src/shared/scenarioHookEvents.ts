@@ -8,7 +8,8 @@ export type ScenarioHookTargetKind =
   | "message_action"
   | "talk"
   | "form"
-  | "schedule";
+  | "schedule"
+  | "part";
 
 export type ScenarioHookEventMetadata = {
   targetKind: ScenarioHookTargetKind;
@@ -18,6 +19,7 @@ export type ScenarioHookEventMetadata = {
 };
 
 export const CORE_SCENARIO_HOOK_EVENTS = {
+  part_loaded: { targetKind: "part", targetRequired: true },
   session_started: { targetKind: "none" },
   blocked_content_link_opened: {
     targetKind: "blocked_app",

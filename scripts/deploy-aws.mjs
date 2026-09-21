@@ -23,6 +23,11 @@ if (!settings) {
 const resetForTesting = environment === "prod" ? "false" : "true";
 const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS).join(",");
 
+if (loadAndValidateScenario().worker.playerMode === "static") {
+  console.error("staticモードは npm run build:static で作り、dist/staticを静的ホストへ配置してください。APIはデプロイしません。");
+  process.exit(1);
+}
+
 const adminReviewSecret = process.env.ADMIN_REVIEW_SECRET?.trim();
 if (!adminReviewSecret) {
   console.error("ADMIN_REVIEW_SECRETを環境変数へ設定してください。");

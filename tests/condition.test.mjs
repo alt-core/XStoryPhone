@@ -2,11 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStateAssignments,
+  definedConditionState,
   evaluateCondition,
   renderTemplate,
   validateConditionExpression,
   validateStateAssignments
 } from "../src/shared/condition.ts";
+
+test("partの未取得変数は否定でもfalseへ代用せず、予約player_inputの省略だけを維持する", () => {
+  const state = definedConditionState({ ready: false });
+  assert.equal(evaluateCondition("!ready", state), true);
+  assert.equal(evaluateCondition('player_input == ""', state), true);
+  assert.throws(() => evaluateCondition("unknown", state), /未取得または未定義.*unknown/u);
+  assert.throws(() => evaluateCondition("!unknown", state), /未取得または未定義.*unknown/u);
+});
 
 test("条件式は真偽値・比較・論理演算を評価できる", () => {
   const state = { repaired: true, count: 2, route: "a" };
@@ -38,16 +47,16 @@ test("状態更新は型・enum・match参照を検証する", () => {
     ["name", { type: "string" }],
     ["phase", { type: "enum", values: ["start", "done"] }]
   ]);
-  assert.deepEqual(validateStateAssignments(["started=true", "phase='done'", "name=$match.name"], definitions, new Set(["name"])), []);
+  assert.deepEqual(validateStateAssignments(["started=true", "phase='done'", "name=$extract.name"], definitions, new Set(["name"])), []);
   assert.match(validateStateAssignments(["phase='other'"], definitions).join("\n"), /enum/u);
-  assert.match(validateStateAssignments(["started=$match.name"], definitions, new Set(["name"])).join("\n"), /string/u);
-  assert.match(validateStateAssignments(["name=$match.missing"], definitions).join("\n"), /未定義のmatch/u);
+  assert.match(validateStateAssignments(["started=$extract.name"], definitions, new Set(["name"])).join("\n"), /string/u);
+  assert.match(validateStateAssignments(["name=$extract.missing"], definitions).join("\n"), /未定義のmatch/u);
 });
 
 test("状態更新とテンプレート置換を同じ変数で扱える", () => {
   const state = applyStateAssignments(
     { found: false, name: "" },
-    ["found=true", "name=$match.name"],
+    ["found=true", "name=$extract.name"],
     { name: "オレンジ" }
   );
   assert.deepEqual(state, { found: true, name: "オレンジ" });
@@ -73,7 +82,7 @@ test("integer stateだけを安全な範囲で加減算する", () => {
     { count: 4, label: "" }
   );
   assert.match(validateStateAssignments(["label += 1"], definitions).join("\n"), /integer state/u);
-  assert.match(validateStateAssignments(["count += $match.value"], definitions, new Set(["value"])).join("\n"), /整数literal/u);
+  assert.match(validateStateAssignments(["count += $extract.value"], definitions, new Set(["value"])).join("\n"), /整数literal/u);
   assert.throws(
     () => applyStateAssignments({ count: Number.MAX_SAFE_INTEGER, label: "" }, ["count += 1"], {}, definitions),
     /安全な整数範囲/u

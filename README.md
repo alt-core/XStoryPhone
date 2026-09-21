@@ -10,11 +10,11 @@ XStoryPhoneは、仮想スマートフォンを舞台に物語を作るための
 - 検索AIオーバーレイと、検索結果を開いた時だけ行うデータ修復
 - Google Sheetsを正本に、取得した全表TSVからシナリオを生成
 - 状態条件によるアプリ、コンテンツ、会話、通知、検索AIの台本の出し分け
-- 正規表現だけでも運用できる会話分岐と、任意のLLM provider
+- 語句・正規表現で運用できる会話分岐と、任意のLLM provider
 - 全talk共通の入力欄制御とQuick Reply
 - 状態変数、ToDo、通知、シナリオhook
 - 実プレイ入力の確認、分岐試行、監修指示、レポート出力を行う運営レビュー画面
-- 認証・DB保存型と、無料公開向けのブラウザー保存型
+- 認証・DB保存型、APIで判定するブラウザー保存型、サーバーなしのstatic実行
 - 外部で生成した音声、作品固有API、Stageを追加するための薄い拡張口
 
 検索AIの標準キャラクター「ナビ」は、画像生成物ではなく、ビルド時に作るオレンジ色の円だけのSVGスプライトです。
@@ -22,6 +22,8 @@ XStoryPhoneは、仮想スマートフォンを舞台に物語を作るための
 ## クイックスタート
 
 Node.js 22.18以降を用意してください。
+
+以下はAPIを使う構成の開発手順です。ゲームサーバーを置かない場合は[static実行の手順](docs/xstoryphone/static.md)を使ってください。
 
 ```sh
 npm install
@@ -81,6 +83,7 @@ npm test
 - [Cloudflareへの公開](docs/xstoryphone/deployment.md)
 - [AWSへの公開](docs/xstoryphone/deployment-aws.md)
 - [外部静的ホスト・サブパスへの配置](docs/xstoryphone/external-hosting.md)
+- [サーバーなしのstatic実行とpart](docs/xstoryphone/static.md)
 
 ## ライセンス
 

@@ -424,6 +424,33 @@ test("試行snapshotはset後の返信本文・添付・Quick Reply・選択根�
   }
 });
 
+test("監修試行は取得前のpartで候補を選び、取得後の返信と両集合をsnapshotへ残す", async () => {
+  const original = structuredClone(workerScenario);
+  try {
+    const { talk, rule } = talkFixture();
+    workerScenario.parts = ["base", "evidence"];
+    workerScenario.features.llm = false;
+    const late = { ...rule, id: "late-review-rule", part: "evidence", type: "match", criteria: '"取得済"', isDefault: false };
+    const secret = { ...rule, id: "secret-review-rule", part: "base", type: "secret", criteria: '"鍵"', isDefault: false, loadParts: ["evidence"] };
+    talk.rules.unshift(late, secret);
+    let saved;
+    const store = { saveReviewTrialInput: async value => { saved = value; } };
+    const input = { talkId: talk.id, fromId: rule.from, targetRuleId: late.id, message: "取得済" };
+    assert.equal((await simulateTalkBranchReviewSelection({}, store, input)).error, "part_not_loaded_or_rule_not_found");
+    const acquired = await simulateTalkBranchReviewSelection({}, store, { ...input, loadedParts: ["evidence"] });
+    assert.equal(acquired.result.selectedRuleId, late.id);
+    assert.deepEqual(saved.responseSnapshot.loadedParts, ["base", "evidence"]);
+    workerScenario.talkBlocks.find(block => block.id === rule.nextBlocks[0]).part = "evidence";
+    const beforeTrial = structuredClone(workerScenario);
+    const unlocked = await simulateTalkBranchReviewSelection({}, store, { ...input, targetRuleId: secret.id, message: "鍵" });
+    assert.equal(unlocked.ok, true);
+    assert.deepEqual(saved.responseSnapshot.loadedParts, ["base"]);
+    assert.deepEqual(saved.responseSnapshot.acquiredParts, ["base", "evidence"]);
+    assert.ok(saved.responseSnapshot.messages.length);
+    assert.deepEqual(workerScenario, beforeTrial, "監修は共有のシナリオ定義を書き換えない");
+  } finally { Object.assign(workerScenario, original); }
+});
+
 test("集計CLIは全件数から分岐別に取得し、context/modeを渡し実入力を代表にする", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "xstoryphone-review-analysis-"));
   try {
@@ -465,7 +492,7 @@ test("集計CLIは全件数から分岐別に取得し、context/modeを渡し�
 
 test("LLM監修試行にもdecision・confidence・reason・hashが同じsnapshotへ届く", async (t) => {
   const { talk, rule } = talkFixture();
-  const semanticRule = { ...rule, id: "review-ai-fixture", order: -1, isDefault: false, intent: "確認", criteria: "監修用の選択条件", match: "" };
+  const semanticRule = { ...rule, id: "review-ai-fixture", order: -1, isDefault: false, intent: "確認", type: "ai", criteria: "監修用の選択条件", match: "" };
   const previousLlm = workerScenario.features.llm;
   let saved;
   t.mock.method(globalThis, "fetch", async () => Response.json({

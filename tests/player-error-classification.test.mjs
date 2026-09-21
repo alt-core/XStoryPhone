@@ -15,7 +15,7 @@ function classificationHarness(overrides = {}) {
   const effects = [];
   const cached = [];
   const context = componentFunctionHarness(appUrl, [
-    "isUnauthorizedFailure", "isBrowserProgressSizeFailure", "showBrowserProgressSizeError",
+    "isUnauthorizedFailure", "requiresPlayerEntry", "isBrowserProgressSizeFailure", "showBrowserProgressSizeError",
     "applyErrorPlayerState", "clearUnauthorizedPlayerUi", "applyPlayerState", "showGlobalError",
     "refreshPlayerState", "entryError", "openBrowserSession", "startPlayerPasscodeSession",
     "unlockDevice", "applyStartedSession"

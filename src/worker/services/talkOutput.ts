@@ -1,7 +1,7 @@
-import { evaluateCondition, renderTemplate } from "../../shared/condition.ts";
+import { definedConditionState, evaluateCondition, renderTemplate, requireTemplateValues } from "../../shared/condition.ts";
 import type { TalkOutputStep } from "../../shared/scenario.ts";
 import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent.ts";
-import { parseTalkMatchSpec } from "../../shared/talkMatch.ts";
+import { parseTalkExtraction } from "../../shared/talkCriteria.ts";
 
 export type ResolvedTalkOutputStep<Result> =
   | { kind: "block"; blockId: string }
@@ -10,9 +10,8 @@ export type ResolvedTalkOutputStep<Result> =
 
 export function talkOutputMatchEnv(matchSpec: string, matchGroups: Readonly<Record<string, string>>) {
   if (!matchSpec.trim()) return { ...matchGroups };
-  const parsed = parseTalkMatchSpec(matchSpec);
-  if (!parsed.ok) return { ...matchGroups };
-  return Object.fromEntries(parsed.spec.items.map((item) => [item.id, matchGroups[item.id] ?? ""]));
+  const parsed = parseTalkExtraction(matchSpec);
+  return Object.fromEntries(parsed.ids.map(id => [id, matchGroups[id] ?? ""]));
 }
 
 export function evaluateTalkOutputSteps<Result>(input: {
@@ -22,6 +21,7 @@ export function evaluateTalkOutputSteps<Result>(input: {
 }) {
   const searchStep = input.steps.find((step) => step.kind === "search");
   const templateEnv = Object.fromEntries(Object.entries(input.env).map(([key, value]) => [key, String(value)]));
+  if (searchStep?.kind === "search") requireTemplateValues(searchStep.queryTemplate, templateEnv);
   const searchQuery = searchStep?.kind === "search"
     ? renderTemplate(searchStep.queryTemplate, templateEnv).normalize("NFC").trim().slice(0, MAX_SEARCH_AGENT_QUERY_LENGTH)
     : "";
@@ -38,7 +38,7 @@ export function evaluateTalkOutputSteps<Result>(input: {
       continue;
     }
     if (step.kind === "if") {
-      if (evaluateCondition(step.cond, outputEnv)) outputs.push({ kind: "block", blockId: step.blockId });
+      if (evaluateCondition(step.cond, definedConditionState(outputEnv))) outputs.push({ kind: "block", blockId: step.blockId });
       continue;
     }
     if (step.kind === "search") {

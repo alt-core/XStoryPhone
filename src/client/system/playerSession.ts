@@ -1,12 +1,12 @@
-export function localPlayerMemoryKey(playerMode: "server" | "browser", sessionToken: string | undefined) {
-  return playerMode === "browser" ? "browser-player" : sessionToken ?? "";
+export function localPlayerMemoryKey(playerMode: "server" | "browser" | "static", sessionToken: string | undefined) {
+  return playerMode !== "server" ? `${playerMode}-player` : sessionToken ?? "";
 }
 
 export function playerSessionChanged(
-  playerMode: "server" | "browser",
+  playerMode: "server" | "browser" | "static",
   currentSessionToken: string | undefined,
   nextSessionToken: string | undefined,
   resumedBrowserProgress: boolean
 ) {
-  return playerMode === "browser" ? !resumedBrowserProgress : currentSessionToken !== nextSessionToken;
+  return playerMode !== "server" ? !resumedBrowserProgress : currentSessionToken !== nextSessionToken;
 }

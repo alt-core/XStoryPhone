@@ -123,6 +123,7 @@ export type BrowserScheduledEvent = {
 };
 
 export type StoredPlayerState = {
+  loadedPartIds: string[];
   repairedContentIds: string[];
   repairedAppIds: string[];
   unlockedContentIds: string[];
@@ -144,6 +145,13 @@ export type PlayerRecord = {
   state: StoredPlayerState;
   stateVersion: number;
   transcriptDeltas?: TranscriptAppend[];
+};
+
+// 認証先の行があっても、初期化を確定するまでは実行可能な進行を持たない。
+export type SessionPlayerRecord = Omit<PlayerRecord, "state"> & {
+  state: StoredPlayerState | null;
+  resetting: boolean;
+  sessionGeneration: number;
 };
 
 export type ScheduledEvent = {
@@ -323,19 +331,19 @@ export type ReviewJudgmentFilter =
 export interface AppStore {
   createPasscodeSession(
     accessCode: string,
-    initialState: StoredPlayerState,
+    initialState: StoredPlayerState | null,
     initialSchedules: readonly InitialScheduledEvent[]
   ): Promise<{
     playerId: string;
     sessionToken: string;
     created: boolean;
   }>;
-  playerForSession(sessionToken: string): Promise<PlayerRecord | null>;
+  playerForSession(sessionToken: string, purpose?: "play" | "reset"): Promise<SessionPlayerRecord | null>;
+  resetPlayerProgress(player: SessionPlayerRecord): Promise<boolean>;
   isAccessCodeLocked(counter: string, at: string): Promise<boolean>;
   recordAccessCodeAttempt(counter: string, success: boolean, at: string): Promise<void>;
   loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript>;
   savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts?: TranscriptAppend[], effects?: PlayerCommitEffects): Promise<boolean>;
-  clearPlayerRuntimeJobs(playerId: string): Promise<void>;
   loadHookLlmResult?(playerId: string, cacheKey: string, at: string): Promise<HookLlmCacheRecord | null>;
   saveHookLlmResultIfAbsent?(playerId: string, record: HookLlmCacheRecord): Promise<HookLlmCacheRecord>;
   clearHookLlmResults?(playerId: string): Promise<void>;
@@ -354,6 +362,7 @@ export interface AppStore {
 
   generatedAudioJob(playerId: string, audioId: string): Promise<GeneratedAudioJob | null>;
   saveGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<void>;
+  updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<boolean>;
   generatedAudioJobs(playerId: string): Promise<GeneratedAudioJob[]>;
 
   reviewJudgments(filter: ReviewJudgmentFilter): Promise<ReviewJudgment[]>;
@@ -599,6 +608,7 @@ export function normalizeStoredState(value: StoredPlayerState): StoredPlayerStat
     } satisfies StoredTalkState];
   }));
   return {
+    loadedPartIds: Array.isArray(value.loadedPartIds) ? [...new Set(["base", ...value.loadedPartIds.filter((id): id is string => typeof id === "string")])] : ["base"],
     repairedContentIds: value.repairedContentIds ?? [],
     repairedAppIds: value.repairedAppIds ?? [],
     unlockedContentIds: value.unlockedContentIds ?? [],
@@ -620,6 +630,7 @@ export function normalizeStoredState(value: StoredPlayerState): StoredPlayerStat
 
 export function copyStoredPlayerState(state: StoredPlayerState): StoredPlayerState {
   return {
+    loadedPartIds: [...(state.loadedPartIds ?? ["base"])],
     repairedContentIds: [...state.repairedContentIds],
     repairedAppIds: [...state.repairedAppIds],
     unlockedContentIds: [...state.unlockedContentIds],

@@ -8,6 +8,7 @@ import type {
   PlayerInputReviewPage,
   PlayerCommitEffects,
   PlayerRecord,
+  SessionPlayerRecord,
   ReviewCluster,
   ReviewClusterReplacement,
   ReviewInputEvent,
@@ -104,7 +105,7 @@ export class D1Store implements AppStore {
 
   async createPasscodeSession(
     accessCode: string,
-    initialState: StoredPlayerState,
+    initialState: StoredPlayerState | null,
     initialSchedules: readonly InitialScheduledEvent[] = []
   ) {
     const accessCodeHash = await sha256(`xstoryphone:access-code:v1:${accessCode}`);
@@ -144,8 +145,8 @@ export class D1Store implements AppStore {
     const sessionToken = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/gu, "");
     const tokenHash = await sha256(sessionToken);
     const now = nowIso();
-    await this.db.prepare("INSERT INTO sessions (token_hash, player_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)")
-      .bind(tokenHash, player.id, now, now)
+    await this.db.prepare("INSERT INTO sessions (token_hash, player_id, created_at, last_seen_at, generation) SELECT ?, id, ?, ?, session_generation FROM players WHERE id = ?")
+      .bind(tokenHash, now, now, player.id)
       .run();
     await this.prunePlayerSessions(player.id, tokenHash)
       .catch((error) => console.error("[sessions:prune]", error));
@@ -195,22 +196,38 @@ export class D1Store implements AppStore {
     ).bind(playerId, currentTokenHash, playerId, currentTokenHash, MAX_SESSIONS_PER_PLAYER - 1).run();
   }
 
-  async playerForSession(sessionToken: string): Promise<PlayerRecord | null> {
+  async playerForSession(sessionToken: string): Promise<SessionPlayerRecord | null> {
     const tokenHash = await sha256(sessionToken);
     const row = await this.db.prepare(
-      `SELECT players.id, players.state_json, players.state_version
+      `SELECT players.id, players.state_json, players.state_version, players.session_generation
        FROM sessions
        INNER JOIN players ON players.id = sessions.player_id
-       WHERE sessions.token_hash = ?`
-    ).bind(tokenHash).first<{ id: string; state_json: string; state_version: number }>();
+       WHERE sessions.token_hash = ? AND sessions.generation = players.session_generation`
+    ).bind(tokenHash).first<{ id: string; state_json: string; state_version: number; session_generation: number }>();
     if (!row) return null;
     await this.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?").bind(nowIso(), tokenHash).run()
       .catch((error) => console.error("[sessions:last_seen]", error instanceof Error ? error.name : "unknown"));
+    const state = JSON.parse(row.state_json) as StoredPlayerState | null;
     return {
       id: row.id,
-      state: normalizeStoredState(JSON.parse(row.state_json) as StoredPlayerState),
+      state: state === null ? null : normalizeStoredState(state),
+      resetting: false,
+      sessionGeneration: row.session_generation,
       stateVersion: row.state_version
     };
+  }
+
+  async resetPlayerProgress(player: SessionPlayerRecord) {
+    const mutationId = crypto.randomUUID();
+    const statements = [this.db.prepare(
+      "UPDATE players SET state_json = 'null', state_version = state_version + 1, session_generation = session_generation + 1, last_mutation_id = ?, updated_at = ? WHERE id = ? AND state_version = ?"
+    ).bind(mutationId, nowIso(), player.id, player.stateVersion)];
+    for (const table of ["scheduled_events", "generated_audio_jobs", "talk_events", "player_transcripts", "hook_llm_results"]) {
+      statements.push(this.db.prepare(`DELETE FROM ${table} WHERE player_id = ? AND EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)`)
+        .bind(player.id, player.id, mutationId));
+    }
+    const results = await this.db.batch(statements);
+    return (results[0]?.meta.changes ?? 0) === 1;
   }
 
   async loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript> {
@@ -341,16 +358,6 @@ export class D1Store implements AppStore {
     ));
     const results = await this.db.batch([updatePlayer, ...updateTranscripts, ...insertTalkEvents, ...scheduleStatements, ...audioStatements]);
     return (results[0]?.meta.changes ?? 0) === 1;
-  }
-
-  async clearPlayerRuntimeJobs(playerId: string) {
-    await this.db.batch([
-      this.db.prepare("DELETE FROM scheduled_events WHERE player_id = ?").bind(playerId),
-      this.db.prepare("DELETE FROM generated_audio_jobs WHERE player_id = ?").bind(playerId),
-      this.db.prepare("DELETE FROM talk_events WHERE player_id = ?").bind(playerId),
-      this.db.prepare("DELETE FROM player_transcripts WHERE player_id = ?").bind(playerId),
-      this.db.prepare("DELETE FROM hook_llm_results WHERE player_id = ?").bind(playerId)
-    ]);
   }
 
   async loadHookLlmResult(playerId: string, cacheKey: string, at: string) {
@@ -615,6 +622,13 @@ export class D1Store implements AppStore {
     const rows = await this.db.prepare(`${this.generatedAudioSelect()} WHERE player_id = ?`)
       .bind(playerId).all<Parameters<typeof generatedAudioJob>[0]>();
     return (rows.results ?? []).map(generatedAudioJob);
+  }
+
+  async updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob) {
+    const result = await this.db.prepare(`UPDATE generated_audio_jobs SET external_job_id = ?, input_text = ?, output_key = ?, status = ?, error_code = ?, updated_at = ?, completed_at = ?
+      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ?`)
+      .bind(job.externalJobId,job.inputText,job.outputKey,job.status,job.errorCode,nowIso(),job.completedAt,playerId,job.audioId,job.id,job.inputHash,job.provider).run();
+    return (result.meta.changes ?? 0) === 1;
   }
 
   async reviewJudgments(filter: ReviewJudgmentFilter) {

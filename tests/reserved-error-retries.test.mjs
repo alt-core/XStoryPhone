@@ -19,7 +19,7 @@ function failureHarness(names, response) {
     return typeof response === "function" ? response(attempts) : response;
   };
   const context = componentFunctionHarness(appUrl, [
-    "applyErrorPlayerState", "showBrowserProgressSizeError", "isUnauthorizedFailure", "isBrowserProgressSizeFailure",
+    "applyErrorPlayerState", "showBrowserProgressSizeError", "isUnauthorizedFailure", "requiresPlayerEntry", "isBrowserProgressSizeFailure",
     ...names
   ], {
     uiState: { sessionToken: "session", locked: false }, playerState: { stateVersion: 1 },

@@ -13,8 +13,8 @@ export function resolveClientStorageSettings(
   if (mode !== "persistent" && mode !== "memory") {
     throw new Error("VITE_XSTORYPHONE_CLIENT_STORAGE は persistent または memory を指定してください。");
   }
-  if (mode === "memory" && playerMode !== "browser") {
-    throw new Error("VITE_XSTORYPHONE_CLIENT_STORAGE=memory は browser モード専用です。");
+  if (mode === "memory" && playerMode !== "browser" && playerMode !== "static") {
+    throw new Error("VITE_XSTORYPHONE_CLIENT_STORAGE=memory は browser/static モード専用です。");
   }
   if (prefix !== prefix.trim() || /[\u0000-\u001f\u007f]/u.test(prefix)) {
     throw new Error("VITE_XSTORYPHONE_STORAGE_PREFIX に前後の空白や制御文字は使用できません。");

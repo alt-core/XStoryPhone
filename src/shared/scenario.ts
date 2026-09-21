@@ -1,10 +1,17 @@
 import type { ConditionStateDefinition } from "./condition";
 
 export type ContentInitialState = "normal" | "repairable" | "hidden";
+export type StaticAnswerIndex = { id: string; prefixes: readonly string[] };
+
+export type PartOwned = {
+  part?: string;
+  order?: number;
+  unavailable?: boolean;
+};
 
 export type DeviceLockSettings =
   | { method: "player-passcode" }
-  | { method: "fixed-pin"; pin: string }
+  | { method: "fixed-pin"; pin: string; loadParts?: readonly string[]; answerIndex?: StaticAnswerIndex }
   | { method: "none" };
 
 export type ProjectSettings = {
@@ -21,7 +28,7 @@ export type ProjectSettings = {
   wallpaperUrl: string;
 };
 
-export type ScenarioApp = {
+export type ScenarioApp = PartOwned & {
   id: string;
   label: string;
   repairLabel?: string;
@@ -33,7 +40,7 @@ export type ScenarioApp = {
   badgeCond: string;
 };
 
-export type ScenarioContent = {
+export type ScenarioContent = PartOwned & {
   id: string;
   publicId: string;
   appId: string;
@@ -50,7 +57,11 @@ export type TalkOutputStep =
   | { kind: "input"; action: "show" | "hide" | "enable" | "disable" }
   | { kind: "if"; cond: string; blockId: string };
 
-export type TalkRule = {
+export type TalkRule = PartOwned & {
+  answerIndex?: StaticAnswerIndex;
+  type: "match" | "secret" | "ai" | "default";
+  contextPart?: string;
+  loadParts?: readonly string[];
   id: string;
   order: number;
   from: string;
@@ -68,7 +79,7 @@ export type TalkRule = {
   example: string;
 };
 
-export type ScenarioDeviceTalk = {
+export type ScenarioDeviceTalk = PartOwned & {
   id: string;
   publicId: string;
   kind: "sms" | "chat";
@@ -86,7 +97,7 @@ export type ScenarioDeviceTalk = {
   rules: readonly TalkRule[];
 };
 
-export type ScenarioSearchAgentTalk = {
+export type ScenarioSearchAgentTalk = PartOwned & {
   id: "search_agent";
   publicId: string;
   kind: "search_agent";
@@ -100,7 +111,7 @@ export type ScenarioSearchAgentTalk = {
 
 export type ScenarioTalk = ScenarioDeviceTalk | ScenarioSearchAgentTalk;
 
-export type ScenarioTalkPerson = {
+export type ScenarioTalkPerson = PartOwned & {
   id: string;
   name: string;
   role: "owner" | "npc" | "system";
@@ -117,6 +128,8 @@ export type ScenarioMessageAttachment =
   | { kind: "image" | "audio" | "video"; attachmentId: string; contentId?: string; imageUrl?: string; audioUrl?: string; videoUrl?: string };
 
 export type ScenarioTalkBlockMessage = {
+  initialRole?: "owner" | "npc";
+  initialTemplateKeys?: readonly string[];
   id: string;
   sender: string;
   body: string;
@@ -130,7 +143,8 @@ export type ScenarioTalkBlockMessage = {
   source: string;
 };
 
-export type ScenarioTalkBlock = {
+export type ScenarioTalkBlock = PartOwned & {
+  acceptsInput?: boolean;
   id: string;
   talkId: string;
   blockKey: string;
@@ -139,7 +153,7 @@ export type ScenarioTalkBlock = {
   messages: readonly ScenarioTalkBlockMessage[];
 };
 
-export type ScenarioAttachmentDefinition = {
+export type ScenarioAttachmentDefinition = PartOwned & {
   id: string;
   type: "image" | "audio" | "video" | "document";
   asset?: string;
@@ -153,12 +167,13 @@ export type ScenarioAttachmentDefinition = {
   cond?: string;
 };
 
-export type ScenarioIncomingCall = {
+export type ScenarioIncomingCall = PartOwned & {
   id: string;
   publicId: string;
   name: string;
   cond: string;
   audioUrl?: string;
+  audioAttachmentId?: string;
   transcript?: readonly {
     atMs: number;
     text: string;
@@ -172,7 +187,7 @@ export type ScenarioScheduleDefinition = {
   fields: Record<string, string>;
 };
 
-export type ScenarioNotification = {
+export type ScenarioNotification = PartOwned & {
   id: string;
   appId: string;
   targetTalkId?: string;
@@ -182,7 +197,7 @@ export type ScenarioNotification = {
   cond: string;
 };
 
-export type ScenarioAssistantMessage = {
+export type ScenarioAssistantMessage = PartOwned & {
   id: string;
   surface: string;
   body: string;
@@ -198,12 +213,15 @@ export type ScenarioChatAuthGate = {
 
 export type ClientScenario = {
   revision: string;
-  playerMode: "server" | "browser";
+  playerMode: "server" | "browser" | "static";
   project: ProjectSettings;
   apps: readonly ScenarioApp[];
 };
 
 export type WorkerScenario = ClientScenario & {
+  parts?: readonly string[];
+  stateVariableParts?: Readonly<Record<string, string>>;
+  hookTalkBlocks?: Readonly<Record<string, readonly string[]>>;
   projectConstants: Readonly<Record<string, string>>;
   clientRevision: string;
   transcriptRevision: string;
@@ -223,7 +241,7 @@ export type WorkerScenario = ClientScenario & {
   repeatTalkBlocks: Record<string, readonly string[]>;
   incomingCalls: readonly ScenarioIncomingCall[];
   initialSchedules: readonly ScenarioScheduleDefinition[];
-  todos: readonly { id: string; text: string; cond: string }[];
+  todos: readonly (PartOwned & { id: string; text: string; cond: string })[];
   notifications: readonly ScenarioNotification[];
   assistantMessages: readonly ScenarioAssistantMessage[];
   chatAuthGate: ScenarioChatAuthGate | null;
@@ -231,7 +249,7 @@ export type WorkerScenario = ClientScenario & {
   hooks: readonly ScenarioHookDefinition[];
   generatedAudio: readonly GeneratedAudioDefinition[];
   albumMediaAttachmentLinks: readonly { attachmentId: string; photoId: string }[];
-  lockedContentPasswords: readonly { contentId: string; passwordHash: string }[];
+  lockedContentPasswords: readonly (PartOwned & { contentId: string; answers: readonly string[]; loadParts: readonly string[]; answerIndex?: StaticAnswerIndex })[];
   publicIds: {
     content: Record<string, string>;
     talk: Record<string, string>;
@@ -244,7 +262,7 @@ export type WorkerScenario = ClientScenario & {
   };
 };
 
-export type GeneratedAudioDefinition = {
+export type GeneratedAudioDefinition = PartOwned & {
   id: string;
   publicId: string;
   title: string;
@@ -261,7 +279,7 @@ export type PublicGeneratedAudioState = {
   fallbackAudioUrl: string | null;
 };
 
-export type ScenarioHookDefinition = {
+export type ScenarioHookDefinition = PartOwned & {
   event: string;
   target: string;
   handler: string;

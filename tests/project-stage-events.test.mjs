@@ -10,7 +10,7 @@ function stageHarness(response) {
   let attempts = 0;
   const context = componentFunctionHarness(appUrl, [
     "dispatchProjectScenarioEvent", "recordBackgroundScenarioEvent", "sendBackgroundScenarioEvent",
-    "isUnauthorizedFailure", "PROGRESSION_RETRY_DELAYS_MS"
+    "isUnauthorizedFailure", "requiresPlayerEntry", "PROGRESSION_RETRY_DELAYS_MS"
   ], {
     uiState: { sessionToken: "session", locked: false }, playerOperationGeneration: 0,
     backgroundScenarioEventQueue: Promise.resolve(), globalErrorVisible: false,

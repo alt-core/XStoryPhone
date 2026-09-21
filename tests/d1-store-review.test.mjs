@@ -5,6 +5,9 @@ import { D1Store } from "../src/platform/cloudflare/d1Store.ts";
 import { SEARCH_AGENT_STREAM_ID } from "../src/shared/searchAgent.ts";
 import { searchAgentPlayerMessageEvent } from "../src/worker/talkEvents.ts";
 import { createInitialPlayerState } from "../src/worker/scenario.ts";
+import { createApp } from "../src/server/app.ts";
+import { workerScenario } from "../src/generated/workerScenario.generated.ts";
+import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 
 const sqlite = await import("node:sqlite").catch(() => null);
 const reviewTest = sqlite ? test : test.skip;
@@ -45,6 +48,7 @@ class LocalD1 {
     this.database.exec(readFileSync(new URL("../migrations/0005_talk_events.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0006_hook_llm_results.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0007_generated_audio_intent.sql", import.meta.url), "utf8"));
+    this.database.exec(readFileSync(new URL("../migrations/0008_player_session_generation.sql", import.meta.url), "utf8"));
   }
 
   prepare(sql) {
@@ -65,6 +69,94 @@ class LocalD1 {
     }
   }
 }
+
+reviewTest("D1の開始失敗・PIN・reset・再開始は同じ初期化を使い、旧sessionと遅着を隔離する", async () => {
+  const original = structuredClone(workerScenario);
+  const store = new D1Store(new LocalD1());
+  let loadedCalls=0, startedCalls=0, fail=true;
+  try {
+    workerScenario.playerMode="server";
+    workerScenario.project.lockScreen={method:"fixed-pin",pin:"0042"};
+    workerScenario.stateVariables.reset_capture="開始前";
+    workerScenario.stateVariableDefinitions.reset_capture={type:"string"};
+    workerScenario.stateVariableParts.reset_capture="base";
+    workerScenario.talkBlocks.find(block=>block.id==="guide::intro").messages[0].body="{{reset_capture}}";
+    workerScenario.hooks=[
+      {event:"part_loaded",target:"base",handler:"reset_fixture_loaded",cond:"",part:"base",order:0,llm:false},
+      {event:"session_started",target:"",handler:"reset_fixture_started",cond:"",part:"base",order:1,llm:false}
+    ];
+    scenarioHookHandlers.reset_fixture_loaded=()=>{loadedCalls++; if(fail) throw new Error("開始失敗fixture");};
+    scenarioHookHandlers.reset_fixture_started=context=>{startedCalls++;context.state.set("reset_capture","開始hook後");};
+    const app=createApp({store,config:{appEnv:"dev",llm:{},playerInputLogging:false}});
+    const post=(path, body={},token="")=>app.request(`http://localhost/api/${path}`,{
+      method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${token}`},body:JSON.stringify(body)
+    });
+    const identity=await store.createPasscodeSession("1234",null);
+    assert.equal((await post("player-state",{},identity.sessionToken)).status,409);
+    assert.equal((await post("session/start",{serialCode:"1234"})).status,400,"PIN前は開始しない");
+    assert.equal(loadedCalls,0);
+    assert.equal((await post("session/start",{serialCode:"1234",pin:"0042"})).status,500);
+    assert.equal((await store.playerForSession(identity.sessionToken)).state,null);
+    assert.equal(startedCalls,0);
+    fail=false;
+    const first=await (await post("session/start",{serialCode:"1234",pin:"0042"})).json();
+    assert.equal(first.ok,true);
+    assert.equal(loadedCalls,2,"失敗したbase hookは通常開始で再試行する");
+    const stale=await store.playerForSession(first.sessionToken);
+    assert.equal(stale.state.talks.guide.initialFormatEnv.reset_capture,"開始前");
+    await store.queueScheduledEvent(stale.id,"fixture","fixture",{},"2000-01-01T00:00:00.000Z");
+    const oldEvent=(await store.dueScheduledEvents(stale.id,new Date().toISOString()))[0];
+    await store.claimScheduledEvent(stale.id,oldEvent.id);
+    const reset=await post("reset-for-testing",{},first.sessionToken);
+    assert.deepEqual(await reset.json(),{ok:true});
+    assert.equal(loadedCalls,2); assert.equal(startedCalls,1,"reset自体はhookを呼ばない");
+    assert.equal(await store.playerForSession(first.sessionToken),null,"他タブの旧sessionも失効する");
+    assert.equal(await store.savePlayer(stale,stale.state),false,"読み込み済み旧操作はCASで失敗する");
+    const next=await (await post("session/start",{serialCode:"1234",pin:"0042"})).json();
+    assert.equal(next.ok,true);
+    const current=await store.playerForSession(next.sessionToken);
+    assert.equal(current.id,stale.id,"同じプレイヤー行を使う");
+    assert.equal(loadedCalls,3); assert.equal(startedCalls,2);
+    const withoutStreamKey=talks=>Object.fromEntries(Object.entries(talks).map(([id,{transcriptKey,...talk}])=>[id,talk]));
+    assert.deepEqual(withoutStreamKey(current.state.talks),withoutStreamKey(stale.state.talks),"初期env・turn・履歴配置を共通経路で作る");
+    assert.notEqual(current.state.talks.search_agent.transcriptKey,stale.state.talks.search_agent.transcriptKey);
+    await store.queueScheduledEvent(current.id,"fixture","fixture",{},"2000-01-01T00:00:00.000Z");
+    const newEvent=(await store.dueScheduledEvents(current.id,new Date().toISOString()))[0];
+    await store.completeScheduledEvent(current.id,oldEvent.id);
+    assert.equal((await store.dueScheduledEvents(current.id,new Date().toISOString()))[0].id,newEvent.id);
+  } finally {
+    Object.assign(workerScenario,original);
+    delete scenarioHookHandlers.reset_fixture_loaded;delete scenarioHookHandlers.reset_fixture_started;
+  }
+});
+
+reviewTest("D1のreset CAS敗者は資源を消さず、古い生成音声結果も新jobを上書きしない",async()=>{
+  const store=new D1Store(new LocalD1());
+  const session=await store.createPasscodeSession("cas-reset",createInitialPlayerState());
+  const stale=await store.playerForSession(session.sessionToken);
+  await store.savePlayer(stale,stale.state);
+  await store.queueScheduledEvent(stale.id,"still-needed","event",{},"2099-01-01T00:00:00.000Z");
+  assert.equal(await store.resetPlayerProgress(stale),false);
+  assert.equal(await store.nextScheduledWakeAt(stale.id),"2099-01-01T00:00:00.000Z");
+  const job={id:"old",audioId:"audio",provider:"static",externalJobId:null,inputHash:"same",inputText:null,outputKey:null,status:"queued",errorCode:null,createdAt:new Date().toISOString(),completedAt:null};
+  await store.saveGeneratedAudioJob(stale.id,{...job,id:"new"});
+  assert.equal(await store.updateGeneratedAudioJob(stale.id,{...job,status:"ready"}),false);
+  assert.equal((await store.generatedAudioJob(stale.id,"audio")).id,"new");
+});
+
+reviewTest("会話・開始hook・初期予約がない作品も開始を確定する",async()=>{
+  const original=structuredClone(workerScenario);
+  try {
+    Object.assign(workerScenario,{playerMode:"server",talks:[],hooks:[],initialSchedules:[]});
+    const store=new D1Store(new LocalD1());
+    const app=createApp({store,config:{appEnv:"dev",llm:{},playerInputLogging:false}});
+    const response=await app.request("http://localhost/api/session/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({serialCode:"1234"})});
+    assert.equal(response.status,200);
+    const started=await response.json();
+    assert.ok((await store.playerForSession(started.sessionToken)).state);
+    assert.equal((await app.request("http://localhost/api/player-state",{method:"POST",headers:{authorization:`Bearer ${started.sessionToken}`}})).status,200);
+  }finally{Object.assign(workerScenario,original);}
+});
 
 reviewTest("D1版は新規playerと初期scheduleを同じbatchで作成する", async () => {
   const local = new LocalD1();
@@ -214,7 +306,7 @@ reviewTest("D1版talk履歴は展開済みNPC本文ではなく正本形式のev
   ]);
   assert.equal(local.database.prepare("SELECT COUNT(*) AS count FROM player_transcripts WHERE stream_id = 'talk:guide'").get().count, 0);
 
-  await store.clearPlayerRuntimeJobs(player.id);
+  assert.equal(await store.resetPlayerProgress(await store.playerForSession(session.sessionToken)), true);
   assert.equal(local.database.prepare("SELECT COUNT(*) AS count FROM talk_events").get().count, 0);
 });
 
@@ -287,7 +379,7 @@ reviewTest("D1版hook LLM cacheは先勝ち・期限・player resetを守る", a
   const refreshed = { ...expired, output: { value: "refreshed" }, expiresAt: "2099-01-01T00:00:00.000Z" };
   assert.deepEqual((await store.saveHookLlmResultIfAbsent(session.playerId, refreshed)).output, { value: "refreshed" });
   assert.deepEqual((await store.loadHookLlmResult(session.playerId, expired.cacheKey, "2026-01-01T00:00:00.000Z"))?.output, { value: "refreshed" });
-  await store.clearPlayerRuntimeJobs(session.playerId);
+  assert.equal(await store.resetPlayerProgress(await store.playerForSession(session.sessionToken)), true);
   assert.equal(await store.loadHookLlmResult(session.playerId, record.cacheKey, "2026-01-01T00:00:00.000Z"), null);
 });
 

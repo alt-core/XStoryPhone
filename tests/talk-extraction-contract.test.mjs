@@ -48,7 +48,7 @@ test("抽出のtuple・best・null・onceとprompt境界を保持する", () => 
         { player_name: "山田", player_name_kana: "やまた" },
         { player_name: "山田", player_name_kana: "やまだ" }
       ],
-      ["player_name = $match.player_name", "player_name_kana = $match.player_name_kana"]
+      ["player_name = $extract.player_name", "player_name_kana = $extract.player_name_kana"]
     );
     assert.deepEqual(
       selected,
@@ -133,7 +133,7 @@ test("抽出のtuple・best・null・onceとprompt境界を保持する", () => 
         { player_name: "B", player_kind: "y", player_name_kana: "びー" },
         { player_name: "B", player_kind: "y", player_name_kana: "びー" }
       ],
-      ["player_name = $match.player_name", "player_kind = $match.player_kind"]
+      ["player_name = $extract.player_name", "player_kind = $extract.player_kind"]
     );
     assert.deepEqual(
       selected,
@@ -182,7 +182,7 @@ test("抽出のtuple・best・null・onceとprompt境界を保持する", () => 
       selectTalkFlowMatchGroupsFromAttempts(
         parsedRequired.spec,
         [{ player_name: "山田" }],
-        ["player_name = $match.player_name"],
+        ["player_name = $extract.player_name"],
         { mode: "once" }
       ),
       {
@@ -199,7 +199,7 @@ test("抽出のtuple・best・null・onceとprompt境界を保持する", () => 
       selectTalkFlowMatchGroupsFromAttempts(
         parsedRequired.spec,
         [{ player_name: null }, { player_name: "山田" }],
-        ["player_name = $match.player_name"],
+        ["player_name = $extract.player_name"],
         { mode: "once" }
       ),
       {

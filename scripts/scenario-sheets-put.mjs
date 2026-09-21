@@ -115,7 +115,7 @@ function estimateColumnWidthPx(header, values) {
     "target",
     "type"
   ]);
-  const wideHeaders = new Set(["body", "cond", "content", "criteria", "match", "query", "script", "set", "start", "text"]);
+  const wideHeaders = new Set(["body", "cond", "content", "extract", "query", "script", "set", "start", "text"]);
   const maxLength = Math.max(textVisualLength(normalizedHeader), ...values.map(textVisualLength));
 
   if (wideHeaders.has(normalizedHeader)) {

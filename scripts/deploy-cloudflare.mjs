@@ -9,6 +9,11 @@ if (!new Set(["dev", "stg", "prod"]).has(environment)) {
   process.exit(1);
 }
 
+if (loadAndValidateScenario().worker.playerMode === "static") {
+  console.error("staticモードは npm run build:static で作り、dist/staticを静的ホストへ配置してください。APIはデプロイしません。");
+  process.exit(1);
+}
+
 const root = fileURLToPath(new URL("../", import.meta.url));
 const config = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 if (!new RegExp(`"${environment}"\\s*:`).test(config)) {

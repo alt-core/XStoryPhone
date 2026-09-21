@@ -38,7 +38,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 追加5表の`mail_items`、`browser_items`、`talk_history`、`schedules`、`project_items`は、未使用ならmanifestから省略できます。それ以外は表を用意し、使わない表はheaderだけ残します。検索AIは通常のtalkへ統合されており、専用の検索返答表はありません。
 
-各表のA列は`comment`です。通常表はcommentが空の行だけを読み、`notes`は制作メモです。`talk_blocks`だけは`*talk_id`、block名、`---`等をcomment列の構造として使います。空欄継承は`talk_flow`のtalk/from、`hooks`のevent、`attachments`のtype、`calendar_items`のdateだけです。継承値を消すときは`-`を指定しますが、解除結果が必須セルの空欄ならエラーになります。行を無効にする指定ではありません。必要なheader、未知列、参照先、型はビルド時に検証します。
+各表のA列は`comment`です。`#part名`だけを置いた行は、それ以降の所属partを指定します。通常のデータ行はcommentを空にし、`notes`は制作メモに使います。`talk_blocks`はさらに`*talk_id`、block名、`---`等をcomment列の構造として使います。空欄継承は`talk_flow`のtalk/from、`hooks`のevent、`attachments`のtype、`calendar_items`のdateだけで、part境界では解除されます。継承値を消すときは`-`を指定しますが、解除結果が必須セルの空欄ならエラーになります。行を無効にする指定ではありません。必要なheader、未知列、参照先、型はビルド時に検証します。partを使わない作品は宣言不要です。[partの制作ルール](static.md#partの所属)も参照してください。
 
 以下の表やコード例はSheetsのセル内容を表します。TSVを直接編集する場合、改行・タブ・引用符を含むセルはTSV規則でquote/escapeしてください。
 
@@ -54,7 +54,8 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
 | `device.lock_pin` | `0420` | fixed-pin時だけ指定し、exposureはprivate |
-| `player.mode` | `server` | `server`または`browser`。省略時server |
+| `device.unlock_load_part` | `evidence` | PIN正解後に取得するpart。空欄は追加なし、複数はセル内改行 |
+| `player.mode` | `server` | `server` / `browser` / `static`。省略時server |
 | `features.llm` | `false` | LLM有効化。privateの設定値 |
 | `search_agent.start` | `intro` | 検索AIの初期block/step。改行区切り |
 
@@ -62,7 +63,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 進行中は予約状態変数`os_date`と`os_time_label`を更新できます。上の定数が初期値になるため、`state_vars`へ重ねて宣言しません。hookのscriptセルには`state.set("os_date", "2026-08-13")`、会話のsetセルには`os_time_label = "21:30"`のように書きます。日付が変わるとカレンダーはその週を表示します。
 
-固定PINは4〜8桁の数字文字列です。Sheetで先頭ゼロを落とさず文字列として保持してください。値はクライアントへ出さず、サーバーで一致判定します。入力画面の順序と保存方式は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
+固定PINは4〜8桁の数字文字列です。Sheetで先頭ゼロを落とさず文字列として保持してください。正答はクライアントへ出さず、server/browserではAPIで、staticでは部分hashと回答JSONで判定します。入力画面の順序と保存方式は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
 
 破損リンク案内の`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`もこの表で制作します。必須定数と初期画面の値はデモ表を基に編集し、`client.*`と`device.lock_pin_length`は自動生成されるため書きません。
 
@@ -119,7 +120,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 会話で添付する場合はtalk_blocksのattachmentに同じIDを書きます。attachmentsのcontentは対応するコンテンツID、posterは画像attachment IDです。画像・音声・動画とアルバム項目の対応は生成時に作られ、会話内メディアからアルバムへ移動できます。still_videoと実動画の両方をメッセージ・チャットへ添付できます。
 
-鍵付き添付はattachmentsにlock=passwordとcontentを指定し、`passwords`にそのcontentとpasswordを書きます。document型はbodyが必要です。正解はクライアントへ配らず、到達済み添付の入力をサーバーで判定します。通常の一覧項目を持たない鍵付き添付も定義できます。
+鍵付き添付はattachmentsにlock=passwordとcontentを指定し、`passwords`にcontent、引用符付きpassword候補、load_partを書きます。候補と複数partはセル内改行で列挙します。load_part空欄は追加取得なしです。document型はbodyが必要です。server/browserの判定はAPI側で行い、staticは[回答JSON方式](static.md)を使います。通常の一覧項目を持たない鍵付き添付も定義できます。
 
 ### 電話の字幕と書き起こし
 
@@ -172,7 +173,7 @@ chapter == "ending"
 player_input =~ /^(はい|了解)/u
 ```
 
-表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。integer変数だけは整数literalによる`count += 1`と`count -= 1`も使えます。右辺の式・状態参照・`++`は使えません。`match` で抽出した文字列は、string変数に限り `player_name = $match.name` で代入できます。
+表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。integer変数だけは整数literalによる`count += 1`と`count -= 1`も使えます。右辺の式・状態参照・`++`は使えません。`extract` で抽出した文字列は、string変数に限り `player_name = $extract.name` で代入できます。
 
 作品固有Stageへ公開する必要がある状態だけは、`state_vars`のpublic列をtrueにします。公開値はPlayerStateの`projectState`へ入り、空欄またはfalseの状態変数は返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。ID重複や型不正はシナリオ検証で拒否されます。
 
@@ -251,7 +252,9 @@ talk.addBlock("guide", "received", { mode: "stay" });
 
 hookからは、状態変数、コンテンツ、アプリ、会話block、ToDo、予約、着信、生成音声、終了演出を操作できます。複数の状態更新は`context.state.apply([...])`へまとめられます。ToDoは定義しただけでは表示されず、`context.todo.add(id)` で表示対象へ加え、完了時に `context.todo.remove(id)` で外します。
 
-`context.talk.addBlock(talkId, blockId)`はTSVのblockを追加し、その瞬間のtemplate値を固定したうえで、talk flowの通常遷移と同じく`from`を追加blockへ進めます。指定できるblockは、指定talkに属する非repeat blockのうち、repeat派生を含む全表示でtemplateを状態変数だけから解決できるものです。別talkのblockやmatch値を必要とするblockは、生成されたhook contextの型で拒否します。会話を続ける場合は、追加先blockを`from`にしたdefault ruleが必要です。`context.talk.addBlock(talkId, blockId, { mode: "stay" })`は、talk flowの`mode=stay`と同様にblockを追加しても`from`と`turnKey`を変更しません。会話位置と無関係な案内、新着、別eventの結果通知には`mode: "stay"`を使います。hook handlerは同期関数として副作用を順番に記録し、PlayerStateと同じcommitへ保存します。
+`context.talk.addBlock(talkId, blockId)`はTSVのblockを追加し、その瞬間のtemplate値を固定したうえで、talk flowの通常遷移と同じく`from`を追加blockへ進めます。指定できるblockは、指定talkに属する非repeat blockのうち、repeat派生を含む全表示でtemplateを状態変数だけから解決できるものです。別talkのblockや抽出値を必要とするblockは、生成されたhook contextの型で拒否します。会話を続ける場合は、追加先blockを`from`にしたdefault ruleが必要です。`context.talk.addBlock(talkId, blockId, { mode: "stay" })`は、talk flowの`mode=stay`と同様にblockを追加しても`from`と`turnKey`を変更しません。会話位置と無関係な案内、新着、別eventの結果通知には`mode: "stay"`を使います。hook handlerは同期関数として副作用を順番に記録し、PlayerStateと同じcommitへ保存します。
+
+追加先にfrom行がない場合は、[読み取り専用の終点](conversation.md#tsvの列)として投稿不可になります。検索AIも同じ扱いです。会話を止めず案内だけ追加したい場合は`mode: "stay"`を選びます。
 
 hookから検索結果カードだけを検索AIへ追加する場合は、`context.talk.search("search_agent", query)`を使います。これは固定の`search_agent` talkへ結果を追加しますが、talkの`from`と検索入力欄の状態は変更しません。
 
@@ -292,7 +295,9 @@ object自体と各項目は省略できます。上記がそれぞれの既定�
 
 `content_repaired` と `content_opened` の `target` には、コンテンツID、アプリID、talk IDを指定できます。`content_repaired`は対象が修復された時、`content_opened`は修復hookがeffect sequenceで後続処理を終了した場合を除き、利用可能な対象を開くたびにシナリオで定義したIDで発火します。hookから修復する場合は`context.content.setState(id, "repaired")`を使います。`content_unlocked` は鍵付きコンテンツだけを対象とするため、コンテンツIDを指定します。
 
-同じeventで実行するhookは、dispatch開始時点の状態から先に確定します。先に書いたhookが状態を変更しても、その変更によって同じdispatch内の別hookが新たに発火することはありません。連続処理が必要なら、1つのhookへまとめるか、別のscenario eventを予約してください。
+同じevent/targetのhookを原本順に一巡し、各scriptの直前に、先行scriptの更新を反映した最新stateでcondを一度だけ判定します。通過した行を再評価しません。phaseを一段だけ進めたい場合は、一つの分岐またはscript内のif/elseで制御してください。
+
+所属partの初回取得には`part_loaded`を使い、targetへpart名を指定します。新規開始時のbase通知はsession_startedより前です。再開や通常更新では再通知しません。part_loaded内のeffectSequenceは使用できず、必要なら後段の通常完了hookへ置きます。[通知順序と制約](static.md#初期の破損枠とhook)を確認してください。
 
 `context.schedule.after("show_call", 30_000, fields?, instanceId?)`で後続eventを予約でき、`scheduled_event` hookのtargetへ`show_call`を指定します。同じlogical eventを複数instance持つ場合だけ第4引数を使います。`context.incoming.start(id)`で着信を表示し、`markCompleted(id)`で完了済みとして再発火を防ぎます。通話完了時はコアが表示中の着信を閉じ、`incoming_call_completed` eventとcall IDをhookへ渡します。
 
@@ -317,5 +322,5 @@ npm run scenario:validate
 npm run scenario:build
 ```
 
-LLMを無効にしたシナリオへ自然文criteriaやmatch抽出を書いた場合も、ここでエラーになります。
+LLMを無効にしたシナリオへtype=aiやAI抽出JSONを書いた場合も、ここでエラーになります。matchの語句・正規表現、secret、正規表現抽出はAIなしで使えます。
 通常の `npm run check` では、未到達本文を持つWorkerシナリオがクライアントのimport経路へ入っていないことも検査します。

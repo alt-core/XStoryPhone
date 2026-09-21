@@ -36,6 +36,8 @@ npm run db:migrate:remote:prod
 
 必要な環境のコマンドだけを実行します。`npm run db:migrate:remote` は対象未指定として停止します。
 
+既存D1を更新する場合も、新しいWorkerを配備する前にmigrationを適用してください。serverモードの開始・reset処理には`0008_player_session_generation.sql`の列が必要で、未適用のままでは認証・状態取得が失敗します。デプロイスクリプトはmigrationを自動実行しません。
+
 ## 3. secretと任意設定を登録する
 
 レビュー画面のsecretを環境ごとに登録します。prodの例は次のとおりです。

@@ -156,6 +156,7 @@ export function talkBranchReviewPageHtml() {
       simulatorOpen: sessionStorage.getItem('talkBranchReviewSimulatorOpen') === '1',
       simulatorInput: '',
       simulatorResult: '',
+      simulatorParts: 'base',
       simulatorHistory: [],
       openClusterKeys: new Set(),
       settingsOpen: false,
@@ -461,6 +462,7 @@ export function talkBranchReviewPageHtml() {
         script.appendChild(shared);
       }
       appendScriptLine(script, 'あなた', branch.example || '（exampleなし）', 'example-line');
+      for (const part of branch.loadParts || []) appendScriptLine(script, 'SYSTEM', '/load ' + part);
       for (const message of branch.nextMessages || []) {
         appendScriptLine(script, message.speaker, messageText(message), '', message);
       }
@@ -474,9 +476,10 @@ export function talkBranchReviewPageHtml() {
         }
       }
       pane.appendChild(script);
+      pane.appendChild(ruleMeta('type: ' + branch.type + ' / part: ' + branch.part));
       pane.appendChild(commentBox('セリフへの指示', 'branch', branch));
       if (branch.match) {
-        pane.appendChild(ruleMeta('match: ' + branch.match));
+        pane.appendChild(ruleMeta('extract: ' + branch.match));
       }
       if (branch.stateUpdates && branch.stateUpdates.length) {
         pane.appendChild(ruleMeta('set: ' + branch.stateUpdates.join('\\n')));
@@ -824,6 +827,17 @@ export function talkBranchReviewPageHtml() {
       const panel = document.createElement('div');
       panel.className = 'sim-panel';
       panel.hidden = !state.simulatorOpen;
+      const partInput = document.createElement('input');
+      partInput.value = state.simulatorParts;
+      partInput.placeholder = 'base, evidence';
+      partInput.setAttribute('aria-label', '取得済part');
+      partInput.addEventListener('input', () => { state.simulatorParts = partInput.value; });
+      if ((detail.availableParts || []).length > 1) {
+        const label = document.createElement('label');
+        label.textContent = '試行前の取得済part（カンマ区切り）';
+        label.appendChild(partInput);
+        panel.append(label, ruleMeta('候補: ' + detail.availableParts.join(', ')), ruleMeta('分岐・抽出・set・出力を確認します。part_loaded等のhookは実プレイで確認してください。'));
+      }
       const input = document.createElement('input');
       input.placeholder = 'メッセージを入力';
       input.value = state.simulatorInput;
@@ -872,9 +886,9 @@ export function talkBranchReviewPageHtml() {
         }
         const entries = Object.entries(match || {}).filter(([, value]) => value != null && String(value) !== '');
         if (!entries.length) {
-          return '\\nmatch: （抽出なし）';
+          return '\\nextract: （抽出なし）';
         }
-        return '\\nmatch: ' + entries.map(([key, value]) => key + '=' + String(value)).join(', ');
+        return '\\nextract: ' + entries.map(([key, value]) => key + '=' + String(value)).join(', ');
       }
       async function submitSimulation() {
         if (send.disabled) {
@@ -896,7 +910,8 @@ export function talkBranchReviewPageHtml() {
               talkId: detail.talkId,
               fromId: detail.fromId,
               targetRuleId: branch.ruleId,
-              message
+              message,
+              loadedParts: state.simulatorParts.split(',').map(value => value.trim()).filter(Boolean)
             })
           });
           const selected = data.result || {};
@@ -907,6 +922,7 @@ export function talkBranchReviewPageHtml() {
             ? '\\n表示block: ' + selected.selectedBlockIds.map((id) => String(id).split('::').pop()).join(', ')
             : '';
           const searchResult = Number.isFinite(selected.resultCount) ? '\\n検索結果: ' + selected.resultCount + '件' : '';
+          const partResult = '\\n取得済part: ' + selected.loadedParts.join(', ') + ' → ' + selected.acquiredParts.join(', ');
           const selectedBranch = detail.branches.find((candidate) => candidate.ruleId === selected.selectedRuleId);
           const resultText =
             '→ ' + (selected.label || selected.selectedRuleId || '') + mode +
@@ -914,7 +930,7 @@ export function talkBranchReviewPageHtml() {
             condNote +
             preset +
             selectedBlocks +
-            searchResult;
+            searchResult + partResult;
           state.simulatorResult = '判定しました';
           state.simulatorHistory = [
             ...state.simulatorHistory,

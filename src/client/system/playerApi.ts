@@ -16,12 +16,14 @@ import type {
   PublicPresentationTalkMessage
 } from "../../shared/presentation.ts";
 import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated.ts";
+import { localPlayerExecution } from "../generated/playerExecution.generated.ts";
 import {
   BROWSER_PLAYER_CLEARED_EVENT,
   BROWSER_PLAYER_MARKER,
   BROWSER_PLAYER_STORAGE_ERROR_EVENT,
   BrowserPlayerStorageError,
   commitBrowserPlayerResponse,
+  clearBrowserPlayerStorage,
   isBrowserPlayerStorageError,
   prepareBrowserPlayerRequest
 } from "./browserPlayerStorage.ts";
@@ -191,7 +193,9 @@ type StoredTranscriptCache = {
 };
 
 const SERVER_TRANSCRIPT_CACHE_KEY = "xstoryphone.transcripts.v2";
-export const playerMode = String(projectConstants["player.mode"] ?? "server") === "browser" ? "browser" : "server";
+const configuredPlayerMode = String(projectConstants["player.mode"] ?? "server");
+export const playerMode = configuredPlayerMode === "static" ? "static" : configuredPlayerMode === "browser" ? "browser" : "server";
+let startupPin: string | undefined;
 
 function emptyTranscriptCache(): TranscriptCache {
   return { talk: {} };
@@ -311,6 +315,7 @@ function serverAuthHeaders(sessionToken: string): Record<string, string> {
 }
 
 function fetchPlayerApi(url: string, init: RequestInit = {}) {
+  if (localPlayerExecution) return localPlayerExecution.request(url, init);
   return fetch(apiUrl(url), isMemoryStorage ? { ...init, credentials: "omit", cache: "no-store" } : init);
 }
 
@@ -453,7 +458,7 @@ async function readJson<T extends { ok: true }>(response: Response, options: Rea
     throw new BrowserPlayerStorageError("unauthorized", "保存されたプレイデータをサーバーで確認できません。");
   } else if (playerMode === "browser" && !payload.ok && options.browserParentToken === null) {
     delete mutable.playerState;
-  } else if (mutable.playerState) {
+  } else if (mutable.playerState && !localPlayerExecution) {
     const responseState = mutable.playerState as PlayerStateResponse;
     if (playerMode === "browser") {
       mutable.playerState = await commitBrowserPlayerResponse(
@@ -471,6 +476,7 @@ async function readJson<T extends { ok: true }>(response: Response, options: Rea
   }
   if (
     !payload.ok
+    && payload.retryable !== false
     && (response.status === 408 || response.status === 502 || response.status === 503 || response.status === 504)
   ) {
     return { ...payload, retryable: true };
@@ -485,6 +491,7 @@ async function playerRequest<T extends { ok: true }>(
   options: { replaceBrowserStreamsOnSuccess?: boolean } = {}
 ): Promise<ApiResult<T>> {
   const execute = async () => {
+    if (localPlayerExecution) return readJson<T>(await fetchPlayerApi(url, init));
     if (playerMode === "browser") {
       const parentToken = await prepareBrowserPlayerRequest();
       if (!parentToken) {
@@ -501,6 +508,7 @@ async function playerRequest<T extends { ok: true }>(
     const response = await fetchPlayerApi(url, requestInit);
     return readJson<T>(response, { credential: sessionToken });
   };
+  if (playerMode === "static") return runBrowserPlayerOperation(execute);
   if (playerMode !== "browser") return execute();
   return queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute));
 }
@@ -515,30 +523,37 @@ export async function startSession(serialCode: string) {
       headers: {
         "content-type": "application/json"
       },
-      body: JSON.stringify({ serialCode })
+      body: JSON.stringify({ serialCode, ...(startupPin ? { pin: startupPin } : {}) })
     });
 
-    return readJson<{ ok: true; sessionToken: string; playerState: PlayerState } & PresentationResponse>(response, {
+    const result = await readJson<{ ok: true; sessionToken: string; playerState: PlayerState } & PresentationResponse>(response, {
       ...(playerMode === "browser"
         ? { browserParentToken: null, replaceBrowserStreamsOnSuccess: true }
         : {})
     });
+    if (result.ok) startupPin = undefined;
+    return result;
   };
   return playerMode === "browser"
     ? queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute))
-    : execute();
+    : playerMode === "static" ? runBrowserPlayerOperation(execute) : execute();
 }
 
-export async function verifyDevicePin(pin: string) {
-  const response = await fetchPlayerApi("/api/device-pin/verify", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({ pin })
-  });
-
-  return readJson<{ ok: true }>(response);
+export async function verifyDevicePin(pin: string, sessionToken = "") {
+  const execute = async () => {
+    const parentToken = playerMode === "browser" && sessionToken ? await prepareBrowserPlayerRequest() : undefined;
+    const init = {
+      method: "POST", headers: { "content-type": "application/json", ...(playerMode === "server" && sessionToken ? serverAuthHeaders(sessionToken) : {}) },
+      body: JSON.stringify({ pin })
+    };
+    const response = await fetchPlayerApi("/api/device-pin/verify", parentToken ? browserPlayerRequestInit(init, parentToken) : init);
+    const result = await readJson<{ ok: true; playerState?: PlayerState } & PresentationResponse>(response, {
+      credential: sessionToken, ...(playerMode === "browser" ? { browserParentToken: parentToken ?? null } : {})
+    });
+    if (result.ok) startupPin = result.playerState ? undefined : pin;
+    return result;
+  };
+  return playerMode === "browser" ? queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute)) : runBrowserPlayerOperation(execute);
 }
 
 export async function loadPlayerState(sessionToken: string) {
@@ -546,9 +561,17 @@ export async function loadPlayerState(sessionToken: string) {
 }
 
 export async function resetPlayerState(sessionToken: string) {
-  return playerRequest<{ ok: true; playerState: PlayerState } & PresentationResponse>("/api/reset-for-testing", sessionToken, {
+  if (playerMode === "browser") {
+    if (!(import.meta.env?.DEV || import.meta.env?.VITE_XSTORYPHONE_RESET_FOR_TESTING === "true")) return {ok:false as const,error:"not_found",status:404};
+    return queueBrowserPlayerOperation(() => runBrowserPlayerOperation(async () => {
+      const parent = await prepareBrowserPlayerRequest();
+      await clearBrowserPlayerStorage({expectedProgressToken:parent});
+      return {ok:true as const};
+    }));
+  }
+  return playerRequest<{ ok: true }>("/api/reset-for-testing", sessionToken, {
     method: "POST"
-  }, { replaceBrowserStreamsOnSuccess: true });
+  });
 }
 
 export async function recordContentOpened(

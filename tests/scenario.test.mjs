@@ -476,9 +476,9 @@ test("会話ブロックは複数発話・添付・遅延・出典を保持す�
   assert.equal(scenario.deviceState.notes.some((note) => note.title === "鍵付きメモ"), false);
   assert.equal(JSON.stringify(scenario.deviceState).includes("unlockCode"), false);
   assert.equal(scenario.worker.contents.find((content) => content.id === "sealed_note")?.record.unlockCode, undefined);
-  assert.equal(
-    scenario.worker.lockedContentPasswords.find((item) => item.contentId === "sealed_note")?.passwordHash,
-    createHash("sha256").update("0420").digest("hex")
+  assert.deepEqual(
+    scenario.worker.lockedContentPasswords.find((item) => item.contentId === "sealed_note")?.answers,
+    ["0420"]
   );
   assert.equal(scenario.worker.contents.some((content) => content.id === "orange_mark"), false);
   const photoDescription = scenario.worker.photoDescriptions.rainy_window;
@@ -989,6 +989,8 @@ test("ラジオの再生条件・cue・生成音声をサーバー側で解決�
     audioCues: [{ id: "demo_marker", atMs: 2_000 }]
   };
   callLog.record = { ...callLog.record, audioUrl: "", genAudioId: "demo_voice" };
+  delete radio.record.audioAttachmentId;
+  delete callLog.record.audioAttachmentId;
   const generatedAudio = [{
     id: workerScenario.publicIds.generatedAudio.demo_voice,
     status: "ready",
@@ -1041,15 +1043,15 @@ test("デモは任意字幕付きラジオと実動画を含み、字幕なし�
   const callWithoutTranscript = scenario.worker.contents.find((content) => content.id === "missed_call");
   const voicemail = scenario.worker.contents.find((content) => content.id === "demo_voicemail");
 
-  assert.equal(radio?.record.audioUrl, "/system/radio-caption-sample.wav");
+  assert.equal(scenario.worker.attachments.find(item=>item.id===radio?.record.audioAttachmentId)?.asset, "/system/radio-caption-sample.wav");
   assert.equal(radio?.record.transcript?.length, 3);
   assert.equal(silentRadio?.record.transcript, undefined);
   assert.equal(callWithoutTranscript?.record.transcript, undefined);
   assert.equal(voicemail?.record.kind, "voicemail");
-  assert.equal(voicemail?.record.audioUrl, "/system/call-caption-sample.wav");
+  assert.equal(scenario.worker.attachments.find(item=>item.id===voicemail?.record.audioAttachmentId)?.asset, "/system/call-caption-sample.wav");
   assert.equal(voicemail?.record.transcript?.length, 3);
   assert.equal(video?.record.mediaKind, "video");
-  assert.equal(video?.record.videoUrl, "/demo/demo-video.mp4");
+  assert.equal(scenario.worker.attachments.find(item=>item.id===video?.record.videoAttachmentId)?.asset, "/demo/demo-video.mp4");
   assert.equal(talkCommandAvailable("photo:demo_video", createInitialPlayerState()), true);
   const beforeReceipt = createInitialPlayerState();
   assert.equal(searchScenario("画像受信テスト", beforeReceipt).some((item) => item.title === "受信したダミー画像"), false);
@@ -1286,7 +1288,7 @@ test("条件付き表示と検索AI talkを公開シナリオへ生成する", (
   assert.equal(searchTalk?.label, scenario.worker.project.assistantName);
   assert.deepEqual(
     scenario.worker.talkPeople.find((person) => person.id === "search_agent"),
-    { id: "search_agent", name: scenario.worker.project.assistantName, role: "npc" }
+    { id: "search_agent", name: scenario.worker.project.assistantName, role: "npc", part: "base", order: 3 }
   );
   assert.deepEqual(searchTalk?.startSteps.map((step) => step.kind), ["input", "block", "input"]);
   const searchDefault = searchTalk?.rules.find((rule) => rule.from === searchTalk.initialFrom && rule.isDefault);
@@ -1487,7 +1489,7 @@ test("シナリオ検証は不正なcondと未定義変数を実行前に拒否�
     fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
     const invalidBrowserPasscodeResult = spawnSync(process.execPath, [validator], { cwd: temporaryRoot, encoding: "utf8" });
     assert.equal(invalidBrowserPasscodeResult.status, 1);
-    assert.match(invalidBrowserPasscodeResult.stderr, /browserモードでは project.lockScreen.method に player-passcode を指定できません/u);
+    assert.match(invalidBrowserPasscodeResult.stderr, /browser\/staticモードでは project.lockScreen.method に player-passcode を指定できません/u);
 
     scenario.project.lockScreen = { method: "fixed-pin", pin: "0420" };
     fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
@@ -1722,9 +1724,9 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
       scenario(scenario) { scenario.features.llm = true; },
       flow(flow) {
         const lines = flow.split("\n");
-        const lineIndex = lines.findIndex((line) => line.startsWith("\tsearch_agent\tintro\t\t\t"));
+        const lineIndex = lines.findIndex((line) => line.startsWith("\tsearch_agent\tintro\t") && line.includes("\tmatch\t"));
         const cells = lines[lineIndex].split("\t");
-        cells[7] = JSON.stringify({ search_found: { rule: "検索結果の有無", null: "ok" } });
+        cells[lines[0].split("\t").indexOf("extract")] = JSON.stringify({ search_found: { rule: "検索結果の有無", null: "ok" } });
         lines[lineIndex] = cells.join("\t");
         return lines.join("\n");
       }
@@ -1742,24 +1744,23 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
       const lines = flow.split("\n");
       const lineIndex = lines.findIndex((line) => line.startsWith("\tsearch_agent\tintro\t!old_note_opened\t"));
       const cells = lines[lineIndex].split("\t");
-      cells[9] = "game_over";
+      cells[lines[0].split("\t").indexOf("mode")] = "game_over";
       lines[lineIndex] = cells.join("\t");
       return lines.join("\n");
     } });
     assert.equal(searchGameOver.status, 1);
     assert.match(searchGameOver.stderr, /search_agentではmode=game_overを使用できません/u);
 
-    const searchTransitionEndingInCommand = run({ flow(flow) {
+    const searchReadOnlyEndingInInput = run({ flow(flow) {
       const lines = flow.split("\n");
       const lineIndex = lines.findIndex((line) => line.startsWith("\tsearch_agent\tintro\t!old_note_opened\t"));
       const cells = lines[lineIndex].split("\t");
-      cells[8] = '"hint_first\n/input show"';
-      cells[9] = "";
+      cells[lines[0].split("\t").indexOf("next")] = '"hint_first\n/input show"';
+      cells[lines[0].split("\t").indexOf("mode")] = "";
       lines[lineIndex] = cells.join("\t");
       return lines.join("\n");
     } });
-    assert.equal(searchTransitionEndingInCommand.status, 1);
-    assert.match(searchTransitionEndingInCommand.stderr, /nextの最後の無条件blockに対応するruleがありません/u);
+    assert.equal(searchReadOnlyEndingInInput.status, 0, "ruleなし終点＋入力UI設定は正当な読み取り専用遷移");
 
     const invalidProjectApp = run({ scenario(scenario) {
       scenario.apps.push({ id: "case_files", label: "事件資料", accent: "#777", initialState: "normal", search: [] });
@@ -1809,14 +1810,16 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
       scenario(scenario) { scenario.features.llm = true; },
       flow(flow) {
         const lines = flow.split("\n");
-        const lineIndex = lines.findIndex((line) => line.startsWith("\tguide\tintro\t\t\t\t\t\tmessage_reply\tstay"));
+        const lineIndex = lines.findIndex((line) => line.startsWith("\tguide\tintro\t") && line.includes("\tdefault\t"));
         const cells = lines[lineIndex].split("\t");
         cells[4] = "ゲームオーバー確認";
-        cells[5] = "/^終了$/u";
-        cells[6] = "終了";
-        cells[7] = JSON.stringify({ topic: "話題" });
-        cells[8] = "game_over_test";
-        cells[9] = "game_over";
+        const columns = lines[0].split("\t");
+        cells[columns.indexOf("type")] = "match";
+        cells[columns.indexOf("text")] = "/^終了$/u";
+        cells[columns.indexOf("example")] = "終了";
+        cells[columns.indexOf("extract")] = JSON.stringify({ topic: "話題" });
+        cells[columns.indexOf("next")] = "game_over_test";
+        cells[columns.indexOf("mode")] = "game_over";
         lines.splice(lineIndex, 0, cells.join("\t"));
         return lines.join("\n");
       },
@@ -2120,7 +2123,7 @@ test("検索語はNFKCで正規化し、入れ子配列だけをAND条件とし�
   }
 });
 
-test("同一イベントのhook適格性は実行開始時点の状態で確定する", async () => {
+test("同一イベントのhook condは各script直前に最新の状態で評価する", async () => {
   workerScenario.stateVariables.test_hook_snapshot = false;
   workerScenario.stateVariables.test_hook_cascade = false;
   const firstHook = { event: "test_hook_snapshot", target: "", handler: "test_hook_snapshot_first", cond: "", llm: false };
@@ -2134,7 +2137,7 @@ test("同一イベントのhook適格性は実行開始時点の状態で確定�
       eventId: "test_hook_snapshot"
     });
     assert.equal(result.state.stateValues.test_hook_snapshot, true);
-    assert.equal(result.state.stateValues.test_hook_cascade, undefined);
+    assert.equal(result.state.stateValues.test_hook_cascade, true);
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(firstHook), 2);
     delete scenarioHookHandlers.test_hook_snapshot_first;

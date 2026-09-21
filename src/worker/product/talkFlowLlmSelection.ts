@@ -25,6 +25,7 @@ export type TalkFlowLlmPromptInput = {
 };
 
 export type TalkFlowLlmRuntimeRule = TalkFlowLlmRule & {
+  type: "match" | "secret" | "ai" | "default";
   order: number;
   cond: string;
 };
@@ -166,11 +167,6 @@ export function parseTalkFlowRegexCriteria(criteria: string): TalkFlowRegexCrite
   }
 }
 
-function isTalkFlowLlmCandidateRule(rule: TalkFlowLlmRule) {
-  // 正規表現 criteria は LLM 前段で処理する。自然文 criteria はここで解釈しない。
-  return rule.isDefault || parseTalkFlowRegexCriteria(rule.criteria).kind === "none";
-}
-
 export function selectTalkFlowRuleByRegexCriteria<T extends TalkFlowLlmRule>(
   rules: readonly T[],
   playerInput: string
@@ -225,7 +221,7 @@ export function buildTalkFlowLlmPromptInputForTurn<T extends TalkFlowLlmRuntimeR
   if (!defaultRule) {
     return null;
   }
-  const llmRules = activeRules.filter(isTalkFlowLlmCandidateRule);
+  const llmRules = activeRules.filter(rule => rule.type === "ai" || rule.isDefault);
 
   return {
     input: {

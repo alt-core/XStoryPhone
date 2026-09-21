@@ -19,6 +19,10 @@ import { resolveScenarioTalkRule } from "../services/talkResolver.ts";
 import { talkFlowRecentMessages } from "../services/talkContext.ts";
 import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../services/talkOutput.ts";
 import { applyCompactStateAssignments, compactStateValues, effectiveStateValues } from "../stateValues.ts";
+import { scenarioForParts } from "../scenarioParts.ts";
+import { createScenarioRuntime } from "../scenarioRuntime.ts";
+import { createTalkContextRuntime } from "../services/talkContextRuntime.ts";
+import { createTalkCommandRuntime } from "../services/talkCommandRuntime.ts";
 
 type JudgmentStatus = ReviewJudgmentStatus;
 
@@ -275,6 +279,7 @@ function alternativeConditionValue(stateId: string, forbidden: unknown) {
 }
 
 function setPresetStateValue(stateValues: Record<string, unknown>, changes: Record<string, unknown>, stateId: string, value: unknown) {
+  if (!Object.prototype.hasOwnProperty.call(stateValues, stateId)) return;
   const normalized = valueForStateDefinition(stateId, value);
   if (normalized === undefined) return;
   stateValues[stateId] = normalized;
@@ -356,8 +361,8 @@ function applyConditionPresetExpression(expression: string, stateValues: Record<
   applyConditionAtomPreset(value, stateValues, changes);
 }
 
-function talkBranchReviewStatePresetForCond(cond: string) {
-  const stateValues: Record<string, unknown> = { ...workerScenario.stateVariables };
+function talkBranchReviewStatePresetForCond(cond: string, defaults = workerScenario.stateVariables) {
+  const stateValues: Record<string, unknown> = { ...defaults };
   const changes: Record<string, unknown> = {};
   const trimmed = cond.trim();
   if (trimmed) applyConditionPresetExpression(trimmed, stateValues, changes);
@@ -474,6 +479,9 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
     const unsavedEvents = currentRuleEvents.filter((event) => !savedSourceIds.has(event.id));
     return {
       ruleId: rule.id,
+      type: rule.type,
+      part: rule.part ?? "base",
+      loadParts: rule.loadParts ?? [],
       label: ruleLabel(rule),
       isDefault: rule.isDefault,
       isCommon: rule.from === "*",
@@ -507,6 +515,7 @@ export async function talkBranchReviewFromDetail(store: AppStore, talkId: string
   return {
     talkId,
     fromId,
+    availableParts: workerScenario.parts ?? ["base"],
     context: rules.find((rule) => rule.isDefault && rule.from === fromId)?.criteria
       || `${talk.label}（${talk.kind === "sms" ? "メッセージ" : talk.kind === "chat" ? "チャット" : "検索AI"}） / ${shortBlockLabel(fromId)}`,
     incomingMessages,
@@ -593,43 +602,55 @@ export async function replaceTalkBranchReviewClusters(store: AppStore, input: {
 export async function simulateTalkBranchReviewSelection(
   env: LlmProviderEnv,
   store: AppStore,
-  input: { talkId: string; fromId: string; targetRuleId: string; message: string }
+  input: { talkId: string; fromId: string; targetRuleId: string; message: string; loadedParts?: readonly string[] }
 ) {
-  const talk = talkFor(input.talkId);
+  const loadedParts = [...new Set(["base", ...(input.loadedParts ?? [])])];
+  if (loadedParts.some(id => !(workerScenario.parts ?? ["base"]).includes(id))) return { ok: false as const, error: "invalid_part", status: 400 as const };
+  const before = scenarioForParts(workerScenario, loadedParts);
+  const beforeRuntime = createScenarioRuntime(before);
+  const commands = createTalkCommandRuntime(beforeRuntime);
+  const talk = beforeRuntime.talkByInternalId(input.talkId);
   const targetRule = talk ? rulesFor(talk, input.fromId).find((rule) => rule.id === input.targetRuleId) : null;
-  if (!talk || !targetRule) return { ok: false as const, error: "not_found", status: 404 as const };
-  const preset = talkBranchReviewStatePresetForCond(targetRule.cond);
-  const playerInput = talk.kind === "search_agent" ? input.message : internalizeReviewTalkCommand(input.message);
-  const recentMessages = talkFlowRecentMessages(talk, input.fromId, preset.stateValues);
+  if (!talk || !targetRule) return { ok: false as const, error: "part_not_loaded_or_rule_not_found", status: 404 as const };
+  const preset = talkBranchReviewStatePresetForCond(targetRule.cond, before.stateVariables);
+  const command = commands.talkCommand(input.message);
+  const playerInput = talk.kind === "search_agent" || (command && beforeRuntime.contentByInternalId(command.contentId))
+    ? input.message : commands.internalizeTalkCommand(input.message);
+  const recentMessages = createTalkContextRuntime(beforeRuntime).talkFlowRecentMessages(talk, input.fromId, preset.stateValues);
   const selected = await resolveScenarioTalkRule({
     env,
     llmEnabled: workerScenario.features.llm,
     talk,
     from: input.fromId,
     playerInput,
-    semanticPlayerInput: talk.kind === "search_agent" ? playerInput : semanticInputForTalkCommand(playerInput),
+    semanticPlayerInput: talk.kind === "search_agent" ? playerInput : commands.semanticInputForTalkCommand(playerInput),
     stateValues: preset.stateValues,
     recentMessages
   });
   if (!selected.ok) return { ok: false as const, error: selected.error, status: 503 as const };
   const selectedRule = selected.rule;
+  const acquiredParts = [...new Set([...loadedParts, ...(selectedRule.loadParts ?? [])])];
+  const after = scenarioForParts(workerScenario, acquiredParts);
+  const outputRuntime = createScenarioRuntime(after);
   const now = nowIso();
   const id = crypto.randomUUID();
   const nextFromId = selectedRule.mode === "stay" || selectedRule.mode === "game_over"
     ? input.fromId
     : selectedRule.nextFromId || input.fromId;
-  const seededState = createInitialPlayerState();
+  const seededState = beforeRuntime.createInitialPlayerState();
+  seededState.loadedPartIds = loadedParts;
   seededState.stateValues = compactStateValues(
-    workerScenario.stateVariables,
+    before.stateVariables,
     preset.stateValues as Record<string, string | number | boolean>
   );
-  const previewState = (await reconcileScenarioState(seededState, "review-preview")).state;
+  const previewState = (await beforeRuntime.reconcileScenarioState(seededState, "review-preview")).state;
+  previewState.loadedPartIds = acquiredParts;
   previewState.stateValues = applyCompactStateAssignments(
-    workerScenario.stateVariables, previewState.stateValues, selectedRule.set,
-    selected.matchGroups, workerScenario.stateVariableDefinitions
+    after.stateVariables, previewState.stateValues, selectedRule.set,
+    selected.matchGroups, after.stateVariableDefinitions
   );
   const outputEnv = {
-    ...effectiveStateValues(workerScenario.stateVariables, previewState.stateValues),
+    ...effectiveStateValues(after.stateVariables, previewState.stateValues),
     ...talkOutputMatchEnv(selectedRule.match, selected.matchGroups)
   };
   const renderOptions = {
@@ -648,7 +669,7 @@ export async function simulateTalkBranchReviewSelection(
         ...outputEnv,
         player_input: playerInput
       },
-      search: (query) => searchScenario(query, previewState)
+      search: (query) => outputRuntime.searchScenario(query, previewState)
     });
     outputPreview = {
       selectedBlockIds: evaluated.outputs.flatMap((step) => step.kind === "block" ? [step.blockId] : []),
@@ -656,10 +677,10 @@ export async function simulateTalkBranchReviewSelection(
         ? { resultCount: evaluated.searchResults.length }
         : {})
     };
-    messages = searchAgentTimelineForOutputs({ ...renderOptions, outputs: evaluated.outputs, formatEnv: evaluated.env })
+    messages = outputRuntime.searchAgentTimelineForOutputs({ ...renderOptions, outputs: evaluated.outputs, formatEnv: evaluated.env })
       .messages.map((message) => ({ ...message }));
   } else {
-    messages = messagesForTalkOutputSteps({
+    messages = outputRuntime.messagesForTalkOutputSteps({
       ...renderOptions, talk, steps: selectedRule.outputSteps, formatEnv: outputEnv,
       useRepeat: selectedRule.mode !== "game_over"
     }).messages.map((message) => ({ ...message }));
@@ -678,6 +699,8 @@ export async function simulateTalkBranchReviewSelection(
       inputKind: playerInput.startsWith("photo:") ? "photo" : playerInput.startsWith("share:") ? "share" : "text",
       recentMessages,
       statePreset: preset.stateValues,
+      loadedParts,
+      acquiredParts,
       stateUpdates: [...selectedRule.set],
       mode: selectedRule.mode || "normal",
       nextFromId,
@@ -701,6 +724,8 @@ export async function simulateTalkBranchReviewSelection(
       match: selected.matchGroups,
       targetCondSatisfied: preset.condSatisfied,
       condPreset: preset.lines,
+      loadedParts,
+      acquiredParts,
       ...outputPreview,
       event: { id, input: input.message }
     }

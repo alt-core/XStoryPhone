@@ -71,6 +71,13 @@ export function parseTalkOutputSteps(value) {
       steps.push({ kind: "block", blockKey: line });
       continue;
     }
+    if (/^\/load(?:\s|$)/u.test(line)) {
+      const partId = line.slice("/load".length).trim();
+      if (!/^[a-z][a-z0-9_-]*$/u.test(partId)) errors.push(`step ${lineNumber} の /load はpart名を一つ指定してください。`);
+      else if (steps.some(step => step.kind !== "load")) errors.push(`step ${lineNumber} の /load はnextの先頭へまとめてください。`);
+      else steps.push({ kind: "load", partId });
+      continue;
+    }
     if (/^\/search(?:\s|$)/u.test(line)) {
       const queryTemplate = line.slice("/search".length).trim();
       if (!queryTemplate) errors.push(`step ${lineNumber} の /search query が空です。`);
@@ -113,6 +120,7 @@ export function outputStepNextFromKey(steps) {
 }
 
 export function formatTalkOutputStep(step) {
+  if (step.kind === "load") return `/load ${step.partId}`;
   if (step.kind === "block") return step.blockKey;
   if (step.kind === "search") return `/search ${step.queryTemplate}`;
   if (step.kind === "input") return `/input ${step.action}`;

@@ -222,10 +222,12 @@ export function registerTalkBranchReviewRoutes(app: Hono<ServerEnv>) {
     const fromId = cleanId(body?.fromId);
     const targetRuleId = cleanId(body?.targetRuleId);
     const message = cleanMessage(body?.message, 1_000);
+    const loadedParts = body?.loadedParts;
+    if (loadedParts !== undefined && (!Array.isArray(loadedParts) || loadedParts.some(id => typeof id !== "string"))) return c.json({ ok: false, error: "invalid_request" }, 400);
     if (!talkId || !fromId || !targetRuleId || !message) {
       return c.json({ ok: false, error: "invalid_request" }, 400);
     }
-    const result = await simulateTalkBranchReviewSelection(dependencies(c).config.llm, dependencies(c).store, { talkId, fromId, targetRuleId, message });
+    const result = await simulateTalkBranchReviewSelection(dependencies(c).config.llm, dependencies(c).store, { talkId, fromId, targetRuleId, message, loadedParts: loadedParts as string[] | undefined });
     return result.ok
       ? c.json({ ok: true, result: result.result })
       : c.json({ ok: false, error: result.error }, result.status);

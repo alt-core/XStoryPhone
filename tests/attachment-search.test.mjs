@@ -87,11 +87,11 @@ for (const mode of ["server", "browser"]) {
     const f = fixture("sms", { locked: true });
     const originalMode = workerScenario.playerMode;
     const password = workerScenario.lockedContentPasswords.find((item) => item.contentId === f.content.id);
-    const originalHash = password.passwordHash;
+    const originalAnswers = password.answers;
     const originalHooks = workerScenario.hooks;
     workerScenario.playerMode = mode;
     workerScenario.hooks = [];
-    password.passwordHash = createHash("sha256").update("1234").digest("hex");
+    password.answers = ["1234"];
     let player = { id: "attachment-test", state: f.exposed, stateVersion: 0 };
     const store = {
       async playerForSession() { return structuredClone(player); },
@@ -123,7 +123,7 @@ for (const mode of ["server", "browser"]) {
       assert.equal(unlocked.response.status, 200, JSON.stringify(unlocked.body));
       assert.equal(unlocked.body.playerState.unlockedAttachments.find((item) => item.contentId === f.content.publicId)?.body, "未解除の秘密本文");
     } finally {
-      password.passwordHash = originalHash;
+      password.answers = originalAnswers;
       workerScenario.playerMode = originalMode;
       workerScenario.hooks = originalHooks;
       f.restore();

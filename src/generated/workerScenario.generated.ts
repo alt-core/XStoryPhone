@@ -2,9 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "0eeb2c5fd105402b",
-  "clientRevision": "client_bfd506a38337049f",
-  "transcriptRevision": "transcript_45010aff3c417315",
+  "revision": "5b32a29799efc5c2",
+  "clientRevision": "client_fb12607f02e1f578",
+  "transcriptRevision": "transcript_ac357c85435ce829",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -54,7 +54,9 @@ export const workerScenario: WorkerScenario = {
         "電話",
         "着信"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "messages",
@@ -66,7 +68,9 @@ export const workerScenario: WorkerScenario = {
       "search": [
         "メッセージ"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "mail",
@@ -79,7 +83,9 @@ export const workerScenario: WorkerScenario = {
         "メール",
         "電子メール"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "notes",
@@ -92,7 +98,9 @@ export const workerScenario: WorkerScenario = {
         "メモアプリ",
         "ノートアプリ"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "photos",
@@ -105,7 +113,9 @@ export const workerScenario: WorkerScenario = {
         "アルバム",
         "写真"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "calendar",
@@ -118,7 +128,9 @@ export const workerScenario: WorkerScenario = {
         "予定",
         "スケジュール"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "radio",
@@ -131,7 +143,9 @@ export const workerScenario: WorkerScenario = {
         "ラジオ",
         "放送"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 6
     },
     {
       "id": "browser",
@@ -145,7 +159,9 @@ export const workerScenario: WorkerScenario = {
         "タブ",
         "Web"
       ],
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 7
     },
     {
       "id": "chat",
@@ -160,7 +176,9 @@ export const workerScenario: WorkerScenario = {
         "掲示板"
       ],
       "repairLabel": "チャ▗▛▞▐▀",
-      "badgeCond": ""
+      "badgeCond": "",
+      "part": "base",
+      "order": 8
     }
   ],
   "projectAppIds": [
@@ -281,7 +299,9 @@ export const workerScenario: WorkerScenario = {
           "操作"
         ]
       },
-      "publicId": "c_fbeb27e60040"
+      "publicId": "c_fbeb27e60040",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "feature_test_guide",
@@ -302,7 +322,9 @@ export const workerScenario: WorkerScenario = {
           "機能テスト"
         ]
       },
-      "publicId": "c_cefa574e8306"
+      "publicId": "c_cefa574e8306",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "old_note",
@@ -322,7 +344,9 @@ export const workerScenario: WorkerScenario = {
           "画像"
         ]
       },
-      "publicId": "c_32c01e364751"
+      "publicId": "c_32c01e364751",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "dummy_note_1",
@@ -339,7 +363,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_9963319fe24e"
+      "publicId": "c_9963319fe24e",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "dummy_note_2",
@@ -356,7 +382,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_2d05b2ffd3ce"
+      "publicId": "c_2d05b2ffd3ce",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "dummy_note_3",
@@ -373,7 +401,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_e9de14c38b65"
+      "publicId": "c_e9de14c38b65",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "dummy_note_4",
@@ -390,7 +420,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_a59b078ce15f"
+      "publicId": "c_a59b078ce15f",
+      "part": "base",
+      "order": 6
     },
     {
       "id": "dummy_note_5",
@@ -407,7 +439,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_d5126f33366a"
+      "publicId": "c_d5126f33366a",
+      "part": "base",
+      "order": 7
     },
     {
       "id": "dummy_note_6",
@@ -424,7 +458,9 @@ export const workerScenario: WorkerScenario = {
           "ダミーデータ"
         ]
       },
-      "publicId": "c_b6d1a7ef235b"
+      "publicId": "c_b6d1a7ef235b",
+      "part": "base",
+      "order": 8
     },
     {
       "id": "sealed_note",
@@ -440,7 +476,9 @@ export const workerScenario: WorkerScenario = {
         "title": "鍵付きメモ",
         "body": "鍵付き添付とコンテンツ解錠の確認は完了です。次はチャットを修復してください。"
       },
-      "publicId": "c_bdffc57fcb5c"
+      "publicId": "c_bdffc57fcb5c",
+      "part": "base",
+      "order": 9
     },
     {
       "id": "evening_platform",
@@ -455,13 +493,15 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "夕方のホーム",
-        "imageUrl": "/demo/album/evening-platform.webp",
+        "imageAttachmentId": "media_7",
         "tags": [
           "駅",
           "夕方"
         ]
       },
-      "publicId": "c_5a463a5eb50a"
+      "publicId": "c_5a463a5eb50a",
+      "part": "base",
+      "order": 10
     },
     {
       "id": "rainy_window",
@@ -477,13 +517,15 @@ export const workerScenario: WorkerScenario = {
       "repairLabel": "暗▚▞▐化された画像",
       "record": {
         "title": "雨の日の窓",
-        "imageUrl": "/demo/album/rainy-window.webp",
+        "imageAttachmentId": "rainy_window_image",
         "tags": [
           "雨",
           "窓"
         ]
       },
-      "publicId": "c_394e3752c02b"
+      "publicId": "c_394e3752c02b",
+      "part": "base",
+      "order": 11
     },
     {
       "id": "coffee_table",
@@ -498,12 +540,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "休憩中",
-        "imageUrl": "/demo/album/coffee-table.webp",
+        "imageAttachmentId": "media_8",
         "tags": [
           "休憩"
         ]
       },
-      "publicId": "c_64fd68903e0a"
+      "publicId": "c_64fd68903e0a",
+      "part": "base",
+      "order": 12
     },
     {
       "id": "demo_video",
@@ -517,15 +561,17 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "デモ動画",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "mediaKind": "video",
-        "videoUrl": "/demo/demo-video.mp4",
+        "videoAttachmentId": "demo_video_attachment",
         "tags": [
           "動画",
           "動作確認"
         ]
       },
-      "publicId": "c_5d1be1170cf1"
+      "publicId": "c_5d1be1170cf1",
+      "part": "base",
+      "order": 13
     },
     {
       "id": "demo_received_image",
@@ -538,13 +584,15 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "受信したダミー画像",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "受信",
           "ダミーデータ"
         ]
       },
-      "publicId": "c_1aaf7fdd7a82"
+      "publicId": "c_1aaf7fdd7a82",
+      "part": "base",
+      "order": 14
     },
     {
       "id": "dummy_photo_1",
@@ -556,12 +604,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_7229adc1604d"
+      "publicId": "c_7229adc1604d",
+      "part": "base",
+      "order": 15
     },
     {
       "id": "dummy_photo_2",
@@ -573,12 +623,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_fb58b8d23060"
+      "publicId": "c_fb58b8d23060",
+      "part": "base",
+      "order": 16
     },
     {
       "id": "dummy_photo_3",
@@ -590,12 +642,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_358b3bcd1b50"
+      "publicId": "c_358b3bcd1b50",
+      "part": "base",
+      "order": 17
     },
     {
       "id": "dummy_photo_4",
@@ -607,12 +661,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_3a6375761b45"
+      "publicId": "c_3a6375761b45",
+      "part": "base",
+      "order": 18
     },
     {
       "id": "dummy_photo_5",
@@ -624,12 +680,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_a2e7fdc5f793"
+      "publicId": "c_a2e7fdc5f793",
+      "part": "base",
+      "order": 19
     },
     {
       "id": "dummy_photo_6",
@@ -641,12 +699,14 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "title": "ダミーデータ",
-        "imageUrl": "/demo/dummy-data.svg",
+        "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
         ]
       },
-      "publicId": "c_ec168fb41748"
+      "publicId": "c_ec168fb41748",
+      "part": "base",
+      "order": 20
     },
     {
       "id": "owner_schedule",
@@ -665,7 +725,9 @@ export const workerScenario: WorkerScenario = {
         "place": "自宅",
         "memo": "「雨の日の窓」の写真を確認する。"
       },
-      "publicId": "c_5ad6b8c27c5f"
+      "publicId": "c_5ad6b8c27c5f",
+      "part": "base",
+      "order": 21
     },
     {
       "id": "dummy_schedule_1",
@@ -682,7 +744,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_a37ddcb9ffde"
+      "publicId": "c_a37ddcb9ffde",
+      "part": "base",
+      "order": 22
     },
     {
       "id": "dummy_schedule_2",
@@ -699,7 +763,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_9a7365886b8a"
+      "publicId": "c_9a7365886b8a",
+      "part": "base",
+      "order": 23
     },
     {
       "id": "dummy_schedule_3",
@@ -716,7 +782,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_17cc0b436b41"
+      "publicId": "c_17cc0b436b41",
+      "part": "base",
+      "order": 24
     },
     {
       "id": "dummy_schedule_4",
@@ -733,7 +801,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_ad8b983cd8fc"
+      "publicId": "c_ad8b983cd8fc",
+      "part": "base",
+      "order": 25
     },
     {
       "id": "dummy_schedule_5",
@@ -750,7 +820,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_cd7b2c42cb24"
+      "publicId": "c_cd7b2c42cb24",
+      "part": "base",
+      "order": 26
     },
     {
       "id": "dummy_schedule_6",
@@ -767,7 +839,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_2e9e5b44006e"
+      "publicId": "c_2e9e5b44006e",
+      "part": "base",
+      "order": 27
     },
     {
       "id": "dummy_schedule_7",
@@ -784,7 +858,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_3418c04e0c56"
+      "publicId": "c_3418c04e0c56",
+      "part": "base",
+      "order": 28
     },
     {
       "id": "dummy_schedule_8",
@@ -801,7 +877,9 @@ export const workerScenario: WorkerScenario = {
         "place": "ダミーデータ",
         "memo": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_a0ec894adce6"
+      "publicId": "c_a0ec894adce6",
+      "part": "base",
+      "order": 29
     },
     {
       "id": "demo_call_history",
@@ -818,7 +896,7 @@ export const workerScenario: WorkerScenario = {
         "kind": "incoming",
         "at": "20:16",
         "durationLabel": "6秒",
-        "audioUrl": "/system/call-caption-sample.wav",
+        "audioAttachmentId": "media_6",
         "transcript": [
           {
             "atMs": 0,
@@ -834,7 +912,9 @@ export const workerScenario: WorkerScenario = {
           }
         ]
       },
-      "publicId": "c_8a5f7f91ea5b"
+      "publicId": "c_8a5f7f91ea5b",
+      "part": "base",
+      "order": 30
     },
     {
       "id": "missed_call",
@@ -852,7 +932,9 @@ export const workerScenario: WorkerScenario = {
         "at": "20:02",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_0376fabddf4f"
+      "publicId": "c_0376fabddf4f",
+      "part": "base",
+      "order": 31
     },
     {
       "id": "demo_voicemail",
@@ -869,7 +951,7 @@ export const workerScenario: WorkerScenario = {
         "kind": "voicemail",
         "at": "19:48",
         "durationLabel": "6秒",
-        "audioUrl": "/system/call-caption-sample.wav",
+        "audioAttachmentId": "media_6",
         "transcript": [
           {
             "atMs": 0,
@@ -885,7 +967,9 @@ export const workerScenario: WorkerScenario = {
           }
         ]
       },
-      "publicId": "c_1587119bb83d"
+      "publicId": "c_1587119bb83d",
+      "part": "base",
+      "order": 32
     },
     {
       "id": "dummy_call_1",
@@ -901,7 +985,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_2026bc4fe74f"
+      "publicId": "c_2026bc4fe74f",
+      "part": "base",
+      "order": 33
     },
     {
       "id": "dummy_call_2",
@@ -917,7 +1003,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_f70177071c48"
+      "publicId": "c_f70177071c48",
+      "part": "base",
+      "order": 34
     },
     {
       "id": "dummy_call_3",
@@ -933,7 +1021,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_e73677fd9822"
+      "publicId": "c_e73677fd9822",
+      "part": "base",
+      "order": 35
     },
     {
       "id": "dummy_call_4",
@@ -949,7 +1039,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_8f794be1736f"
+      "publicId": "c_8f794be1736f",
+      "part": "base",
+      "order": 36
     },
     {
       "id": "dummy_call_5",
@@ -965,7 +1057,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_7c4385c5b673"
+      "publicId": "c_7c4385c5b673",
+      "part": "base",
+      "order": 37
     },
     {
       "id": "dummy_call_6",
@@ -981,7 +1075,9 @@ export const workerScenario: WorkerScenario = {
         "at": "00:00",
         "durationLabel": "応答なし"
       },
-      "publicId": "c_07c948744931"
+      "publicId": "c_07c948744931",
+      "part": "base",
+      "order": 38
     },
     {
       "id": "sample_radio",
@@ -1010,9 +1106,11 @@ export const workerScenario: WorkerScenario = {
             "text": "字幕データがなければ、この欄は表示されません。"
           }
         ],
-        "audioUrl": "/system/radio-caption-sample.wav"
+        "audioAttachmentId": "media_9"
       },
-      "publicId": "c_513e68175e27"
+      "publicId": "c_513e68175e27",
+      "part": "base",
+      "order": 39
     },
     {
       "id": "dummy_radio_1",
@@ -1025,7 +1123,9 @@ export const workerScenario: WorkerScenario = {
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "publicId": "c_a1885b48dd86"
+      "publicId": "c_a1885b48dd86",
+      "part": "base",
+      "order": 40
     },
     {
       "id": "dummy_radio_2",
@@ -1038,7 +1138,9 @@ export const workerScenario: WorkerScenario = {
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "publicId": "c_02a56b40c49f"
+      "publicId": "c_02a56b40c49f",
+      "part": "base",
+      "order": 41
     },
     {
       "id": "dummy_radio_3",
@@ -1051,7 +1153,9 @@ export const workerScenario: WorkerScenario = {
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "publicId": "c_e4a4835b572c"
+      "publicId": "c_e4a4835b572c",
+      "part": "base",
+      "order": 42
     },
     {
       "id": "dummy_radio_4",
@@ -1064,7 +1168,9 @@ export const workerScenario: WorkerScenario = {
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "publicId": "c_21727e0c83a1"
+      "publicId": "c_21727e0c83a1",
+      "part": "base",
+      "order": 43
     },
     {
       "id": "dummy_radio_5",
@@ -1077,7 +1183,9 @@ export const workerScenario: WorkerScenario = {
       "record": {
         "programTitle": "ダミーデータ"
       },
-      "publicId": "c_447380361ccd"
+      "publicId": "c_447380361ccd",
+      "part": "base",
+      "order": 44
     },
     {
       "id": "mail_guide",
@@ -1095,7 +1203,9 @@ export const workerScenario: WorkerScenario = {
         "date": "2026年8月12日 18:30",
         "body": "メールは、件名と日付の一覧から選んで内容を確認できます。ナビで「未整理メール」と検索すると、破損したメールの修復も試せます。"
       },
-      "publicId": "c_271fc8c96870"
+      "publicId": "c_271fc8c96870",
+      "part": "base",
+      "order": 45
     },
     {
       "id": "damaged_mail",
@@ -1116,7 +1226,9 @@ export const workerScenario: WorkerScenario = {
         "body": "メール単位の修復が完了しました。Ccが設定された場合は、宛先情報の中に表示されます。",
         "cc": "デモ運営"
       },
-      "publicId": "c_4a00ef29e36b"
+      "publicId": "c_4a00ef29e36b",
+      "part": "base",
+      "order": 46
     },
     {
       "id": "dummy_mail_1",
@@ -1133,7 +1245,9 @@ export const workerScenario: WorkerScenario = {
         "date": "2026年8月12日 12:00",
         "body": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_451b9414a8da"
+      "publicId": "c_451b9414a8da",
+      "part": "base",
+      "order": 47
     },
     {
       "id": "dummy_mail_2",
@@ -1150,7 +1264,9 @@ export const workerScenario: WorkerScenario = {
         "date": "2026年8月12日 12:00",
         "body": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_eb5be853c25d"
+      "publicId": "c_eb5be853c25d",
+      "part": "base",
+      "order": 48
     },
     {
       "id": "dummy_mail_3",
@@ -1167,7 +1283,9 @@ export const workerScenario: WorkerScenario = {
         "date": "2026年8月12日 12:00",
         "body": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_79ba43a616d2"
+      "publicId": "c_79ba43a616d2",
+      "part": "base",
+      "order": 49
     },
     {
       "id": "dummy_mail_4",
@@ -1184,7 +1302,9 @@ export const workerScenario: WorkerScenario = {
         "date": "2026年8月12日 12:00",
         "body": "一覧スクロール確認用のダミーデータです。"
       },
-      "publicId": "c_74bbb653f3aa"
+      "publicId": "c_74bbb653f3aa",
+      "part": "base",
+      "order": 50
     },
     {
       "id": "browser_guide",
@@ -1204,7 +1324,9 @@ export const workerScenario: WorkerScenario = {
           "/demo/browser/details.html"
         ]
       },
-      "publicId": "c_a0cec9e1ac30"
+      "publicId": "c_a0cec9e1ac30",
+      "part": "base",
+      "order": 51
     },
     {
       "id": "dummy_browser_1",
@@ -1218,7 +1340,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_be720b110439"
+      "publicId": "c_be720b110439",
+      "part": "base",
+      "order": 52
     },
     {
       "id": "dummy_browser_2",
@@ -1232,7 +1356,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_fd4144354636"
+      "publicId": "c_fd4144354636",
+      "part": "base",
+      "order": 53
     },
     {
       "id": "dummy_browser_3",
@@ -1246,7 +1372,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_2d9ff48c2e57"
+      "publicId": "c_2d9ff48c2e57",
+      "part": "base",
+      "order": 54
     },
     {
       "id": "dummy_browser_4",
@@ -1260,7 +1388,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_6583456c66bb"
+      "publicId": "c_6583456c66bb",
+      "part": "base",
+      "order": 55
     },
     {
       "id": "dummy_browser_5",
@@ -1274,7 +1404,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_72782ea7ea51"
+      "publicId": "c_72782ea7ea51",
+      "part": "base",
+      "order": 56
     },
     {
       "id": "dummy_browser_6",
@@ -1288,7 +1420,9 @@ export const workerScenario: WorkerScenario = {
         "title": "ダミーデータ",
         "url": "/demo/browser/dummy.html"
       },
-      "publicId": "c_3eeb6b99d118"
+      "publicId": "c_3eeb6b99d118",
+      "part": "base",
+      "order": 57
     },
     {
       "id": "browser_archive",
@@ -1304,7 +1438,9 @@ export const workerScenario: WorkerScenario = {
         "title": "アーカイブ",
         "url": "/demo/browser/archive-k7m2q.html"
       },
-      "publicId": "c_e9c108f35d34"
+      "publicId": "c_e9c108f35d34",
+      "part": "base",
+      "order": 58
     },
     {
       "id": "guide_history_archive_a",
@@ -1320,7 +1456,9 @@ export const workerScenario: WorkerScenario = {
         "talk": "guide",
         "block": "guide::history_archive_a"
       },
-      "publicId": "c_f452f3bfd9c3"
+      "publicId": "c_f452f3bfd9c3",
+      "part": "base",
+      "order": 59
     },
     {
       "id": "guide_history_archive_b",
@@ -1336,7 +1474,9 @@ export const workerScenario: WorkerScenario = {
         "talk": "guide",
         "block": "guide::history_archive_b"
       },
-      "publicId": "c_d2fb1ed4cac6"
+      "publicId": "c_d2fb1ed4cac6",
+      "part": "base",
+      "order": 60
     },
     {
       "id": "lobby_history_archive",
@@ -1352,7 +1492,9 @@ export const workerScenario: WorkerScenario = {
         "talk": "lobby",
         "block": "lobby::history_archive"
       },
-      "publicId": "c_ee422a2fa57f"
+      "publicId": "c_ee422a2fa57f",
+      "part": "base",
+      "order": 61
     }
   ],
   "talks": [
@@ -1379,6 +1521,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_ccbbc7beb27004f8",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 2,
           "from": "*",
           "isDefault": false,
@@ -1403,6 +1548,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_0242ab445ef14595",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 3,
           "from": "*",
           "isDefault": false,
@@ -1427,6 +1575,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_78d0c4947fc3bc1e",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 4,
           "from": "guide::intro",
           "isDefault": true,
@@ -1449,7 +1600,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 0
     },
     {
       "id": "sms_receiver",
@@ -1469,6 +1622,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_57d2822cead9f5d1",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 8,
           "from": "sms_receiver::start",
           "isDefault": true,
@@ -1493,6 +1649,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_4d831274d8a3dd94",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 9,
           "from": "sms_receiver::received_from_sms",
           "isDefault": true,
@@ -1517,6 +1676,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_55309370d8baef2a",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 10,
           "from": "sms_receiver::received_from_chat",
           "isDefault": true,
@@ -1541,6 +1703,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_744e65c4c73155b9",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 11,
           "from": "sms_receiver::received_delayed",
           "isDefault": true,
@@ -1563,7 +1728,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 1
     },
     {
       "id": "sms_media_receiver",
@@ -1583,6 +1750,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_be10570588394753",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 12,
           "from": "sms_media_receiver::start",
           "isDefault": true,
@@ -1607,6 +1777,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_f55dc35cb8760fe3",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 13,
           "from": "sms_media_receiver::received_image",
           "isDefault": true,
@@ -1629,7 +1802,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 2
     },
     {
       "id": "dummy_sms_1",
@@ -1649,6 +1824,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_c56ba61c0ef4cb29",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 14,
           "from": "dummy_sms_1::start",
           "isDefault": true,
@@ -1671,7 +1849,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 3
     },
     {
       "id": "dummy_sms_2",
@@ -1691,6 +1871,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_f54eca82cda84f9f",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 15,
           "from": "dummy_sms_2::start",
           "isDefault": true,
@@ -1713,7 +1896,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 4
     },
     {
       "id": "dummy_sms_3",
@@ -1733,6 +1918,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_dc81bf82310a9518",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 16,
           "from": "dummy_sms_3::start",
           "isDefault": true,
@@ -1755,7 +1943,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 5
     },
     {
       "id": "dummy_sms_4",
@@ -1775,6 +1965,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_c43746fad3cc261d",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 17,
           "from": "dummy_sms_4::start",
           "isDefault": true,
@@ -1797,7 +1990,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 6
     },
     {
       "id": "dummy_sms_5",
@@ -1817,6 +2012,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_1849b53836e15bc3",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 18,
           "from": "dummy_sms_5::start",
           "isDefault": true,
@@ -1839,7 +2037,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 7
     },
     {
       "id": "dummy_sms_6",
@@ -1859,6 +2059,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_3956c5432facc194",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 19,
           "from": "dummy_sms_6::start",
           "isDefault": true,
@@ -1881,7 +2084,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 8
     },
     {
       "id": "lobby",
@@ -1904,6 +2109,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_c33da1e3d23b43a1",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 5,
           "from": "lobby::start",
           "isDefault": true,
@@ -1930,6 +2138,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_416fc65de6a3d722",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 6,
           "from": "*",
           "isDefault": false,
@@ -1954,6 +2165,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_cad3a7bd4abe71c8",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 7,
           "from": "lobby::lobby_reply",
           "isDefault": true,
@@ -1976,7 +2190,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 9
     },
     {
       "id": "chat_receiver",
@@ -1996,6 +2212,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_dbbc58690e96076b",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 20,
           "from": "chat_receiver::start",
           "isDefault": true,
@@ -2020,6 +2239,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_a791f5b8a55a0a45",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 21,
           "from": "chat_receiver::received_from_sms",
           "isDefault": true,
@@ -2044,6 +2266,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_634c23a869173adc",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 22,
           "from": "chat_receiver::received_from_chat",
           "isDefault": true,
@@ -2066,7 +2291,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "受信後も確認用返信を受け付ける",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 10
     },
     {
       "id": "dummy_chat_1",
@@ -2086,6 +2313,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_fcbb2264d7b0f31b",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 23,
           "from": "dummy_chat_1::start",
           "isDefault": true,
@@ -2108,7 +2338,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 11
     },
     {
       "id": "dummy_chat_2",
@@ -2128,6 +2360,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_351b6ff6c0eb42d2",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 24,
           "from": "dummy_chat_2::start",
           "isDefault": true,
@@ -2150,7 +2385,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 12
     },
     {
       "id": "dummy_chat_3",
@@ -2170,6 +2407,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_521065cc59cf4ed2",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 25,
           "from": "dummy_chat_3::start",
           "isDefault": true,
@@ -2192,7 +2432,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 13
     },
     {
       "id": "dummy_chat_4",
@@ -2212,6 +2454,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_1611fdaf0de7806f",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 26,
           "from": "dummy_chat_4::start",
           "isDefault": true,
@@ -2234,7 +2479,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 14
     },
     {
       "id": "dummy_chat_5",
@@ -2254,6 +2501,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_9f708a551c932dca",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 27,
           "from": "dummy_chat_5::start",
           "isDefault": true,
@@ -2276,7 +2526,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 15
     },
     {
       "id": "dummy_chat_6",
@@ -2296,6 +2548,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_385b4276662e16e5",
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
           "order": 28,
           "from": "dummy_chat_6::start",
           "isDefault": true,
@@ -2318,7 +2573,9 @@ export const workerScenario: WorkerScenario = {
           "notes": "",
           "example": ""
         }
-      ]
+      ],
+      "part": "base",
+      "order": 16
     },
     {
       "id": "search_agent",
@@ -2345,6 +2602,9 @@ export const workerScenario: WorkerScenario = {
       "rules": [
         {
           "id": "rule_b20e761b9a046a5a",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 29,
           "from": "*",
           "isDefault": false,
@@ -2369,6 +2629,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_5429ee9a4df224e9",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 30,
           "from": "*",
           "isDefault": false,
@@ -2396,6 +2659,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_060421c56eb1abc2",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 31,
           "from": "*",
           "isDefault": false,
@@ -2420,6 +2686,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_88793eb33a67d548",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 32,
           "from": "*",
           "isDefault": false,
@@ -2444,6 +2713,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_95b50fa2c8c06da5",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 33,
           "from": "*",
           "isDefault": false,
@@ -2468,6 +2740,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_023ab1c9e03fa851",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 34,
           "from": "*",
           "isDefault": false,
@@ -2492,6 +2767,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_cb7cb2c15af7b306",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 35,
           "from": "*",
           "isDefault": false,
@@ -2516,6 +2794,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_a3c1273386ed531e",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 36,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2540,6 +2821,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_f51115100607ac0d",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 37,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2564,6 +2848,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_234b510784ada779",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 38,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2588,6 +2875,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_cd822dbcfd1a3f75",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 39,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2612,6 +2902,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_7e970c2055b899d3",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 40,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2636,6 +2929,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_4267ac67fdaae456",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 41,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2660,6 +2956,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_52921c7d52af7588",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 42,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2684,6 +2983,9 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_e1b05bafb78d76af",
+          "type": "match",
+          "part": "base",
+          "loadParts": [],
           "order": 43,
           "from": "search_agent::intro",
           "isDefault": false,
@@ -2708,7 +3010,11 @@ export const workerScenario: WorkerScenario = {
         },
         {
           "id": "rule_4077a88556f66863",
-          "order": 44,
+          "type": "default",
+          "part": "base",
+          "loadParts": [],
+          "contextPart": "base",
+          "order": 45,
           "from": "search_agent::intro",
           "isDefault": true,
           "cond": "",
@@ -2741,29 +3047,39 @@ export const workerScenario: WorkerScenario = {
           "notes": "/searchは一度だけ事前評価し、結果の後に復帰メニューを表示する",
           "example": "古いメモ"
         }
-      ]
+      ],
+      "part": "base",
+      "order": 17
     }
   ],
   "talkPeople": [
     {
       "id": "owner",
       "name": "あなた",
-      "role": "owner"
+      "role": "owner",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "guide",
       "name": "デモ連絡先",
-      "role": "npc"
+      "role": "npc",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "visitor",
       "name": "デモ参加者",
-      "role": "npc"
+      "role": "npc",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "search_agent",
       "name": "ナビ",
-      "role": "npc"
+      "role": "npc",
+      "part": "base",
+      "order": 3
     }
   ],
   "talkBlocks": [
@@ -2771,6 +3087,8 @@ export const workerScenario: WorkerScenario = {
       "id": "guide::history_archive_a",
       "talkId": "guide",
       "blockKey": "history_archive_a",
+      "part": "base",
+      "order": 3,
       "messages": [
         {
           "id": "guide::history_archive_a_1",
@@ -2792,12 +3110,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::history_archive_b",
       "talkId": "guide",
       "blockKey": "history_archive_b",
+      "part": "base",
+      "order": 6,
       "messages": [
         {
           "id": "guide::history_archive_b_1",
@@ -2809,12 +3130,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::intro",
       "talkId": "guide",
       "blockKey": "intro",
+      "part": "base",
+      "order": 8,
       "messages": [
         {
           "id": "guide::intro_1",
@@ -2826,12 +3150,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "guide::message_reply",
       "talkId": "guide",
       "blockKey": "message_reply",
+      "part": "base",
+      "order": 10,
       "messages": [
         {
           "id": "guide::message_reply_1",
@@ -2848,12 +3175,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::message_reply@2",
       "talkId": "guide",
       "blockKey": "message_reply@2",
+      "part": "base",
+      "order": 12,
       "repeatOf": "guide::message_reply",
       "repeatIndex": 2,
       "messages": [
@@ -2872,12 +3202,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::message_test_ack",
       "talkId": "guide",
       "blockKey": "message_test_ack",
+      "part": "base",
+      "order": 14,
       "messages": [
         {
           "id": "guide::message_test_ack_1",
@@ -2894,12 +3227,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::clue_attachments",
       "talkId": "guide",
       "blockKey": "clue_attachments",
+      "part": "base",
+      "order": 16,
       "messages": [
         {
           "id": "guide::clue_attachments_1",
@@ -2942,12 +3278,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::chat_auth_link",
       "talkId": "guide",
       "blockKey": "chat_auth_link",
+      "part": "base",
+      "order": 19,
       "messages": [
         {
           "id": "guide::chat_auth_link_1",
@@ -2973,12 +3312,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::call_history_guide",
       "talkId": "guide",
       "blockKey": "call_history_guide",
+      "part": "base",
+      "order": 21,
       "messages": [
         {
           "id": "guide::call_history_guide_1",
@@ -3007,12 +3349,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "guide::chat_auth_required",
       "talkId": "guide",
       "blockKey": "chat_auth_required",
+      "part": "base",
+      "order": 23,
       "messages": [
         {
           "id": "guide::chat_auth_required_1",
@@ -3027,12 +3372,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "lobby::history_archive",
       "talkId": "lobby",
       "blockKey": "history_archive",
+      "part": "base",
+      "order": 26,
       "messages": [
         {
           "id": "lobby::history_archive_1",
@@ -3044,12 +3392,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "lobby::start",
       "talkId": "lobby",
       "blockKey": "start",
+      "part": "base",
+      "order": 28,
       "messages": [
         {
           "id": "lobby::start_1",
@@ -3064,12 +3415,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "lobby::chat_test_ack",
       "talkId": "lobby",
       "blockKey": "chat_test_ack",
+      "part": "base",
+      "order": 30,
       "messages": [
         {
           "id": "lobby::chat_test_ack_1",
@@ -3086,12 +3440,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "lobby::lobby_reply",
       "talkId": "lobby",
       "blockKey": "lobby_reply",
+      "part": "base",
+      "order": 32,
       "messages": [
         {
           "id": "lobby::lobby_reply_1",
@@ -3108,12 +3465,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "lobby::lobby_done",
       "talkId": "lobby",
       "blockKey": "lobby_done",
+      "part": "base",
+      "order": 34,
       "messages": [
         {
           "id": "lobby::lobby_done_1",
@@ -3130,12 +3490,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "sms_receiver::start",
       "talkId": "sms_receiver",
       "blockKey": "start",
+      "part": "base",
+      "order": 37,
       "messages": [
         {
           "id": "sms_receiver::start_1",
@@ -3147,12 +3510,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "sms_receiver::receiver_reply",
       "talkId": "sms_receiver",
       "blockKey": "receiver_reply",
+      "part": "base",
+      "order": 39,
       "messages": [
         {
           "id": "sms_receiver::receiver_reply_1",
@@ -3165,12 +3531,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "sms_receiver::received_from_sms",
       "talkId": "sms_receiver",
       "blockKey": "received_from_sms",
+      "part": "base",
+      "order": 41,
       "messages": [
         {
           "id": "sms_receiver::received_from_sms_1",
@@ -3183,12 +3552,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "sms_receiver::received_from_chat",
       "talkId": "sms_receiver",
       "blockKey": "received_from_chat",
+      "part": "base",
+      "order": 43,
       "messages": [
         {
           "id": "sms_receiver::received_from_chat_1",
@@ -3201,12 +3573,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "sms_receiver::received_delayed",
       "talkId": "sms_receiver",
       "blockKey": "received_delayed",
+      "part": "base",
+      "order": 45,
       "messages": [
         {
           "id": "sms_receiver::received_delayed_1",
@@ -3219,12 +3594,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "sms_media_receiver::start",
       "talkId": "sms_media_receiver",
       "blockKey": "start",
+      "part": "base",
+      "order": 48,
       "messages": [
         {
           "id": "sms_media_receiver::start_1",
@@ -3236,12 +3614,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "sms_media_receiver::receiver_reply",
       "talkId": "sms_media_receiver",
       "blockKey": "receiver_reply",
+      "part": "base",
+      "order": 50,
       "messages": [
         {
           "id": "sms_media_receiver::receiver_reply_1",
@@ -3254,12 +3635,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "sms_media_receiver::received_image",
       "talkId": "sms_media_receiver",
       "blockKey": "received_image",
+      "part": "base",
+      "order": 52,
       "messages": [
         {
           "id": "sms_media_receiver::received_image_1",
@@ -3272,12 +3656,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "chat_receiver::start",
       "talkId": "chat_receiver",
       "blockKey": "start",
+      "part": "base",
+      "order": 55,
       "messages": [
         {
           "id": "chat_receiver::start_1",
@@ -3289,12 +3676,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "chat_receiver::receiver_reply",
       "talkId": "chat_receiver",
       "blockKey": "receiver_reply",
+      "part": "base",
+      "order": 57,
       "messages": [
         {
           "id": "chat_receiver::receiver_reply_1",
@@ -3307,12 +3697,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "chat_receiver::received_from_sms",
       "talkId": "chat_receiver",
       "blockKey": "received_from_sms",
+      "part": "base",
+      "order": 59,
       "messages": [
         {
           "id": "chat_receiver::received_from_sms_1",
@@ -3325,12 +3718,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "chat_receiver::received_from_chat",
       "talkId": "chat_receiver",
       "blockKey": "received_from_chat",
+      "part": "base",
+      "order": 61,
       "messages": [
         {
           "id": "chat_receiver::received_from_chat_1",
@@ -3343,12 +3739,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_1::start",
       "talkId": "dummy_sms_1",
       "blockKey": "start",
+      "part": "base",
+      "order": 64,
       "messages": [
         {
           "id": "dummy_sms_1::start_1",
@@ -3360,12 +3759,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_1::dummy_reply",
       "talkId": "dummy_sms_1",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 66,
       "messages": [
         {
           "id": "dummy_sms_1::dummy_reply_1",
@@ -3378,12 +3780,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_sms_2::start",
       "talkId": "dummy_sms_2",
       "blockKey": "start",
+      "part": "base",
+      "order": 69,
       "messages": [
         {
           "id": "dummy_sms_2::start_1",
@@ -3395,12 +3800,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_2::dummy_reply",
       "talkId": "dummy_sms_2",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 71,
       "messages": [
         {
           "id": "dummy_sms_2::dummy_reply_1",
@@ -3413,12 +3821,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_sms_3::start",
       "talkId": "dummy_sms_3",
       "blockKey": "start",
+      "part": "base",
+      "order": 74,
       "messages": [
         {
           "id": "dummy_sms_3::start_1",
@@ -3430,12 +3841,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_3::dummy_reply",
       "talkId": "dummy_sms_3",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 76,
       "messages": [
         {
           "id": "dummy_sms_3::dummy_reply_1",
@@ -3448,12 +3862,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_sms_4::start",
       "talkId": "dummy_sms_4",
       "blockKey": "start",
+      "part": "base",
+      "order": 79,
       "messages": [
         {
           "id": "dummy_sms_4::start_1",
@@ -3465,12 +3882,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_4::dummy_reply",
       "talkId": "dummy_sms_4",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 81,
       "messages": [
         {
           "id": "dummy_sms_4::dummy_reply_1",
@@ -3483,12 +3903,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_sms_5::start",
       "talkId": "dummy_sms_5",
       "blockKey": "start",
+      "part": "base",
+      "order": 84,
       "messages": [
         {
           "id": "dummy_sms_5::start_1",
@@ -3500,12 +3923,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_5::dummy_reply",
       "talkId": "dummy_sms_5",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 86,
       "messages": [
         {
           "id": "dummy_sms_5::dummy_reply_1",
@@ -3518,12 +3944,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_sms_6::start",
       "talkId": "dummy_sms_6",
       "blockKey": "start",
+      "part": "base",
+      "order": 89,
       "messages": [
         {
           "id": "dummy_sms_6::start_1",
@@ -3535,12 +3964,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_sms_6::dummy_reply",
       "talkId": "dummy_sms_6",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 91,
       "messages": [
         {
           "id": "dummy_sms_6::dummy_reply_1",
@@ -3553,12 +3985,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_1::start",
       "talkId": "dummy_chat_1",
       "blockKey": "start",
+      "part": "base",
+      "order": 94,
       "messages": [
         {
           "id": "dummy_chat_1::start_1",
@@ -3570,12 +4005,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_1::dummy_reply",
       "talkId": "dummy_chat_1",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 96,
       "messages": [
         {
           "id": "dummy_chat_1::dummy_reply_1",
@@ -3588,12 +4026,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_2::start",
       "talkId": "dummy_chat_2",
       "blockKey": "start",
+      "part": "base",
+      "order": 99,
       "messages": [
         {
           "id": "dummy_chat_2::start_1",
@@ -3605,12 +4046,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_2::dummy_reply",
       "talkId": "dummy_chat_2",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 101,
       "messages": [
         {
           "id": "dummy_chat_2::dummy_reply_1",
@@ -3623,12 +4067,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_3::start",
       "talkId": "dummy_chat_3",
       "blockKey": "start",
+      "part": "base",
+      "order": 104,
       "messages": [
         {
           "id": "dummy_chat_3::start_1",
@@ -3640,12 +4087,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_3::dummy_reply",
       "talkId": "dummy_chat_3",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 106,
       "messages": [
         {
           "id": "dummy_chat_3::dummy_reply_1",
@@ -3658,12 +4108,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_4::start",
       "talkId": "dummy_chat_4",
       "blockKey": "start",
+      "part": "base",
+      "order": 109,
       "messages": [
         {
           "id": "dummy_chat_4::start_1",
@@ -3675,12 +4128,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_4::dummy_reply",
       "talkId": "dummy_chat_4",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 111,
       "messages": [
         {
           "id": "dummy_chat_4::dummy_reply_1",
@@ -3693,12 +4149,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_5::start",
       "talkId": "dummy_chat_5",
       "blockKey": "start",
+      "part": "base",
+      "order": 114,
       "messages": [
         {
           "id": "dummy_chat_5::start_1",
@@ -3710,12 +4169,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_5::dummy_reply",
       "talkId": "dummy_chat_5",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 116,
       "messages": [
         {
           "id": "dummy_chat_5::dummy_reply_1",
@@ -3728,12 +4190,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "dummy_chat_6::start",
       "talkId": "dummy_chat_6",
       "blockKey": "start",
+      "part": "base",
+      "order": 119,
       "messages": [
         {
           "id": "dummy_chat_6::start_1",
@@ -3745,12 +4210,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "dummy_chat_6::dummy_reply",
       "talkId": "dummy_chat_6",
       "blockKey": "dummy_reply",
+      "part": "base",
+      "order": 121,
       "messages": [
         {
           "id": "dummy_chat_6::dummy_reply_1",
@@ -3763,12 +4231,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::intro",
       "talkId": "search_agent",
       "blockKey": "intro",
+      "part": "base",
+      "order": 124,
       "messages": [
         {
           "id": "search_agent::intro_1",
@@ -3787,12 +4258,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": true
     },
     {
       "id": "search_agent::common_help",
       "talkId": "search_agent",
       "blockKey": "common_help",
+      "part": "base",
+      "order": 126,
       "messages": [
         {
           "id": "search_agent::common_help_1",
@@ -3809,12 +4283,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_photo",
       "talkId": "search_agent",
       "blockKey": "stage_photo",
+      "part": "base",
+      "order": 128,
       "messages": [
         {
           "id": "search_agent::stage_photo_1",
@@ -3833,12 +4310,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_report",
       "talkId": "search_agent",
       "blockKey": "stage_report",
+      "part": "base",
+      "order": 130,
       "messages": [
         {
           "id": "search_agent::stage_report_1",
@@ -3856,12 +4336,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::color_reported",
       "talkId": "search_agent",
       "blockKey": "color_reported",
+      "part": "base",
+      "order": 132,
       "messages": [
         {
           "id": "search_agent::color_reported_1",
@@ -3880,12 +4363,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_chat",
       "talkId": "search_agent",
       "blockKey": "stage_chat",
+      "part": "base",
+      "order": 134,
       "messages": [
         {
           "id": "search_agent::stage_chat_1",
@@ -3904,12 +4390,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_auth",
       "talkId": "search_agent",
       "blockKey": "stage_auth",
+      "part": "base",
+      "order": 136,
       "messages": [
         {
           "id": "search_agent::stage_auth_1",
@@ -3928,12 +4417,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_contact",
       "talkId": "search_agent",
       "blockKey": "stage_contact",
+      "part": "base",
+      "order": 138,
       "messages": [
         {
           "id": "search_agent::stage_contact_1",
@@ -3952,12 +4444,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::stage_done",
       "talkId": "search_agent",
       "blockKey": "stage_done",
+      "part": "base",
+      "order": 140,
       "messages": [
         {
           "id": "search_agent::stage_done_1",
@@ -3974,12 +4469,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::call_completed",
       "talkId": "search_agent",
       "blockKey": "call_completed",
+      "part": "base",
+      "order": 142,
       "messages": [
         {
           "id": "search_agent::call_completed_1",
@@ -3998,12 +4496,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_first",
       "talkId": "search_agent",
       "blockKey": "hint_first",
+      "part": "base",
+      "order": 144,
       "messages": [
         {
           "id": "search_agent::hint_first_1",
@@ -4021,12 +4522,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_photo",
       "talkId": "search_agent",
       "blockKey": "hint_photo",
+      "part": "base",
+      "order": 146,
       "messages": [
         {
           "id": "search_agent::hint_photo_1",
@@ -4044,12 +4548,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_report",
       "talkId": "search_agent",
       "blockKey": "hint_report",
+      "part": "base",
+      "order": 148,
       "messages": [
         {
           "id": "search_agent::hint_report_1",
@@ -4066,12 +4573,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_unlock",
       "talkId": "search_agent",
       "blockKey": "hint_unlock",
+      "part": "base",
+      "order": 150,
       "messages": [
         {
           "id": "search_agent::hint_unlock_1",
@@ -4089,12 +4599,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_chat",
       "talkId": "search_agent",
       "blockKey": "hint_chat",
+      "part": "base",
+      "order": 152,
       "messages": [
         {
           "id": "search_agent::hint_chat_1",
@@ -4112,12 +4625,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_auth",
       "talkId": "search_agent",
       "blockKey": "hint_auth",
+      "part": "base",
+      "order": 154,
       "messages": [
         {
           "id": "search_agent::hint_auth_1",
@@ -4135,12 +4651,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_contact",
       "talkId": "search_agent",
       "blockKey": "hint_contact",
+      "part": "base",
+      "order": 156,
       "messages": [
         {
           "id": "search_agent::hint_contact_1",
@@ -4158,12 +4677,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::hint_done",
       "talkId": "search_agent",
       "blockKey": "hint_done",
+      "part": "base",
+      "order": 158,
       "messages": [
         {
           "id": "search_agent::hint_done_1",
@@ -4180,12 +4702,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::test_menu",
       "talkId": "search_agent",
       "blockKey": "test_menu",
+      "part": "base",
+      "order": 160,
       "messages": [
         {
           "id": "search_agent::test_menu_1",
@@ -4211,12 +4736,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::demo_test_ack",
       "talkId": "search_agent",
       "blockKey": "demo_test_ack",
+      "part": "base",
+      "order": 162,
       "messages": [
         {
           "id": "search_agent::demo_test_ack_1",
@@ -4234,12 +4762,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::demo_test_already_done",
       "talkId": "search_agent",
       "blockKey": "demo_test_already_done",
+      "part": "base",
+      "order": 164,
       "messages": [
         {
           "id": "search_agent::demo_test_already_done_1",
@@ -4257,12 +4788,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::found",
       "talkId": "search_agent",
       "blockKey": "found",
+      "part": "base",
+      "order": 166,
       "messages": [
         {
           "id": "search_agent::found_1",
@@ -4280,12 +4814,15 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     },
     {
       "id": "search_agent::not_found",
       "talkId": "search_agent",
       "blockKey": "not_found",
+      "part": "base",
+      "order": 168,
       "messages": [
         {
           "id": "search_agent::not_found_1",
@@ -4303,7 +4840,8 @@ export const workerScenario: WorkerScenario = {
           "updatedAt": "2026-08-12",
           "source": "human"
         }
-      ]
+      ],
+      "acceptsInput": false
     }
   ],
   "attachments": [
@@ -4311,7 +4849,9 @@ export const workerScenario: WorkerScenario = {
       "id": "rainy_window_image",
       "type": "image",
       "asset": "/demo/album/rainy-window.webp",
-      "content": "rainy_window"
+      "content": "rainy_window",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "sealed_note_file",
@@ -4320,45 +4860,61 @@ export const workerScenario: WorkerScenario = {
       "content": "sealed_note",
       "lock": "password",
       "title": "鍵付きのメモ",
-      "body": "鍵付き添付を開封できました。"
+      "body": "鍵付き添付を開封できました。",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "demo_received_image_attachment",
       "type": "image",
       "asset": "/demo/dummy-data.svg",
-      "content": "demo_received_image"
+      "content": "demo_received_image",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "demo_video_poster",
       "type": "image",
-      "asset": "/demo/dummy-data.svg"
+      "asset": "/demo/dummy-data.svg",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "demo_video_attachment",
       "type": "video",
       "asset": "/demo/demo-video.mp4",
       "content": "demo_video",
-      "poster": "demo_video_poster"
+      "poster": "demo_video_poster",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "media_6",
       "type": "audio",
-      "asset": "/system/call-caption-sample.wav"
+      "asset": "/system/call-caption-sample.wav",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "media_7",
       "type": "image",
-      "asset": "/demo/album/evening-platform.webp"
+      "asset": "/demo/album/evening-platform.webp",
+      "part": "base",
+      "order": 6
     },
     {
       "id": "media_8",
       "type": "image",
-      "asset": "/demo/album/coffee-table.webp"
+      "asset": "/demo/album/coffee-table.webp",
+      "part": "base",
+      "order": 7
     },
     {
       "id": "media_9",
       "type": "audio",
-      "asset": "/system/radio-caption-sample.wav"
+      "asset": "/system/radio-caption-sample.wav",
+      "part": "base",
+      "order": 8
     }
   ],
   "repeatTalkBlocks": {
@@ -4371,7 +4927,7 @@ export const workerScenario: WorkerScenario = {
       "id": "demo_call",
       "name": "着信テスト",
       "cond": "",
-      "audioUrl": "/system/call-caption-sample.wav",
+      "audioAttachmentId": "media_6",
       "transcript": [
         {
           "atMs": 0,
@@ -4386,7 +4942,9 @@ export const workerScenario: WorkerScenario = {
           "text": "［高い確認音］"
         }
       ],
-      "publicId": "call_101df897abb3"
+      "publicId": "call_101df897abb3",
+      "part": "base",
+      "order": 0
     }
   ],
   "initialSchedules": [],
@@ -4394,37 +4952,51 @@ export const workerScenario: WorkerScenario = {
     {
       "id": "find_old_note",
       "text": "ナビで「古いメモ」を検索する",
-      "cond": "!old_note_opened"
+      "cond": "!old_note_opened",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "find_rainy_window",
       "text": "ナビで「雨」と検索し、写真の灯りの色を確かめる",
-      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported"
+      "cond": "old_note_opened && !rainy_window_opened && !image_color_reported",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "report_clue",
       "text": "ナビに写真の灯りの色を伝える",
-      "cond": "rainy_window_opened && !image_color_reported"
+      "cond": "rainy_window_opened && !image_color_reported",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "unlock_recovery_note",
       "text": "パスワード「0420」で鍵付きメモを開く",
-      "cond": "image_color_reported && !sealed_note_unlocked"
+      "cond": "image_color_reported && !sealed_note_unlocked",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "restore_chat",
       "text": "「チャット」を検索して開き、再認証リンクを発行する",
-      "cond": "sealed_note_unlocked && !chat_auth_link_sent"
+      "cond": "sealed_note_unlocked && !chat_auth_link_sent",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "authenticate_chat",
       "text": "メッセージに届いたリンクからチャットを開く",
-      "cond": "chat_auth_link_sent && !chat_auth_verified"
+      "cond": "chat_auth_link_sent && !chat_auth_verified",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "contact_owner",
       "text": "サンプルルームでメッセージを送る",
-      "cond": "chat_auth_verified && !demo_completed"
+      "cond": "chat_auth_verified && !demo_completed",
+      "part": "base",
+      "order": 6
     }
   ],
   "notifications": [
@@ -4434,7 +5006,9 @@ export const workerScenario: WorkerScenario = {
       "title": "デモ連絡先",
       "body": "確認用の画像と鍵付き添付が届きました。",
       "cond": "image_color_reported && !sealed_note_unlocked",
-      "targetTalkId": "guide"
+      "targetTalkId": "guide",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "chat_auth",
@@ -4442,7 +5016,9 @@ export const workerScenario: WorkerScenario = {
       "title": "デモ連絡先",
       "body": "再認証用のリンクを発行しました。",
       "cond": "chat_auth_link_sent && !chat_auth_verified",
-      "targetTalkId": "guide"
+      "targetTalkId": "guide",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "demo_sms_message_received",
@@ -4450,7 +5026,9 @@ export const workerScenario: WorkerScenario = {
       "title": "テスト受信箱",
       "body": "別のメッセージルームから新着メッセージが届きました。",
       "cond": "demo_sms_message_received",
-      "targetTalkId": "sms_receiver"
+      "targetTalkId": "sms_receiver",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "demo_sms_cross_received",
@@ -4458,7 +5036,9 @@ export const workerScenario: WorkerScenario = {
       "title": "テスト受信箱",
       "body": "チャットからメッセージアプリへ新着が届きました。",
       "cond": "demo_sms_cross_received",
-      "targetTalkId": "sms_receiver"
+      "targetTalkId": "sms_receiver",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "demo_delayed_message_received",
@@ -4466,7 +5046,9 @@ export const workerScenario: WorkerScenario = {
       "title": "テスト受信箱",
       "body": "遅延イベントから新着メッセージが届きました。",
       "cond": "demo_delayed_message_received",
-      "targetTalkId": "sms_receiver"
+      "targetTalkId": "sms_receiver",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "demo_image_received",
@@ -4474,7 +5056,9 @@ export const workerScenario: WorkerScenario = {
       "title": "画像受信",
       "body": "アルバム未登録の画像が届きました。",
       "cond": "demo_image_received",
-      "targetTalkId": "sms_media_receiver"
+      "targetTalkId": "sms_media_receiver",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "demo_chat_message_received",
@@ -4482,7 +5066,9 @@ export const workerScenario: WorkerScenario = {
       "title": "連携受信ログ",
       "body": "別のチャットルームから新着が届きました。",
       "cond": "demo_chat_message_received",
-      "targetTalkId": "chat_receiver"
+      "targetTalkId": "chat_receiver",
+      "part": "base",
+      "order": 6
     },
     {
       "id": "demo_chat_cross_received",
@@ -4490,7 +5076,9 @@ export const workerScenario: WorkerScenario = {
       "title": "連携受信ログ",
       "body": "メッセージアプリからチャットへ新着が届きました。",
       "cond": "demo_chat_cross_received",
-      "targetTalkId": "chat_receiver"
+      "targetTalkId": "chat_receiver",
+      "part": "base",
+      "order": 7
     }
   ],
   "assistantMessages": [
@@ -4500,7 +5088,9 @@ export const workerScenario: WorkerScenario = {
       "body": "ナビで「古いメモ」を検索し、修復してみよう。",
       "weight": 1,
       "cond": "!old_note_opened",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 0
     },
     {
       "id": "photo_hint",
@@ -4508,7 +5098,9 @@ export const workerScenario: WorkerScenario = {
       "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
       "weight": 1,
       "cond": "old_note_opened && !rainy_window_opened && !image_color_reported",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 1
     },
     {
       "id": "report_hint",
@@ -4516,7 +5108,9 @@ export const workerScenario: WorkerScenario = {
       "body": "写真で一番大きく見える灯りの色を、ナビで教えて。",
       "weight": 1,
       "cond": "rainy_window_opened && !image_color_reported",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 2
     },
     {
       "id": "sealed_note_opened",
@@ -4524,7 +5118,9 @@ export const workerScenario: WorkerScenario = {
       "body": "次の案内がナビに届いています。右下のナビを開いてください。",
       "weight": 1,
       "cond": "sealed_note_unlocked && !chat_auth_link_sent",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 3
     },
     {
       "id": "contact_owner",
@@ -4532,7 +5128,9 @@ export const workerScenario: WorkerScenario = {
       "body": "再認証したチャットで、メッセージを送ってみよう。",
       "weight": 1,
       "cond": "chat_auth_verified && !demo_completed",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 4
     },
     {
       "id": "demo_completed_nav",
@@ -4540,14 +5138,18 @@ export const workerScenario: WorkerScenario = {
       "body": "基本デモが完了しました。右下のナビから機能テストも試せます。",
       "weight": 1,
       "cond": "demo_completed",
-      "agentAction": "hi"
+      "agentAction": "hi",
+      "part": "base",
+      "order": 5
     },
     {
       "id": "radio_completed",
       "surface": "radio",
       "body": "音声の再生完了イベントを受け取りました。",
       "weight": 1,
-      "cond": "radio_playback_completed"
+      "cond": "radio_playback_completed",
+      "part": "base",
+      "order": 6
     }
   ],
   "chatAuthGate": {
@@ -4563,7 +5165,9 @@ export const workerScenario: WorkerScenario = {
       "title": "生成音声デモ",
       "provider": "static",
       "publicId": "g_aedd90a2a532",
-      "staticUrl": "/api/generated-audio/static/g_aedd90a2a532.wav"
+      "staticUrl": "/api/generated-audio/static/g_aedd90a2a532.wav",
+      "part": "base",
+      "order": 0
     }
   ],
   "albumMediaAttachmentLinks": [
@@ -4615,7 +5219,11 @@ export const workerScenario: WorkerScenario = {
   "lockedContentPasswords": [
     {
       "contentId": "sealed_note",
-      "passwordHash": "5335c1c78b99ea77b73cc03f735adc472835dc47c10e553d20f6e7ba338c0da3"
+      "answers": [
+        "0420"
+      ],
+      "loadParts": [],
+      "part": "base"
     }
   ],
   "hooks": [
@@ -4624,133 +5232,171 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "!session_started",
       "handler": "mark_session_started",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 0
     },
     {
       "event": "content_repaired",
       "target": "old_note",
       "cond": "!old_note_opened",
       "handler": "mark_old_note_opened",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 1
     },
     {
       "event": "content_repaired",
       "target": "rainy_window",
       "cond": "!rainy_window_opened",
       "handler": "mark_rainy_window_opened",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 2
     },
     {
       "event": "talk_turn_completed",
       "target": "search_agent",
       "cond": "clue_attachments_pending",
       "handler": "deliver_clue_attachments",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 3
     },
     {
       "event": "talk_turn_completed",
       "target": "search_agent",
       "cond": "",
       "handler": "handle_demo_nav_test_command",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 4
     },
     {
       "event": "talk_turn_completed",
       "target": "guide",
       "cond": "",
       "handler": "handle_demo_message_test_command",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 5
     },
     {
       "event": "content_unlocked",
       "target": "sealed_note",
       "cond": "!sealed_note_unlocked",
       "handler": "mark_sealed_note_unlocked",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 6
     },
     {
       "event": "schedule_demo_call",
       "target": "",
       "cond": "",
       "handler": "schedule_demo_call",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 7
     },
     {
       "event": "scheduled_event",
       "target": "show_demo_call",
       "cond": "",
       "handler": "show_demo_call",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 8
     },
     {
       "event": "scheduled_event",
       "target": "deliver_demo_delayed_message",
       "cond": "",
       "handler": "deliver_demo_delayed_message",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 9
     },
     {
       "event": "incoming_call_completed",
       "target": "demo_call",
       "cond": "!demo_call_completed",
       "handler": "mark_demo_call_completed",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 10
     },
     {
       "event": "demo_form",
       "target": "",
       "cond": "",
       "handler": "demo_form_game_over",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 11
     },
     {
       "event": "demo_all_clear",
       "target": "",
       "cond": "",
       "handler": "demo_all_clear",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 12
     },
     {
       "event": "demo_form_reject",
       "target": "",
       "cond": "",
       "handler": "demo_form_reject",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 13
     },
     {
       "event": "chat_auth_link_requested",
       "target": "",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
       "handler": "send_chat_auth_link",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 14
     },
     {
       "event": "message_link_opened",
       "target": "chat_auth_link_opened",
       "cond": "chat_auth_link_sent && !chat_auth_verified",
       "handler": "verify_chat_auth",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 15
     },
     {
       "event": "talk_turn_completed",
       "target": "lobby",
       "cond": "demo_completed && !demo_completion_announced",
       "handler": "complete_demo_todo",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 16
     },
     {
       "event": "talk_turn_completed",
       "target": "lobby",
       "cond": "",
       "handler": "handle_demo_chat_test_command",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 17
     },
     {
       "event": "audio_playback_completed",
       "target": "sample_radio",
       "cond": "!radio_playback_completed",
       "handler": "mark_radio_playback_completed",
-      "llm": false
+      "llm": false,
+      "part": "base",
+      "order": 18
     }
   ],
   "publicIds": {
@@ -4875,5 +5521,140 @@ export const workerScenario: WorkerScenario = {
       "show_demo_call": "e_15f1b15ac2d7",
       "deliver_demo_delayed_message": "e_e62843403b8c"
     }
+  },
+  "parts": [
+    "base"
+  ],
+  "stateVariableParts": {
+    "image_color_reported": "base",
+    "clue_attachments_pending": "base",
+    "old_note_opened": "base",
+    "rainy_window_opened": "base",
+    "chat_auth_link_sent": "base",
+    "chat_auth_verified": "base",
+    "demo_completed": "base",
+    "demo_completion_announced": "base",
+    "demo_call_completed": "base",
+    "demo_chat_cross_received": "base",
+    "demo_chat_message_received": "base",
+    "session_started": "base",
+    "demo_delayed_message_received": "base",
+    "demo_image_received": "base",
+    "demo_sms_cross_received": "base",
+    "demo_sms_message_received": "base",
+    "sealed_note_unlocked": "base",
+    "radio_playback_completed": "base",
+    "os_date": "base",
+    "os_time_label": "base"
+  },
+  "hookTalkBlocks": {
+    "guide": [
+      "history_archive_a",
+      "history_archive_b",
+      "intro",
+      "message_reply",
+      "message_test_ack",
+      "clue_attachments",
+      "chat_auth_link",
+      "call_history_guide",
+      "chat_auth_required"
+    ],
+    "sms_receiver": [
+      "start",
+      "receiver_reply",
+      "received_from_sms",
+      "received_from_chat",
+      "received_delayed"
+    ],
+    "sms_media_receiver": [
+      "start",
+      "receiver_reply",
+      "received_image"
+    ],
+    "dummy_sms_1": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_sms_2": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_sms_3": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_sms_4": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_sms_5": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_sms_6": [
+      "start",
+      "dummy_reply"
+    ],
+    "lobby": [
+      "history_archive",
+      "start",
+      "chat_test_ack",
+      "lobby_reply",
+      "lobby_done"
+    ],
+    "chat_receiver": [
+      "start",
+      "receiver_reply",
+      "received_from_sms",
+      "received_from_chat"
+    ],
+    "dummy_chat_1": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_chat_2": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_chat_3": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_chat_4": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_chat_5": [
+      "start",
+      "dummy_reply"
+    ],
+    "dummy_chat_6": [
+      "start",
+      "dummy_reply"
+    ],
+    "search_agent": [
+      "intro",
+      "common_help",
+      "stage_photo",
+      "stage_report",
+      "color_reported",
+      "stage_chat",
+      "stage_auth",
+      "stage_contact",
+      "stage_done",
+      "call_completed",
+      "hint_first",
+      "hint_photo",
+      "hint_report",
+      "hint_unlock",
+      "hint_chat",
+      "hint_auth",
+      "hint_contact",
+      "hint_done",
+      "test_menu",
+      "demo_test_already_done",
+      "found",
+      "not_found"
+    ]
   }
 };

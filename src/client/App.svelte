@@ -54,7 +54,7 @@
     isBrowserPlayerStorageError,
     loadBrowserPlayerMarker,
     loadCachedBrowserPlayerState
-  } from "./system/browserPlayerStorage.ts";
+  } from "./system/clientPlayerStorage.ts";
   import {
     goBackInPhoneHistory,
     phoneHistoryMarkerFrom,
@@ -209,14 +209,14 @@
   };
 
   const persistedUiState = loadUiState();
-  const browserPlayerMarker = playerMode === "browser" ? loadBrowserPlayerMarker() : undefined;
+  const browserPlayerMarker = playerMode !== "server" ? loadBrowserPlayerMarker() : undefined;
   let uiState: PersistedUiState = localQaMode
     ? {
         ...defaultUiState,
         locked: qaView === "lock",
         sessionToken: "qa-display-check"
       }
-    : playerMode === "browser"
+    : playerMode !== "server"
       ? {
           ...persistedUiState,
           locked: browserPlayerMarker ? persistedUiState.locked : initialDeviceLocked,
@@ -309,7 +309,7 @@
   const storedStartConfirmationDone = hasStartConfirmation();
   let startConfirmationDone = localQaMode || (
     storedStartConfirmationDone
-    && !(playerMode === "browser" && deviceLockMethod === "none" && !uiState.sessionToken)
+    && !(playerMode !== "server" && deviceLockMethod === "none" && !uiState.sessionToken)
   );
   let globalErrorVisible = false;
   let globalErrorMessage = "";
@@ -534,7 +534,7 @@
     if (!sessionToken || locked) {
       return null;
     }
-    if (playerMode === "browser") {
+    if (playerMode !== "server") {
       return loadCachedBrowserPlayerState();
     }
 
@@ -567,7 +567,7 @@
   }
 
   function cachePlayerState(state: PlayerState) {
-    if (playerMode === "browser" || localQaMode || !uiState.sessionToken || uiState.locked) {
+    if (playerMode !== "server" || localQaMode || !uiState.sessionToken || uiState.locked) {
       return;
     }
 
@@ -582,7 +582,7 @@
   }
 
   function clearPlayerStateCache() {
-    if (playerMode === "browser") return;
+    if (playerMode !== "server") return;
     safeLocalStorage.removeItem(PLAYER_STATE_CACHE_KEY);
   }
 
@@ -630,13 +630,17 @@
     return result.error === "unauthorized" && (result.status === 401 || result.status === undefined);
   }
 
+  function requiresPlayerEntry(result: { error: string; status?: number }) {
+    return isUnauthorizedFailure(result) || (result.status === 409 && result.error === "play_not_started");
+  }
+
   function isBrowserProgressSizeFailure(result: { error: string; status?: number }) {
     return result.error === "browser_progress_too_large" && result.status === 500;
   }
 
   function applyErrorPlayerState(result: { ok: false; error: string; status?: number; playerState?: PlayerState }) {
     showBrowserProgressSizeError(result);
-    if (isUnauthorizedFailure(result)) {
+    if (requiresPlayerEntry(result)) {
       clearUnauthorizedPlayerUi();
       return;
     }
@@ -653,7 +657,7 @@
     clearTalkDelaySeenMessagesForMemoryKey(playerMemoryKey);
     clearRuntimeState();
     playerState = null;
-    if (playerMode === "browser" && deviceLockMethod === "none") {
+    if (playerMode !== "server" && deviceLockMethod === "none") {
       clearStartConfirmationForReset();
     }
     persist({
@@ -1326,7 +1330,7 @@
   }
 
   function saveCurrentUiState() {
-    saveUiState(playerMode === "browser" ? { ...uiState, sessionToken: undefined } : uiState);
+    saveUiState(playerMode !== "server" ? { ...uiState, sessionToken: undefined } : uiState);
   }
 
   function currentPhoneRoute(): PhoneHistoryRoute {
@@ -1609,8 +1613,10 @@
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearStartConfirmationForReset();
     clearRuntimeState();
+    playerState = null;
     persist({
       locked: initialDeviceLocked,
+      sessionToken: undefined,
       lastContentByAppId: {},
       localTalkReadCursors: {},
       pendingTalkReadCursors: {}
@@ -1627,7 +1633,7 @@
     clearTalkDelaySeenMessagesForMemoryKey(localPlayerMemoryKey(playerMode, uiState.sessionToken));
     clearRuntimeState();
     playerState = null;
-    if (playerMode === "browser" && deviceLockMethod === "none") {
+    if (playerMode !== "server" && deviceLockMethod === "none") {
       clearStartConfirmationForReset();
     }
     persist({
@@ -1742,7 +1748,6 @@
     try {
       const result = await resetPlayerState(uiState.sessionToken);
       if (result.ok) {
-        applyPlayerState(result.playerState);
         return true;
       }
 
@@ -1757,10 +1762,11 @@
   async function resetPlayerStateFromUrl() {
     if (await resetPlayerForTesting()) {
       clearLocalPlayerStateForReset();
+      clearResetPlayerStateUrl();
+      window.location.replace(appReturnUrl(window.location.pathname));
     } else {
-      clearStartConfirmationForReset();
+      showGlobalError("reset_for_testing_failed", {supportCode:"AP-RESET"});
     }
-    clearResetPlayerStateUrl();
   }
 
   async function logoutPlayerFromUrl() {
@@ -1778,7 +1784,7 @@
   }
 
   async function confirmStart() {
-    if (playerMode === "browser" && deviceLockMethod === "none" && !uiState.sessionToken) {
+    if (playerMode !== "server" && deviceLockMethod === "none" && !uiState.sessionToken) {
       const opened = await openBrowserSession();
       if (!opened.ok) return opened;
     }
@@ -1793,7 +1799,7 @@
   async function refreshPlayerState(sessionToken: string, acceptResult: () => boolean = () => true) {
     lastPlayerStateRefreshRequestedAt = Date.now();
     const result = await loadPlayerState(sessionToken);
-    if (!result.ok && isUnauthorizedFailure(result)) {
+    if (!result.ok && requiresPlayerEntry(result)) {
       applyErrorPlayerState(result);
       return;
     }
@@ -1965,7 +1971,7 @@
       const loaded = existingBrowserMarker ? await loadPlayerState(existingBrowserMarker) : null;
       const result = loaded?.ok
         ? { ...loaded, sessionToken: existingBrowserMarker ?? "" }
-        : loaded && !isUnauthorizedFailure(loaded)
+        : loaded && !requiresPlayerEntry(loaded)
           ? loaded
           : await startSession("");
 
@@ -2021,11 +2027,15 @@
     }
 
     try {
-      const verified = await verifyDevicePin(code);
+      const verified = await verifyDevicePin(code, uiState.sessionToken);
       if (!verified.ok) {
         return { ok: false, error: entryError(verified) };
       }
-      if (playerMode === "browser") {
+      if (verified.playerState) {
+        applyPlayerState(verified.playerState);
+        enqueuePresentation(verified.presentation);
+      }
+      if (playerMode !== "server") {
         return openBrowserSession();
       }
       if (!uiState.sessionToken && pendingPlayerPasscode) {
@@ -2063,6 +2073,7 @@
     }
     if (await resetPlayerForTesting()) {
       clearLocalPlayerStateForReset();
+      window.location.replace(appReturnUrl(window.location.pathname));
       return;
     }
     showGlobalError("reset_for_testing_failed", { supportCode: "AP-RESET" });
@@ -2239,7 +2250,7 @@
           applyPlayerState(result.playerState);
           return result;
         }
-        if (!result.ok && isUnauthorizedFailure(result)) {
+        if (!result.ok && requiresPlayerEntry(result)) {
           applyErrorPlayerState(result);
           return result;
         }
@@ -3444,7 +3455,9 @@
 
     if (!result.ok) {
       applyErrorPlayerState(result);
-      return { ok: false, error: "パスワードを確認してください。" };
+      return { ok: false, error: result.status === 400 && result.error === "invalid"
+        ? "パスワードを確認してください。"
+        : "開けませんでした。もう一度お試しください。" };
     }
 
     applyPlayerState(result.playerState);
@@ -3657,7 +3670,7 @@
     </div>
   {:else if startConfirmationRequired}
     <div class="out-game-dialog">
-      <StartConfirmationScreen browserMode={playerMode === "browser"} memoryMode={isMemoryStorage} onConfirm={confirmStart} />
+      <StartConfirmationScreen browserMode={playerMode !== "server"} staticMode={playerMode === "static"} memoryMode={isMemoryStorage} onConfirm={confirmStart} />
     </div>
   {:else if playerPasscodeEntryRequired}
     <div class="out-game-dialog">

@@ -101,6 +101,7 @@ function clientConfig(platform) {
       if (name.endsWith("/clientStorage.ts")) return { resolveClientStorageSettings };
       if (name.endsWith("/deploymentUrls.ts")) return { normalizeHttpOrigin, normalizeStaticBase };
       if (name.endsWith("/static-build-assets.ts")) return { staticBuildAssets };
+      if (name.endsWith("/static-execution-assets.ts")) return { staticExecutionAssets: () => ({ name: "test-static-execution" }) };
       throw new Error(`未定義のimport: ${name}`);
     }
   };

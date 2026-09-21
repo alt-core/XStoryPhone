@@ -2,7 +2,7 @@ import { text } from "./tsv-utils.mjs";
 import { parseTalkFlowRegexCriteria } from "../../src/worker/product/talkFlowLlmSelection.ts";
 
 function isDefaultRule(row) {
-  return !text(row, "intent") && !text(row, "match");
+  return row.type === "default";
 }
 
 function isGameOver(row) {
@@ -52,7 +52,7 @@ export function auditTalkCriteria(rows) {
     const example = text(row, "example");
     const match = text(row, "match");
     const isDefault = isDefaultRule(row);
-    const regexCriteria = parseTalkFlowRegexCriteria(criteria);
+    const regexCriteria = row.type === "match" ? parseTalkFlowRegexCriteria(criteria) : { kind: "none" };
     const isPhotoRule = hasPhotoToken(example) || hasPhotoToken(match);
 
     if (isDefault) {
@@ -75,9 +75,7 @@ export function auditTalkCriteria(rows) {
       const usesLlm = rows.some((candidate) => (
         text(candidate, "talk") === text(row, "talk")
         && [text(row, "from"), "*"].includes(text(candidate, "from"))
-        && !isDefaultRule(candidate)
-        && text(candidate, "criteria")
-        && parseTalkFlowRegexCriteria(text(candidate, "criteria")).kind === "none"
+        && candidate.type === "ai"
       ));
       if (!usesLlm) continue;
       if (!criteria) {
@@ -116,7 +114,7 @@ export function auditTalkCriteria(rows) {
       continue;
     }
 
-    if (regexCriteria.kind === "ready") {
+    if (regexCriteria.kind === "ready" || ((row.type === "match" || row.type === "secret") && !criteria.startsWith("/"))) {
       continue;
     }
     if (regexCriteria.kind === "invalid") {

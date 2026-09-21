@@ -138,6 +138,7 @@ function main() {
     lines.push("");
     lines.push(`- talk_flow row: ${row.__rowNumber}`);
     lines.push(`- mode: ${modeLabel(row)}`);
+    lines.push(`- part: ${row.__part ?? "base"} / type: ${row.type}`);
     lines.push(`- next: ${outputSteps.map((step) => `\`${formatTalkOutputStep(step)}\``).join(" -> ")}`);
     lines.push("");
     lines.push("### from最後");
@@ -156,6 +157,11 @@ function main() {
     lines.push("");
 
     for (const step of outputSteps) {
+      if (step.kind === "load") {
+        lines.push(`[part取得] ${step.partId}`);
+        lines.push("");
+        continue;
+      }
       if (step.kind === "search") {
         lines.push(`#### [検索] ${step.queryTemplate}`);
         lines.push("");

@@ -46,7 +46,7 @@ function matchReferenceKey(value: unknown) {
   if (typeof value !== "string") {
     return null;
   }
-  return value.match(/^\$match\.([a-zA-Z_][a-zA-Z0-9_]*)$/u)?.[1] ?? null;
+  return value.match(/^\$extract\.([a-zA-Z_][a-zA-Z0-9_]*)$/u)?.[1] ?? null;
 }
 
 function resolveSetValue(value: boolean | number | string, context: SetValueContext | undefined) {
@@ -70,6 +70,10 @@ export function parseSetStatements(input: string | readonly string[]): ParsedSet
 
     const [, stateId, operator, rawValue] = match;
     const trimmedValue = rawValue.trim();
+    if (/^\$[a-zA-Z_][a-zA-Z0-9_]*\./u.test(trimmedValue) && !/^\$extract\.[a-zA-Z_][a-zA-Z0-9_]*$/u.test(trimmedValue)) {
+      errors.push(`set の抽出参照は $extract.id の形式にしてください: ${stateId}`);
+      continue;
+    }
     if ((trimmedValue.startsWith('"') && !trimmedValue.endsWith('"')) || (trimmedValue.startsWith("'") && !trimmedValue.endsWith("'"))) {
       errors.push(`set の文字列が閉じていません: ${line}`);
       continue;
@@ -122,7 +126,7 @@ function validateSetStatement(statement: SetStatement, states: ReadonlyMap<strin
 
   const matchKey = matchReferenceKey(statement.value);
   if (matchKey && state.type !== "string") {
-    errors.push(`$match 参照は string set だけに使えます: ${statement.stateId}`);
+    errors.push(`$extract 参照は string set だけに使えます: ${statement.stateId}`);
   }
 
   return errors;

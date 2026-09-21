@@ -82,7 +82,7 @@ npm run scenario:sheets:put -- --yes-overwrite-google-sheets-with-local-tsv
 
 ## セルの書き方
 
-- A列は`comment`。空欄の行がデータで、コメントが入った行は生成しません。完全な空行は無視します。
+- A列は`comment`。空欄の行がデータで、通常のコメント行は生成しません。完全な空行は無視します。`#part名`だけをA列に置いた行は、以降の定義のpart所属を指定します。
 - `talk_blocks`だけは、A列の`*talk_id`、block名、`---`を宣言として解釈します。
 - 本文やscriptはセル内改行を使えます。取得時にTSVの引用符・改行を保ちます。
 - ID・参照・enumは前後空白を除去します。ただし`project_constants`の`project.id`は保存先を識別する値のため、前後空白を自動除去せずエラーにします。本文の改行や途中の空白は保持します。
@@ -104,6 +104,8 @@ hookのscriptは信頼する作者が書くコードであり、sandboxではあ
 | calendar_items | date |
 
 `-`は行を無効にする指定ではありません。解除結果が必須セルの空欄になれば検証エラーになります。行を無効にしたい場合はcomment欄を使います。
+
+part宣言の境界でも継承は解除されます。`talk_blocks`では`*talk_id`とblock名を改めて書きます。partを使わない作品は宣言不要で、全定義がbaseに属します。`project_constants`と起動時の`schedules`だけはbase専用です。その他の表と、正解後の取得方法は[partの説明](static.md#partの所属)を参照してください。
 
 `project_constants`にはkey/value/exposureを記述します。`public`は初期clientへ配布してよい値だけにし、それ以外は`private`です。任意定数も扱えます。`client.runtime_revision`等の自動生成キーと固定PINの公開指定は拒否します。
 

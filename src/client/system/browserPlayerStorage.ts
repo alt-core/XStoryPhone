@@ -10,6 +10,10 @@ import type {
 import { limitedSearchAgentItems } from "./transcriptLimit.ts";
 import { prefixStorageKey, type ClientStorageSettings } from "../../shared/clientStorage.ts";
 import { clientStorageSettings } from "./clientStorage.ts";
+import { BrowserPlayerStorageError, isBrowserPlayerStorageError } from "./playerStorageError.ts";
+import { openPlayerRecordDatabase, mutatePlayerRecords, readPlayerRecords } from "./playerRecordDatabase.ts";
+export { BrowserPlayerStorageError, isBrowserPlayerStorageError } from "./playerStorageError.ts";
+export type { BrowserPlayerStorageErrorKind } from "./playerStorageError.ts";
 
 const DATABASE_VERSION = 2;
 const STORE_NAME = "records";
@@ -18,23 +22,6 @@ const CURRENT_KEY = "current";
 export const BROWSER_PLAYER_MARKER = "browser-player";
 export const BROWSER_PLAYER_STORAGE_ERROR_EVENT = "xstoryphone:browser-player-storage-error";
 export const BROWSER_PLAYER_CLEARED_EVENT = "xstoryphone:browser-player-cleared";
-
-export type BrowserPlayerStorageErrorKind = "unavailable" | "conflict" | "corrupt" | "unauthorized";
-
-export class BrowserPlayerStorageError extends Error {
-  readonly kind: BrowserPlayerStorageErrorKind;
-
-  constructor(kind: BrowserPlayerStorageErrorKind, message: string, cause?: unknown) {
-    super(message);
-    this.name = "BrowserPlayerStorageError";
-    this.kind = kind;
-    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
-  }
-}
-
-export function isBrowserPlayerStorageError(error: unknown): error is BrowserPlayerStorageError {
-  return error instanceof BrowserPlayerStorageError;
-}
 
 type CurrentRecord = {
   key: "current";
@@ -221,34 +208,8 @@ function databaseName(projectId: string, storage: ClientStorageSettings) {
   return prefixStorageKey(`xstoryphone-browser-player-${projectId}`, storage.prefix);
 }
 
-async function openDatabase(projectId: string, storage: ClientStorageSettings) {
-  const factory = idbCall("IndexedDBを参照できません。", () => globalThis.indexedDB);
-  if (!factory) throw unavailable("IndexedDBを利用できません。");
-  const name = databaseName(projectId, storage);
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    let settled = false;
-    const request = idbCall("IndexedDBを開けません。", () => factory.open(name, DATABASE_VERSION));
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-        request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
-      }
-    };
-    request.onerror = () => {
-      settled = true;
-      reject(unavailable("IndexedDBを開けません。", request.error));
-    };
-    request.onblocked = () => {
-      settled = true;
-      reject(unavailable("IndexedDBの更新が別の画面に阻まれています。"));
-    };
-    request.onsuccess = () => {
-      if (settled) {
-        request.result.close();
-        return;
-      }
-      resolve(request.result);
-    };
-  });
+async function openDatabase(projectId: string, storage: ClientStorageSettings){
+  return openPlayerRecordDatabase(databaseName(projectId, storage), DATABASE_VERSION, STORE_NAME);
 }
 
 function readyStorage() {
@@ -267,12 +228,8 @@ function storageTransaction(mode: IDBTransactionMode) {
   return idbCall("IndexedDB transactionを開始できません。", () => readyDatabase().transaction(STORE_NAME, mode));
 }
 
-async function storedRecords() {
-  const transaction = storageTransaction("readonly");
-  const request = idbCall("browser保存の読込を開始できません。", () => transaction.objectStore(STORE_NAME).getAll());
-  const complete = transactionDone(transaction);
-  const [records] = await Promise.all([requestValue(request), complete]);
-  return records;
+async function storedRecords(){
+  return readPlayerRecords(readyDatabase(), STORE_NAME);
 }
 
 function talkInitialRange(state: PublicPlayerState, talkId: string, kind: "sms" | "chat") {
@@ -638,63 +595,16 @@ export function commitBrowserPlayerResponse(
       }
       return;
     }
-    const transaction = storageTransaction("readwrite");
-    const store = idbCall("browser保存storeを開けません。", () => transaction.objectStore(STORE_NAME));
-    const currentRead = idbCall("browser currentの読込を開始できません。", () => store.get(CURRENT_KEY));
-    const streamReads = options.replaceStreams
-      ? new Map<string, IDBRequest>()
-      : new Map([...groups.keys()].map((key) => [
-          key,
-          idbCall("browser streamの読込を開始できません。", () => store.get(key))
-        ]));
-    let remaining = 1 + streamReads.size;
-    let failure: BrowserPlayerStorageError | null = null;
-    let candidate: ReturnType<typeof responseCandidate> | null = null;
-
-    const abort = (error: unknown) => {
-      failure = normalizeStorageError(error, "browser応答の保存に失敗しました。");
-      try { transaction.abort(); } catch { /* transaction側のerrorを使用する。 */ }
-    };
-    const finishReads = () => {
-      remaining -= 1;
-      if (remaining > 0 || failure) return;
-      try {
-        const next = responseCandidate(
-          parentProgressToken,
-          nextCurrent,
-          groups,
-          currentRead.result,
-          new Map([...streamReads].map(([key, request]) => [key, request.result])),
-          Boolean(options.replaceStreams)
-        );
-
-        if (options.replaceStreams) store.clear();
-        for (const [key] of groups) {
-          const stream = next.streams.get(key);
-          if (stream) store.put(stream);
-        }
-        store.put(next.current);
-        candidate = next;
-      } catch (error) {
-        abort(error);
-      }
-    };
-
-    currentRead.onsuccess = finishReads;
-    currentRead.onerror = () => abort(unavailable("browser currentの読込に失敗しました。", currentRead.error));
-    for (const request of streamReads.values()) {
-      request.onsuccess = finishReads;
-      request.onerror = () => abort(unavailable("browser streamの読込に失敗しました。", request.error));
-    }
-    transaction.oncomplete = () => {
-      if (!candidate) {
-        reject(corrupt("browser保存transactionが結果なしで完了しました。"));
-        return;
-      }
-      resolve(commitMirrors(candidate));
-    };
-    transaction.onabort = () => reject(failure ?? unavailable("browser保存transactionが中断されました。", transaction.error));
-    transaction.onerror = () => undefined;
+    const keys = [CURRENT_KEY, ...(options.replaceStreams ? [] : groups.keys())];
+    mutatePlayerRecords(readyDatabase(), STORE_NAME, keys, records => {
+      const next = responseCandidate(
+        parentProgressToken, nextCurrent, groups, records.get(CURRENT_KEY), records, Boolean(options.replaceStreams)
+      );
+      return {
+        value: next, clear: Boolean(options.replaceStreams),
+        writes: [...[...groups.keys()].flatMap(key => next.streams.has(key) ? [next.streams.get(key)!] : []), next.current]
+      };
+    }).then(candidate => resolve(commitMirrors(candidate)), reject);
   });
 }
 

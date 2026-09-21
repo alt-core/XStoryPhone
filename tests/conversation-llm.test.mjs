@@ -28,7 +28,7 @@ const defaultRule = {
   isDefault: true,
   cond: "",
   intent: "",
-  criteria: "",
+  type: "default", criteria: "",
   match: "",
   nextBlocks: ["start"],
   set: [],
@@ -39,8 +39,8 @@ const defaultRule = {
 
 test("LLM分岐は直近文脈を渡し、低確信と危険分岐をdefaultへ倒す", async () => {
   const rules = [
-    { ...defaultRule, id: "normal", isDefault: false, order: 1, intent: "肯定", criteria: "肯定している" },
-    { ...defaultRule, id: "end", isDefault: false, order: 2, intent: "終了", criteria: "終了を明言", mode: "game_over" },
+    { ...defaultRule, id: "normal", isDefault: false, order: 1, intent: "肯定", type: "ai", criteria: "肯定している" },
+    { ...defaultRule, id: "end", isDefault: false, order: 2, intent: "終了", type: "ai", criteria: "終了を明言", mode: "game_over" },
     defaultRule
   ];
   const high = providerFrom([{ rule_id: "normal", confidence: 0.8, reason_code: "matched_intent" }]);
@@ -82,7 +82,7 @@ test("match抽出は同じ値を2回確認し、best項目は一致度で選ぶ"
       name: { rule: "名前", pick: "same" },
       reading: { rule: "読み", pick: "best", null: "weak" }
     }),
-    set: ["saved_name=$match.name"]
+    set: ["saved_name=$extract.name"]
   };
   const fake = providerFrom([
     { name: "田中太郎", reading: "たなかたろう" },
@@ -97,7 +97,7 @@ test("match抽出は同じ値を2回確認し、best項目は一致度で選ぶ"
 });
 
 test("match抽出の壊れた応答は503相当、合意不成立はdefaultへ戻す", async () => {
-  const rule = { ...defaultRule, id: "extract", isDefault: false, criteria: "名前を述べた", match: '{"name":"名前"}', set: [] };
+  const rule = { ...defaultRule, id: "extract", isDefault: false, type: "ai", criteria: "名前を述べた", match: '{"name":"名前"}', set: [] };
   const invalid = providerFrom([{ wrong: "値" }]);
   assert.deepEqual(await extractTalkRuleMatch(invalid.provider, rule, "名前です"), { ok: false, error: "provider_invalid" });
 
@@ -118,7 +118,7 @@ test("match抽出の壊れた応答は503相当、合意不成立はdefaultへ�
 });
 
 test("LLM互換providerのschema外の値を成功扱いしない", async () => {
-  const rules = [{ ...defaultRule, id: "normal", isDefault: false, order: 1, criteria: "一致" }, defaultRule];
+  const rules = [{ ...defaultRule, id: "normal", isDefault: false, order: 1, type: "ai", criteria: "一致" }, defaultRule];
   const invalidSelection = providerFrom([{ rule_id: "normal", confidence: 1.2, reason_code: "unknown" }]);
   assert.deepEqual(await semanticRuleSelector(invalidSelection.provider)({
     playerInput: "入力", rules, defaultRuleId: "default", recentMessages: []
@@ -135,7 +135,7 @@ test("LLM互換providerのschema外の値を成功扱いしない", async () => 
 
 test("criteria templateとdefault contextは現在stateで展開してLLMへ渡す", async () => {
   const fake = providerFrom([{ rule_id: "normal", confidence: 0.9, reason_code: "matched_intent" }]);
-  const normal = { ...defaultRule, id: "normal", order: 1, isDefault: false, intent: "進行", criteria: "場面は{{scene}}", example: "進める" };
+  const normal = { ...defaultRule, id: "normal", order: 1, isDefault: false, intent: "進行", type: "ai", criteria: "場面は{{scene}}", example: "進める" };
   const currentDefault = { ...defaultRule, criteria: "現在は{{scene}}", example: "分からない" };
   const result = await resolveScenarioTalkRule({
     env: {},

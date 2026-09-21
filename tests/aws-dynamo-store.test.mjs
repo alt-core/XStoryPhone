@@ -29,6 +29,85 @@ function conditionalError() {
   return error;
 }
 
+test("DynamoDBのreset開始CASが競合したら、清掃も成功扱いもしない",async()=>{
+  const fake=fakeTransport(async operation=>{
+    if(operation==="UpdateItem") throw conditionalError();
+    if(operation==="GetItem") return {Item:dynamoDocument.item({generation:2,resetting:false})};
+    throw new Error("競合後は清掃に入ってはいけない");
+  });
+  const store=new DynamoStore(fake.transport,"table");
+  assert.equal(await store.resetPlayerProgress({id:"p",state:createInitialPlayerState(),stateVersion:3,sessionGeneration:2,resetting:false}),false);
+});
+
+test("DynamoDBの中断resetは同じ世代の清掃だけを再開し、全chunkを条件付きで消す",async()=>{
+  let root={generation:0,stateVersion:0,resetting:false,state:createInitialPlayerState()};
+  let unavailable=true;
+  const deleted=[];
+  const fake=fakeTransport(async(operation,input)=>{
+    const values=dynamoDocument.valueFromItem(input.ExpressionAttributeValues??{});
+    if(operation==="UpdateItem") {
+      if(input.ConditionExpression==="stateVersion = :version") {
+        assert.equal(root.stateVersion,values[":version"]);
+        root={...root,state:null,resetting:true,generation:values[":generation"],stateVersion:values[":nextVersion"]};
+      } else {
+        assert.equal(root.generation,values[":generation"]);assert.equal(root.resetting,true);
+        root={...root,resetting:false,stateVersion:root.stateVersion+1};
+      }
+      return {};
+    }
+    if(operation==="Query") {
+      const prefix=Object.values(values).find(value=>typeof value==="string"&&value.endsWith("#"));
+      assert.ok(["SCHEDULE#","AUDIO#","TRANSCRIPT#","HOOK_LLM_RESULT#"].includes(prefix),"監修・入力logは清掃しない");
+      return {Items:Array.from({length:30},(_,i)=>dynamoDocument.item({PK:"PLAYER#p",SK:`${prefix}${i}`}))};
+    }
+    if(operation==="TransactWriteItems") {
+      if(unavailable) throw new Error("一時DB障害");
+      const {ConditionCheck:guard}=input.TransactItems[0];
+      assert.equal(guard.ConditionExpression,"resetting = :yes AND generation = :generation");
+      assert.equal(dynamoDocument.valueFromItem(guard.ExpressionAttributeValues)[":generation"],1);
+      assert.ok(input.TransactItems.length<=100);
+      deleted.push(...input.TransactItems.slice(1).map(entry=>dynamoDocument.valueFromItem(entry.Delete.Key).SK));
+      return {};
+    }
+    throw new Error(operation);
+  });
+  const store=new DynamoStore(fake.transport,"table");
+  await assert.rejects(store.resetPlayerProgress({id:"p",...root,sessionGeneration:root.generation}),/一時DB障害/);
+  assert.equal(root.resetting,true);assert.equal(root.state,null);assert.equal(root.generation,1);
+  unavailable=false;
+  assert.equal(await store.resetPlayerProgress({id:"p",...root,sessionGeneration:root.generation}),true);
+  assert.equal(root.resetting,false);assert.equal(root.generation,1);assert.equal(deleted.length,120);
+});
+
+test("DynamoDBの遅いreset清掃は先行完了後の新プレイを削除しない",async()=>{
+  const fake=fakeTransport(async(operation)=>{
+    if(operation==="Query") return {Items:[dynamoDocument.item({PK:"PLAYER#p",SK:"TRANSCRIPT#new"})]};
+    if(operation==="TransactWriteItems") throw conditionalError();
+    if(operation==="GetItem") return {Item:dynamoDocument.item({generation:4,resetting:false,state:createInitialPlayerState()})};
+    throw new Error("guard失敗後に無条件の削除・更新をしてはいけない");
+  });
+  const store=new DynamoStore(fake.transport,"table");
+  assert.equal(await store.resetPlayerProgress({id:"p",state:null,stateVersion:8,sessionGeneration:4,resetting:true}),true);
+  const tx=fake.calls.find(call=>call.operation==="TransactWriteItems").input.TransactItems;
+  assert.equal(tx[0].ConditionCheck.ConditionExpression,"resetting = :yes AND generation = :generation");
+});
+
+test("DynamoDBの旧sessionはplay不可、消去中のreset再試行だけ許可する",async()=>{
+  let clearing=true;
+  const fake=fakeTransport(async(operation,input)=>{
+    if(operation==="GetItem") {
+      const key=dynamoDocument.valueFromItem(input.Key);
+      return {Item:dynamoDocument.item(key.PK.startsWith("SESSION#") ? {playerId:"p",generation:1} : {generation:2,stateVersion:3,state:null,resetting:clearing})};
+    }
+    return {};
+  });
+  const store=new DynamoStore(fake.transport,"table");
+  assert.equal(await store.playerForSession("old"),null);
+  assert.equal((await store.playerForSession("old","reset")).resetting,true);
+  clearing=false;
+  assert.equal(await store.playerForSession("old","reset"),null);
+});
+
 test("DynamoDBの文書変換はプレイヤー状態の型を保つ", () => {
   const source = {
     text: "日本語",
@@ -256,11 +335,13 @@ test("プレイヤー更新はstateVersionの条件付き更新にし、競合�
 test("予定イベントclaimはqueuedまたは期限切れleaseだけを獲得する", async () => {
   const accepted = fakeTransport();
   const store = new DynamoStore(accepted.transport, "table");
-  assert.equal(await store.claimScheduledEvent("player-1", "schedule-1"), true);
+  const instance = JSON.stringify(["schedule-1", "instance-1"]);
+  assert.equal(await store.claimScheduledEvent("player-1", instance), true);
   assert.match(accepted.calls[0].input.ConditionExpression, /updatedAt <= :cutoff/u);
+  assert.match(accepted.calls[0].input.ConditionExpression, /instanceId = :instance/u);
 
   const rejected = fakeTransport(async () => { throw conditionalError(); });
-  assert.equal(await new DynamoStore(rejected.transport, "table").claimScheduledEvent("player-1", "schedule-1"), false);
+  assert.equal(await new DynamoStore(rejected.transport, "table").claimScheduledEvent("player-1", instance), false);
 });
 
 test("DynamoDB版hook LLM cacheは同じplayer partitionとTTL属性を使う", async () => {
@@ -338,7 +419,7 @@ test("予定イベントは期限とleaseを評価してdue順に最大5件返�
   const rows = [
     ...Array.from({ length: 6 }, (_, index) => ({
       PK: "PLAYER#player-1", SK: `SCHEDULE#queued-${index}`, entityType: "SCHEDULE", scheduleId: `queued-${index}`,
-      eventId: `event-${index}`, fields: { value: String(index) }, dueAt: `2026-08-13T09:0${index}:00.000Z`, status: "queued",
+      instanceId: `instance-${index}`, eventId: `event-${index}`, fields: { value: String(index) }, dueAt: `2026-08-13T09:0${index}:00.000Z`, status: "queued",
       updatedAt: "2026-08-13T08:00:00.000Z"
     })),
     {
@@ -352,7 +433,7 @@ test("予定イベントは期限とleaseを評価してdue順に最大5件返�
     : {});
   const due = await new DynamoStore(fake.transport, "table").dueScheduledEvents("player-1", "2026-08-13T10:00:00.000Z");
 
-  assert.deepEqual(due.map((event) => event.id), ["queued-0", "queued-1", "queued-2", "queued-3", "queued-4"]);
+  assert.deepEqual(due.map((event) => event.id), Array.from({length:5}, (_, index) => JSON.stringify([`queued-${index}`,`instance-${index}`])));
   assert.deepEqual(due[0].fields, { value: "0" });
 });
 

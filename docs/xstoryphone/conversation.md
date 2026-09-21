@@ -29,7 +29,7 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 本文には `[表示名](open:notes:content_id)` のような内部リンクと、HTTPSの外部リンクを書けます。内部リンクへhookを結び付ける場合は、`open:app_id:content_id;action:action_id` とし、`message_link_opened`のtargetへaction IDを指定します。`{{state_id}}` templateは通常の本文で使い、リンクの表示名には使用しないでください。リンク表示名はtemplate展開されません。
 
-`attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `content / password` に書きます。平文・判定hashはクライアントへ出力しません。
+`attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `password`に、引用符付き候補を改行して書きます。`content`で対象を、`load_part`で正解後の追加取得先を指定します。server/browserではAPI側で判定し、staticでは部分hashと回答JSONを使います。正答原文はプレイヤーへ配布しません。
 
 `quick_replies`はセル内改行で選択肢を並べます。表示文字列がそのままプレイヤー発話として送信され、通常の会話ruleで判定されます。本文と同じ`{{state_id}}` templateを使用できます。Quick Reply固有の個数・20文字制限は設けず、空の選択肢、同一message内の重複、定義時点で既存プレイヤー入力上限を超える文字列を拒否します。template展開結果は正規化後に同じ上限へ収めます。
 
@@ -103,11 +103,11 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 ## 選択順序
 
 1. `from` が現在地点または `*` で、`cond` を満たすruleだけに絞る。
-2. `/.../flags` 形式の `criteria` を上から正規表現照合する。
-3. 自然文criteriaが残っている場合だけ、semantic selectorへ問い合わせる。
+2. `type=match / secret`を相互の原本順で照合する。
+3. 一致せず`type=ai`の候補がある場合だけ、AIへ問い合わせる。
 4. どれにも一致しなければ、そのfromのdefault ruleを選ぶ。
 
-`features.llm` が `false` なら、非default ruleをすべて正規表現で書けます。外部APIキーは不要です。
+`features.llm` が `false` でも、match・secret・正規表現抽出を使えます。外部APIキーは不要です。
 
 ## TSVの列
 
@@ -117,15 +117,24 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 | `from` | 現在のblock。`*` は全地点で使う共通分岐 |
 | `cond` | 状態変数による条件 |
 | `intent` | 監修画面で見る分岐名 |
-| `criteria` | 正規表現、またはLLMへ渡す自然文条件 |
-| `match` | LLMで抽出する値のJSON object |
+| `type` | `context`、`match`、`secret`、`ai`、`default`。省略・継承しない |
+| `text` | 場面説明または判定条件 |
+| `extract` | 名前付き正規表現、またはAI抽出のJSON object |
 | `next` | 表示するblock、全talk共通の`/input`、または検索AI用command。複数はセル内で改行し、通常遷移では最後の無条件blockが次のfromになる |
 | `set` | `;` 区切りの状態更新 |
 | `mode` | 空欄、`stay`、`game_over` |
 | `notes` | 監修用メモ |
 | `example` | 代表入力 |
 
-`intent` と `match` がともに空の行がdefault ruleです。各fromにはdefault ruleがちょうど1件必要です。default行の`criteria`は候補条件ではなく、LLMへ渡す現在場面の説明です。`{{state_id}}`を使えます。LLMを使うfromでは通常ruleの`intent / criteria / example`とdefaultの`example`を記述します。正規表現だけのfromではLLM用exampleを強制しません。`stay`はfromを動かさず、`game_over`は返信blockを履歴へ保存せず一時表示して、内部のgame-over effect sequenceへ移ります。
+各fromには`type=default`がちょうど1件必要です。defaultのtextは空欄にします。場面説明は同じtalk/fromの`type=context`行のtextへ書き、`{{state_id}}`を使えます。contextは0〜1行で、cond・intent・example・extract・next・mode・setは使いません。AIを使うfromでは通常AI ruleの`intent / text / example`とdefaultの`example`を記述します。AIを使わないfromへAI用exampleを強制しません。`stay`はfromを動かさず、`game_over`は返信blockを履歴へ保存せず一時表示して、内部のgame-over effect sequenceへ移ります。
+
+ここでdefaultが必要なのは、`talk_flow`にfrom行を書く入力地点です。対応するfrom行を一つも書かないblockは、読み取り専用の終点にできます。その地点では投稿できず、Quick Replyも表示しません。後でhookから入力地点へ移すことは可能です。これはserver/browser/static、メッセージ・チャット・検索AIに共通の仕様です。`scenario:talk-flow:writer-review`は、初期位置と通常遷移から到達する終点を確認用に一覧します。会話を続けたい場合のdefault書き忘れに注意してください。
+
+`match`のtextは、セル全体を`/pattern/flags`にするか、改行区切りの候補一覧にします。一覧は引用符なしが部分一致、`"鍵"`のようなJSON文字列が全文一致で、混在できます。`secret`は引用符付きの全文一致候補だけです。語句の照合はNFKC・前後trim・小文字化を共通に使い、内部空白とひらがな/カタカナは区別します。正規表現にはこの正規化やi flagを自動適用しません。
+
+`extract`は`/名前は(?<name>.+)です/u`のような名前付き正規表現、または従来のAI抽出JSONをセル全体へ記述します。結果は`$extract.name`でsetから参照できます。rule選択と抽出は独立で、match＋AI抽出、ai＋正規表現抽出も可能です。正規表現抽出は一度だけ実行し、未捕獲の任意groupを空文字で上書きせず、setに必要な値がなければdefaultへ戻ります。AIの障害は誤答へ読み替えません。
+
+secretのnext先頭では`/load part名`を一行ずつ指定できます。通常match/ai/defaultや途中stepでの/load、参照からの暗黙ロードはありません。[partの取得](static.md#正解による取得)も参照してください。
 
 ## 検索AI talk
 
@@ -160,9 +169,9 @@ hookから台本進行と無関係な検索結果を追加する場合は、`con
 
 `photo:content_id` と `share:content_id` は、アルバム添付とラジオ項目共有の入力です。正規表現ruleにはこの内部ID形式を渡し、LLMへは写真の `photoDescriptions` または共有項目のタイトルを使った説明文を渡します。
 
-### matchによる値抽出
+### extractのAI抽出
 
-`match` の最小形は、抽出値IDをrule本文へ対応させたJSON objectです。
+`extract`へ書くAI抽出の最小形は、抽出値IDをrule本文へ対応させたJSON objectです。
 
 ```json
 { "name": "プレイヤーが名乗った人名。推測できない場合はnull" }
@@ -193,9 +202,9 @@ LLM_REASONING_EFFORT=low
 
 `LLM_REASONING_EFFORT` は利用する互換providerが対応している場合だけ明示設定します。未設定時は、Gemini 2.5系またはFlash-Lite系の非Proへ`none`、その他のGemini 3系へ`minimal`を安全な既定値として送り、それ以外のmodelには送りません。明示値はこの既定より優先されます。
 
-providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「自然文criteriaの選択」と「matchの抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。
+providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「type=aiの判定」と「extractのAI抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。
 
-自然文criteriaの判定には、現在のfrom blockの末尾2件と、表示履歴の直近2件を重複除去して渡します。stayの会話が続いても現在の問いを保持し、短い肯定・否定や指示語の文脈を補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。0〜1の範囲外や候補にないrule IDは、不正応答としてエラーにします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
+AI判定には、現在のfrom blockの末尾2件と、表示履歴の直近2件を重複除去して渡します。stayの会話が続いても現在の問いを保持し、短い肯定・否定や指示語の文脈を補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。0〜1の範囲外や候補にないrule IDは、不正応答としてエラーにします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
 
 正規表現ruleはLLMより先に評価されるため、確実に判定できる入力は正規表現へ寄せると、速度と再現性を保てます。
 
@@ -233,5 +242,7 @@ npm run scenario:talk-flow:examples:test
 path dumpはfrom・example・nextの連結、writer reviewは全体の読み順とrepeat・独立block、example testは選択中scenarioの全exampleをlocal mockで確認します。実LLMを呼ぶ場合だけ、example testへ`--live`と表示される長い課金確認flagを明示します。
 
 分岐IDは定義内容から生成する21文字の内部IDです。行番号・notes・exampleの変更では維持し、条件・抽出・状態更新・返答先等の変更では別IDになります。変更前の入力を返信先から推定して新分岐へ混ぜません。並べ替えによる候補優先順や、台詞本文・モデル設定の変更まで同じであることを保証するIDではありません。
+
+判定種別はsecretと候補一覧のmatchで、所属partはbase以外で、追加取得先は空でない場合にIDの材料へ含めます。baseの既存regex/defaultへ明示typeを付けただけではIDを変更しません。同じ定義の重複行は、重複内の出現順で区別します。
 
 任意のcriteria診断と、抽出結果まで含めた追加試験は[制作テスト](authoring-tests.md)を参照してください。

@@ -1,19 +1,21 @@
 # プレイヤー進行の保存モード
 
-XStoryPhoneは、同じシナリオとUIを2種類のプレイヤーモードで実行できます。`project_constants` シートの `player.mode` に `server` または `browser` を指定します。省略時は `server` です。生成後の内部設定名は `playerMode` です。
+XStoryPhoneは、共通の会話・検索・hookとUIを3種類のプレイヤーモードで実行できます。`project_constants` シートの `player.mode` に `server`、`browser`、`static` を指定します。省略時は `server` です。生成後の内部設定名は `playerMode` です。
 
-|  | `server` | `browser` |
-|---|---|---|
-| 主な用途 | 人数を絞った有料体験 | 不特定多数への無料公開 |
-| 進行状態 | D1 / DynamoDB | 署名済みtokenをIndexedDB（既定）またはページ内メモリへ保存 |
-| 会話履歴（検索AIを含む） | talkごとのDB record | talkごとのIndexedDB record（既定）またはページ内メモリ |
-| 別端末での再開 | 同じパスコードで可能 | 非対応 |
-| プレイヤーの識別 | ローカル開発画面は4桁、公開環境は8桁のパスコード | 不要 |
-| プレイヤーごとのサーバーDB書込み | あり | なし（入力ログを有効にした場合を除く） |
+|  | `server` | `browser` | `static` |
+|---|---|---|---|
+| 主な用途 | 人数を絞った有料体験 | 不特定多数への無料公開 | 動的APIを使えない公開先 |
+| 進行状態 | D1 / DynamoDB | 署名済みtokenをIndexedDBまたはメモリへ保存 | 進行と取得済partをIndexedDBまたはメモリへ保存 |
+| 会話履歴（検索AIを含む） | talkごとのcompact event | talkごとの展開済み表示cache | talkごとのcompact event |
+| 別端末での再開 | 同じパスコードで可能 | 非対応 | 非対応 |
+| プレイヤーの識別 | ローカル開発画面は4桁、公開環境は8桁のパスコード | 不要 | 不要 |
+| プレイヤーごとのサーバーDB書込み | あり | なし（入力ログ有効時を除く） | なし |
+
+`static`は判定もブラウザー内で実行し、ゲームAPIを必要としません。進行・compact履歴をIndexedDBまたはメモリへ保持し、AIは使いません。秘匿する本文等をpartへ分けて後読みします。[サーバーなしで公開する](static.md)に制作・公開・更新の手順を記載しています。
 
 ## クライアント保存の設定
 
-`playerMode` は進行をサーバーDBと署名tokenのどちらで管理するかを選びます。プレイヤー画面の保存名と再読み込み後の保持は、別の公開ビルド設定で指定します。
+`playerMode` は判定場所と進行の管理方式を選びます。プレイヤー画面の保存名と再読み込み後の保持は、別の公開ビルド設定で指定します。
 
 ```dotenv
 VITE_XSTORYPHONE_STORAGE_PREFIX=author-work-prod
@@ -25,14 +27,18 @@ VITE_XSTORYPHONE_CLIENT_STORAGE=persistent
 | `server` | 未指定 / `persistent` | 従来のサーバー進行保存とクライアント保存。prefixを適用可能 |
 | `browser` | 未指定 / `persistent` | 従来のIndexedDB保存と小さいUI保存 |
 | `browser` | `memory` | 進行・履歴・UI状態をページ内メモリだけに保持 |
+| `static` | 未指定 / `persistent` | 進行・compact履歴・取得済partを専用IndexedDBへ保持 |
+| `static` | `memory` | 同じ進行をページ内メモリだけに保持 |
+
+staticの進行・履歴はbrowserとは別の保存領域を使います。方式を切り替えた際の自動移行はしません。
 
 `server` と `memory` の組合せ、不明な保存方式、設定値の前後空白などはdev起動・クライアントビルドで拒否します。Viteが実際に解決するshell環境変数と `.env` 等の値を検証します。設定はページ中固定であり、実行中の切替UIや保存失敗時のmemoryへの自動fallbackはありません。
 
-prefixはserver/browser共通で、IndexedDB名とlocalStorage/sessionStorageの保存キーすべてに `prefix:従来の名前` の形で付きます。未指定・空文字なら従来の保存名を維持します。他作者と同じoriginを共用するpersistent公開では、作者・作品・配備環境を識別する重複しないprefixを必ず指定してください。通常更新ではprefixと `project.id` を維持します。prefixを変えると別の保存領域になり、旧保存の探索・自動読込・移行・削除はしません。serverの同じパスコードを別プレイヤーにする設定でもありません。
+prefixはserver/browser/static共通で、IndexedDB名とlocalStorage/sessionStorageの保存キーすべてに `prefix:従来の名前` の形で付きます。未指定・空文字なら従来の保存名を維持します。他作者と同じoriginを共用するpersistent公開では、作者・作品・配備環境を識別する重複しないprefixを必ず指定してください。通常更新ではprefixと `project.id` を維持します。prefixを変えると別の保存領域になり、旧保存の探索・自動読込・移行・削除はしません。serverの同じパスコードを別プレイヤーにする設定でもありません。
 
 prefixは秘密値ではなく、保存名の誤衝突を防ぐためのものです。同一originの他のコードからのアクセス制御、ブラウザーの容量制限やサイトデータ削除の隔離にはなりません。memoryでは保存先へアクセスしないためprefixは任意です。
 
-### browser専用のmemory
+### browser/staticのmemory
 
 選択シナリオを `playerMode: "browser"` にしたうえで、次のようにローカルビルドできます。このコマンドはクラウドを変更しません。
 
@@ -46,7 +52,7 @@ memoryはエンジン管理の進行token、入力、会話・検索履歴、表
 
 memoryではclientRevision不一致を `AP-UPDATE` として停止し、自動reloadしません。通常の通信エラーの限定再試行は維持しますが、手動reloadや致命エラーからのreloadでは最初からになります。復旧用tokenを別の保存先へ退避する処理はありません。
 
-GA4はmeasurement IDが設定済みでも読み込みません。ゲームAPIへの開始・操作・固定PIN検証は `credentials: "omit"` と `cache: "no-store"` を使い、browserの状態JSON応答にも `Cache-Control: no-store` を付けます。判定・署名・hookは従来どおりbackendで実行するため、通信不要のモードではありません。
+GA4はmeasurement IDが設定済みでも読み込みません。browserのゲームAPIへの開始・操作・固定PIN検証は `credentials: "omit"` と `cache: "no-store"` を使い、状態JSON応答にも `Cache-Control: no-store` を付けます。browserの判定・署名・hookはbackendで実行します。staticはAPIを使わず、必要な定義ファイルを同じ取得設定で読みます。どちらもmemoryが通信不要を意味するわけではありません。
 
 この保証はエンジン管理のプレイデータについてです。ホストや埋め込みページ、作者が追加した任意JavaScriptによるCookie・保存、HTML・画像・音声・iframeの通信、静的ファイルの通常HTTP cache、ブラウザー標準のURL履歴やOSの管理までは禁止しません。History APIには画面詳細を復元できないページ内識別子だけを渡します。`PLAYER_INPUT_LOGGING`、外部hookの副作用、APIアクセスログは別の設定・責務であり、「サーバーを含め何も記録しない」設定ではありません。
 
@@ -78,7 +84,7 @@ ACCESS_CODE_SECRET='十分に長い秘密値' npm run access-code -- --from 0001
 | `fixed-pin` | 作品で設定した共通PINを、端末のロック画面で入力する |
 | `none` | ロック画面を表示しない |
 
-`player-passcode` はserverモード専用です。browserモードで指定するとシナリオ検証が失敗します。
+`player-passcode` はserverモード専用です。browser/staticモードで指定するとシナリオ検証が失敗します。
 
 serverモードで `fixed-pin` または `none` を選んだ場合も、プレイヤーを識別して続きを読み込むためのパスコードは必要です。このパスコードは開始前確認のあと、疑似端末を表示する前の画面で入力します。その後、`fixed-pin` なら端末のロック画面、`none` ならホーム画面へ進みます。
 
@@ -91,16 +97,22 @@ serverモードで `fixed-pin` または `none` を選んだ場合も、プレ�
 | `server` | `none` | 開始前確認 → 端末外でプレイヤーパスコード → ホーム |
 | `browser` | `fixed-pin` | 開始前確認 → ロック画面で固定PIN → ホーム |
 | `browser` | `none` | 開始前確認 → ホーム |
+| `static` | `fixed-pin` | 開始前確認 → ロック画面で固定PIN → 必要part取得 → ホーム |
+| `static` | `none` | 開始前確認 → ホーム |
 
-固定PINは4桁から8桁の数字文字列で指定し、`0420` のような先頭のゼロも保持します。正解値はクライアント用データへ生成せず、入力値をサーバーへ送って一致を判定します。正解なら画面を進め、不一致ならロック画面にエラーを表示します。DBへ試行履歴やロック状態は保存しません。
+固定PINは4桁から8桁の数字文字列で指定し、`0420` のような先頭のゼロも保持します。正解値はクライアント用データへ生成しません。server/browserはサーバーで、staticは部分hashと回答JSONの取得で判定します。正解なら画面を進め、不一致ならロック画面にエラーを表示します。DBへ試行履歴やロック状態は保存しません。追加partを取得する`device.unlock_load_part`の指定は[staticとpartの説明](static.md)を参照してください。
 
 固定PINは、ゲームとしてPINをクライアントへ露出させずに入力させるための機能です。アカウント認証、課金状態、個人情報などを守る強いセキュリティ機能ではありません。短い共通PINには総当たり耐性がなく、公開repositoryのシナリオ原本に書けばrepositoryの閲覧者には分かります。この割り切りを超える保護が必要な作品では、固定PINへ認証機能を継ぎ足さず、アクセス方式そのものを別途設計してください。
 
 ## テストプレイのリセット
 
+browser/staticはビルド時の`VITE_XSTORYPHONE_RESET_FOR_TESTING=true`（dev起動では既定で有効）でテスト用リセットを有効にします。進行はローカル保存から消去し、リセット用APIへ通信しません。以下のAPI側の環境制限はserver向けです。
+
 `/reset-for-testing` を開くと、現在のプレイヤー進行を初期状態へ戻せます。この操作は `APP_ENV` が `dev` / `development` / `stg` / `staging` の環境と、環境名未設定のlocalhostだけで利用できます。dev・stgのデプロイスクリプトはクライアント側の `VITE_XSTORYPHONE_RESET_FOR_TESTING` も自動で有効にします。`prod` / `production` ではURLを解釈せず、APIを直接呼んでも `404` になり、プレイヤー自身が有料体験を繰り返す入口にはなりません。
 
-dev・stgでは通知シェードに「最初から」を表示します。この操作も同じリセットAPIを呼び、進行状態と端末内の表示状態を初期化して開始前確認へ戻ります。prodでは「最初から」を表示しません。ロック画面を使う作品では通常のロック操作だけを表示し、`method: "none"` ならその操作も表示しません。
+dev・stgでは通知シェードに「最初から」を表示します。URLと同じ消去処理で、開始前確認へ戻ります。リセット自体では初期会話・開始hook・初期予約を実行せず、必要なパスコード／PINを入力した次の通常開始で準備します。prodでは「最初から」を表示しません。ロック画面を使う作品では通常のロック操作だけを表示し、`method: "none"` ならその操作も表示しません。
+
+serverではプレイヤーIDと入力・監修記録を維持し、進行・会話履歴・予約・生成音声job・hook LLM cacheを消去します。そのプレイヤーの既存sessionはすべて失効するので、他のタブや端末も再認証が必要です。DynamoDBの消去が中断された場合は、リセットの再試行または同じパスコードでの開始時に残りを消去します。初回の開始hookが失敗した場合も、未初期化の進行を維持して次の開始で再試行します。
 
 テスト用リセットに失敗して進行を再開できない場合は、`/reset-for-testing` を開き直してリセットを再実行してください。
 
@@ -115,6 +127,7 @@ dev・stgでは通知シェードに「最初から」を表示します。こ�
 | `server` | 選択中prefixのブラウザーのsession tokenと端末内の表示状態を破棄する。DBのプレイヤー進行と会話履歴は残り、同じパスコードで再開できる |
 | `browser` + `persistent` | 選択中prefix・当該 `project.id` のローカル進行token、会話履歴、端末内の表示状態を削除し、最初からになる。他のprefix・projectの進行保存は削除しない |
 | `browser` + `memory` | ページ内の進行・表示状態を破棄して開始画面へ戻る。永続保存には触れず、保存データの削除確認も表示しない |
+| `static` | browserと同じ確認方針で、static専用の保存だけを初期化する。persistentでは当該prefix・projectの進行、compact履歴、取得済partが削除される |
 
 browser + persistentの本番環境では、削除内容を表示し、プレイヤーが明示確認した場合だけ初期化します。取り消した場合は保存を維持します。テスト用リセットが有効なdev・stgでは、明示的に `/logout` を開いた際の確認は省略します。これは認証エラーによる自動削除とは別の操作です。起動時の保存検査でゲーム画面を表示できない場合も、同じ入口を使えます。他のタブが保存を開いていて初期化を完了できない場合は、その作品の他のタブを閉じてからリロードしてください。実行済みの削除要求は取り消せず、他のタブを閉じた後に完了する場合があります。
 
@@ -146,6 +159,8 @@ serverモードの会話履歴は、プレイヤー入力本文と、シナリ�
 通常会話の記録時刻は、同じ会話の前の出力より後になるように保存します。短時間に続けて入力したり実時計が戻ったりしても、履歴を再取得した際の順番が変わらないためです。表示時刻は厳密な実時間の記録ではなく、連続した返答ではわずかに先へ進むことがあります。
 
 ## 未到達情報の扱い
+
+以下はAPIを利用するserver/browserの境界です。staticでは未取得partを秘匿境界とし、配布済part内の未表示内容は解析できます。秘匿する続きは[partへ分けて配置](static.md)してください。
 
 初期クライアントデータとAPIは、未到達の本文、画像URL、ヒント、会話を返しません。`repairable` の未修復コンテンツは、壊れた表示に必要なIDと代替表示だけを返します。`hidden` の未到達コンテンツは存在自体を返しません。
 

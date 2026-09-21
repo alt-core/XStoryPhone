@@ -105,7 +105,7 @@ test("commit後に未dispatchの生成音声intentが残っても次のreconcile
   let saved = null;
   const store = {
     async generatedAudioJobs() { return [job]; },
-    async saveGeneratedAudioJob(_playerId, next) { saved = next; }
+    async updateGeneratedAudioJob(_playerId, next) { saved = next; return true; }
   };
   workerScenario.generatedAudio.push(definition);
   projectGeneratedAudioProviders.push(provider);

@@ -23,6 +23,7 @@ export function parseTalkBlockComment(row) {
   if (comment.startsWith(";")) {
     return { type: "comment", value: comment.slice(1).trim() };
   }
+  if (comment.startsWith("#")) return { type: "part", value: comment.slice(1) };
   if (comment.startsWith("*")) {
     return { type: "talk", value: normalizeTalkBlockToken(comment.slice(1)) };
   }
@@ -36,8 +37,8 @@ export function talkBlockKeyError(blockKey) {
   if (!blockKey) {
     return "block ID が空です。";
   }
-  if (blockKey.startsWith("*") || blockKey.startsWith(";") || blockKey.startsWith("/")) {
-    return "block ID の先頭に *、;、/ は使えません。/ はnext command用です。";
+  if (/^[*;\/#]/u.test(blockKey)) {
+    return "block ID の先頭に *、;、/、# は使えません。/ はnext command、# はpart宣言用です。";
   }
   if (blockKey.includes(talkBlockIdSeparator)) {
     return `block ID に内部区切り文字 ${talkBlockIdSeparator} は使えません。`;
@@ -59,7 +60,7 @@ function addScopedTalkBlock(scope, talkId, blockKey, row, extraInfo = {}) {
   }
 
   scope.canonicalByScopedKey.set(lookupKey, canonical);
-  scope.blockInfo.set(canonical, { talkId, blockKey, ...extraInfo });
+  scope.blockInfo.set(canonical, { talkId, blockKey, part: row.__part ?? "base", order: row.__rowNumber ?? scope.blockInfo.size, ...extraInfo });
   if (extraInfo.repeatOf) {
     scope.repeatInfoByBlock.set(canonical, {
       repeatOf: extraInfo.repeatOf,
@@ -96,6 +97,15 @@ export function collectScopedTalkBlocks(rows, { onError } = {}) {
 
   for (const row of rows ?? []) {
     const parsed = parseTalkBlockComment(row);
+
+    if (parsed.type === "part") {
+      currentTalk = "";
+      currentCanonical = "";
+      currentBaseCanonical = "";
+      currentBaseBlockKey = "";
+      currentRepeatIndex = 1;
+      continue;
+    }
 
     if (parsed.type === "comment") {
       continue;

@@ -306,7 +306,7 @@ function collectMatchGroups(values: TalkFlowMatchOutput) {
 function matchGroupsForStateUpdates(values: TalkFlowMatchOutput, setUpdates: readonly string[]) {
   const matchGroups = collectMatchGroups(values);
   for (const update of setUpdates) {
-    for (const reference of String(update).matchAll(/\$match\.([a-zA-Z_][a-zA-Z0-9_]*)/gu)) {
+    for (const reference of String(update).matchAll(/\$extract\.([a-zA-Z_][a-zA-Z0-9_]*)/gu)) {
       if (typeof matchGroups[reference[1]] !== "string") {
         return null;
       }

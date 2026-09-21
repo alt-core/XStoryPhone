@@ -1,12 +1,17 @@
 import { resolveTalkRule, type TalkReviewSelection } from "../../shared/conversation.ts";
-import { renderTemplate } from "../../shared/condition.ts";
-import type { ScenarioTalk } from "../../shared/scenario.ts";
+import { renderTemplate, requireTemplateValues } from "../../shared/condition.ts";
+import type { ScenarioTalk, TalkRule } from "../../shared/scenario.ts";
+import { parseTalkExtraction, regexExtract } from "../../shared/talkCriteria.ts";
 import { createStructuredOutputProvider, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
 import { extractTalkRuleMatch, semanticRuleSelector } from "./conversationLlm.ts";
 
-export function renderTalkRuleCriteria<T extends { criteria: string }>(rules: readonly T[], stateValues: Record<string, unknown>): T[] {
+export function renderTalkRuleCriteria<T extends { criteria: string; type?: string }>(rules: readonly T[], stateValues: Record<string, unknown>): T[] {
   const templateEnv = Object.fromEntries(Object.entries(stateValues).map(([key, value]) => [key, String(value)]));
-  return rules.map((rule) => ({ ...rule, criteria: renderTemplate(rule.criteria, templateEnv) }));
+  return rules.map((rule) => {
+    if (rule.type === "secret" || (rule.type === "match" && !rule.criteria.startsWith("/"))) return { ...rule };
+    requireTemplateValues(rule.criteria, templateEnv);
+    return { ...rule, criteria: renderTemplate(rule.criteria, templateEnv) };
+  });
 }
 
 export async function resolveScenarioTalkRule(input: {
@@ -19,11 +24,12 @@ export async function resolveScenarioTalkRule(input: {
   stateValues: Record<string, unknown>;
   recentMessages?: readonly { speaker: string; body: string }[];
   provider?: StructuredOutputProvider | null;
+  secretSelector?: (rule: TalkRule, input: string) => Promise<TalkRule | null>;
 }) {
   const provider = input.llmEnabled ? (input.provider ?? createStructuredOutputProvider(input.env)) : null;
   const talk = {
     ...input.talk,
-    rules: renderTalkRuleCriteria(input.talk.rules, input.stateValues)
+    rules: renderTalkRuleCriteria(input.talk.rules.filter(rule => rule.from === "*" || rule.from === input.from), input.stateValues)
   };
   const selection = await resolveTalkRule({
     rules: talk.rules,
@@ -32,6 +38,7 @@ export async function resolveScenarioTalkRule(input: {
     ...(input.semanticPlayerInput ? { semanticPlayerInput: input.semanticPlayerInput } : {}),
     stateValues: input.stateValues,
     recentMessages: input.recentMessages,
+    secretSelector: input.secretSelector,
     ...(provider ? {
       semanticSelector: semanticRuleSelector(provider, {
         talkId: talk.id,
@@ -45,6 +52,14 @@ export async function resolveScenarioTalkRule(input: {
     selectedRuleId: selection.rule.id, ...selection.reviewSelection, finalRuleId: selection.rule.id
   };
   if (!selection.rule.match.trim()) return { ...selection, reviewSelection, matchGroups: {} };
+  const extraction = parseTalkExtraction(selection.rule.match);
+  if (extraction.kind === "regex") {
+    const values = regexExtract(selection.rule.match, input.playerInput);
+    const required = selection.rule.set.flatMap(update => [...update.matchAll(/\$extract\.([a-zA-Z_][a-zA-Z0-9_]*)/gu)].map(match => match[1]));
+    if (values && required.every(id => typeof values[id] === "string")) return { ...selection, reviewSelection, matchGroups: values };
+    return { ok: true as const, rule: selection.defaultRule, defaultRule: selection.defaultRule, source: "default" as const,
+      reviewSelection: { ...reviewSelection, accepted: false, finalRuleId: selection.defaultRule.id, fallbackReason: "extraction_no_match" }, matchGroups: {} };
+  }
   if (!provider) {
     return { ok: false as const, error: "provider_unavailable" as const };
   }

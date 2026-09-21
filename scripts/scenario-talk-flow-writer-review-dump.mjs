@@ -136,7 +136,9 @@ function outputStepsForRow(row) {
 
 function pushOutputSteps(lines, steps, blockScope, people, talk, displayedBlockCounts) {
   for (const step of steps) {
-    if (step.kind === "search") {
+    if (step.kind === "load") {
+      lines.push(`[part取得] ${step.partId}`);
+    } else if (step.kind === "search") {
       lines.push(`[検索] ${step.queryTemplate}`);
     } else if (step.kind === "input") {
       lines.push(`[入力] ${step.action}`);
@@ -229,7 +231,7 @@ function groupRowsByTalkAndFrom(rows) {
 }
 
 function defaultCriteriaFor(rows) {
-  const defaultRow = rows.find((row) => !text(row, "intent") && !text(row, "match")) ?? rows.find((row) => !text(row, "intent"));
+  const defaultRow = rows.find((row) => row.type === "default");
   return visibleText(defaultRow?.criteria);
 }
 
@@ -416,6 +418,8 @@ function pushGroupedReview(lines, rowsByTalk, talks, blockScope, people, repeatR
 
         lines.push(`### (${from}) / ${intent} → ${outputSteps.map(formatTalkOutputStep).join(" → ")}`);
         lines.push("");
+        lines.push(`part: ${row.__part ?? "base"} / type: ${row.type}`);
+        lines.push("");
 
         if (fromLast) {
           lines.push(`> ${formatMessage(fromLast, people)}`);
@@ -505,6 +509,56 @@ function pushFlatReview(lines, rowsByTalk, talks, blockScope, people, repeatRows
   }
 }
 
+function pushPartReview(lines, authoring, blockScope) {
+  const source = authoring.source;
+  if ((source.partIds ?? []).length <= 1) return;
+  lines.push("## part配布の確認（作品全体）", "", "取得済part内は解析可能です。追加取得なしのpasswordは、本文を先行配布する解錠演出として使えます。", "");
+  for (const part of source.partIds) {
+    lines.push(`### #${part}`, "");
+    for (const [group, owners] of Object.entries(source.partOwnership)) {
+      const ids = Object.entries(owners).filter(([, owner]) => owner === part).map(([id]) => id);
+      if (ids.length) lines.push(`- ${group}: ${ids.join(", ")}`);
+    }
+    const blocks = [...blockScope.blockInfo].filter(([, block]) => block.part === part).map(([id]) => id);
+    if (blocks.length) lines.push(`- talk_blocks: ${blocks.join(", ")}`);
+    if (part === "base") lines.push("- 取得入口: 新規開始");
+    for (const row of authoring.flowRows) {
+      if (outputStepsForRow(row).some(step => step.kind === "load" && step.partId === part)) lines.push(`- 取得入口: talk_flow ${text(row, "talk")}/${text(row, "from")} → /load ${part}`);
+    }
+    for (const content of source.contents) if (content.record.unlockLoadParts?.includes(part)) lines.push(`- 取得入口: passwords ${content.id}`);
+    if (source.project.lockScreen.loadParts?.includes(part)) lines.push("- 取得入口: device.unlock_load_part");
+    lines.push("");
+  }
+  for (const content of source.contents.filter(item => item.record.unlockCode && !item.record.unlockLoadParts?.length)) {
+    lines.push(`- 追加取得なしのpassword: ${content.id}（本文所属: ${source.partOwnership.contents[content.id] ?? "base"}）`);
+  }
+  lines.push("");
+}
+
+function pushReadOnlyEndReview(lines, authoring, blockScope, talkFilters, fromFilter) {
+  const ends = new Map();
+  const add = (talk, block, source) => {
+    if (!block || (talkFilters.length && !talkFilters.includes(talk))) return;
+    if (!resolveScopedTalkBlockId(blockScope, talk, block)
+      || authoring.flowRows.some(row => text(row, "talk") === talk && text(row, "from") === block)) return;
+    const key = `${talk}/${block}`;
+    ends.set(key, [...(ends.get(key) ?? []), source]);
+  };
+  if (!fromFilter) for (const talk of authoring.source.talks) {
+    const block = talk.kind === "search_agent" ? outputStepNextFromKey(parseTalkOutputSteps(talk.startSteps).steps) : talk.startBlocks.at(-1);
+    add(talk.id, block, "初期位置");
+  }
+  for (const row of authoring.flowRows) {
+    if (text(row, "mode") || (fromFilter && text(row, "from") !== fromFilter)) continue;
+    add(text(row, "talk"), outputStepNextFromKey(outputStepsForRow(row)), `talk_flow.tsv:${row.__rowNumber}`);
+  }
+  if (!ends.size) return;
+  lines.push("## 読み取り専用の終点（確認用）", "",
+    "以下はエラーではありません。返信を受け付けたい地点のdefault行が抜けていないか確認してください。検索AIも同じ仕様です。初期位置と通常遷移だけを列挙し、hookからの移動は含みません。", "");
+  for (const [target, sources] of ends) lines.push(`- ${target}（到達元: ${sources.join("、")}）`);
+  lines.push("");
+}
+
 function main() {
   const { args, flags } = parseArgs(process.argv.slice(2));
   const authoring = loadLocalTalkAuthoring(rootDir);
@@ -548,6 +602,8 @@ function main() {
   const lines = [];
   lines.push("# talk_flow シナリオライター確認用");
   lines.push("");
+  pushPartReview(lines, authoring, blockScope);
+  pushReadOnlyEndReview(lines, authoring, blockScope, talkFilters, fromFilter);
 
   if (groupByFrom) {
     const { talks, rowsByTalk } = groupRowsByTalkAndFrom(targetRows);

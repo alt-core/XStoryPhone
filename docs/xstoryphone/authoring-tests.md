@@ -13,7 +13,7 @@ node scripts/scenario-talk-flow-criteria-audit.mjs
 
 path dumpは現在地点の最後の発話、example、返答の順を確認するものです。writer reviewは代表到達経路、repeat、独立blockをまとめて読めます。Quick Reply、検索・入力制御commandも表示します。
 
-criteria auditは、判定条件へ返答内容・進行説明が混ざっていないか、場面説明やgame overの境界が曖昧でないかを調べる任意のlintです。日本語の目印による助言であり、文章が正しいかどうかの判定器ではありません。通常のbuildはこの助言で停止しません。正規表現だけの場面にはLLM用の場面説明を要求しません。
+criteria auditは、判定条件へ返答内容・進行説明が混ざっていないか、場面説明やgame overの境界が曖昧でないかを調べる任意のlintです。日本語の目印による助言であり、文章が正しいかどうかの判定器ではありません。通常のbuildはこの助言で停止しません。AIを使わない場面にはLLM用の場面説明を要求しません。
 
 - `--json`: 診断をJSONで出力。
 - `--limit=0`: 診断を省略せず表示。
@@ -25,7 +25,7 @@ criteria auditは、判定条件へ返答内容・進行説明が混ざってい
 npm run scenario:talk-flow:examples:test
 ```
 
-各ruleのexampleを使い、現在の状態条件、正規表現の選択順、LLMの候補と応答schemaを確認します。criteria・場面説明のtemplateは、試験stateの値で本番と同様に展開します。
+各ruleのexampleを使い、現在の状態条件、match/secretの選択順、LLMの候補と応答schemaを確認します。text・contextのtemplateは、試験stateの値で本番と同様に展開します。
 
 既定のmockではLLMの期待応答を与えるため、自然文を実LLMが正しく分類することまでは検証しません。また、このコマンドはrule選択の確認であり、後続の抽出値・hook・プレイ全体を実行するものではありません。
 

@@ -5,14 +5,13 @@ import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import {
   buildTalkFlowLlmChatCompletionBody,
   buildTalkFlowLlmMessages,
-  parseTalkFlowRegexCriteria,
-  selectTalkFlowRuleByRegexCriteria,
   selectTalkFlowRuleFromLlmDecision,
   talkFlowLlmResponseSchema
 } from "../src/worker/product/talkFlowLlmSelection.ts";
 import { evaluateConditionExpression } from "../src/shared/conditionExpression.ts";
 import { renderTalkRuleCriteria } from "../src/worker/services/talkResolver.ts";
 import { talkTestContext } from "./lib/talk-test-context.mjs";
+import { selectDeterministicRule } from "../src/shared/talkCriteria.ts";
 
 const loadedScenario = loadAndValidateScenario().worker;
 const scenario = {
@@ -654,7 +653,7 @@ function selectableRegexWitnessState(talk, node, rule, initialState) {
     const activeRules = renderTalkRuleCriteria(rules, effectiveState).filter((candidate) =>
       evaluateConditionExpression(candidate.cond, { ...effectiveState, player_input: rule.example })
     );
-    const selected = selectTalkFlowRuleByRegexCriteria(activeRules, rule.example);
+    const selected = selectDeterministicRule(activeRules, rule.example);
     if (selected?.id === rule.id) return stateValues;
     if (!selected) continue;
     for (const id of booleanStateIdsInCond(selected.cond)) {
@@ -666,7 +665,7 @@ function selectableRegexWitnessState(talk, node, rule, initialState) {
 
 function exampleStateVariants(talk, node, rule) {
   const states = condWitnessStates(rule.cond, rule.example);
-  if (parseTalkFlowRegexCriteria(rule.criteria).kind !== "ready") return states;
+  if (rule.type !== "match" && rule.type !== "secret") return states;
   return dedupeStateValues(states.map((state) => selectableRegexWitnessState(talk, node, rule, state)));
 }
 
@@ -745,7 +744,7 @@ function buildPromptInput(testCase) {
   assert.ok(context, `LLM 入力 context が作れません: ${testCase.id}`);
   if (testCase.regexCriteria) {
     assert.equal(
-      selectTalkFlowRuleByRegexCriteria(context.activeRules, testCase.input)?.id,
+      selectDeterministicRule(context.activeRules, testCase.input)?.id,
       testCase.expectedRuleId,
       `正規表現 criteria が期待 rule を選びません: ${testCase.id}`
     );
@@ -825,7 +824,7 @@ function allExampleCases() {
       }
       for (const node of talk.nodes) {
         assertCondStatePatternLimit(talk, node);
-        const regexCriteria = parseTalkFlowRegexCriteria(rule.criteria).kind === "ready";
+        const regexCriteria = rule.type === "match" || rule.type === "secret";
         const baseId = `${talk.id}:${node.id}:row${rule.order}:${cleanCasePart(ruleLabel(rule))}`;
         const stateVariants = exampleStateVariants(talk, node, rule);
         stateVariants.forEach((stateValues, index) => {
@@ -855,7 +854,7 @@ function allExampleCases() {
         if (!rule.example) {
           continue;
         }
-        const regexCriteria = parseTalkFlowRegexCriteria(rule.criteria).kind === "ready";
+        const regexCriteria = rule.type === "match" || rule.type === "secret";
         const baseId = `${talk.id}:${node.id}:row${rule.order}:${cleanCasePart(ruleLabel(rule))}`;
         const stateVariants = exampleStateVariants(talk, node, rule);
         stateVariants.forEach((stateValues, index) => {

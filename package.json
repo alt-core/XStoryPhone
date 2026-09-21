@@ -38,6 +38,7 @@
     "aws:build": "SAM_CLI_TELEMETRY=0 sam build --template-file infra/aws/template.yaml",
     "scenario:validate": "node scripts/scenario-validate.mjs",
     "scenario:build": "node scripts/scenario-build.mjs",
+    "scenario:static:init": "node scripts/static-parts-init.mjs",
     "scenario:sheets:pull": "node scripts/scenario-sheets-pull.mjs",
     "scenario:sheets:compare": "node scripts/scenario-sheets-compare.mjs",
     "scenario:sheets:put": "node scripts/scenario-sheets-put.mjs",

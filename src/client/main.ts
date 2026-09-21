@@ -6,7 +6,7 @@ import {
   initializeBrowserPlayerStorage,
   deleteBrowserPlayerDatabase,
   isBrowserPlayerStorageError
-} from "./system/browserPlayerStorage.ts";
+} from "./system/clientPlayerStorage.ts";
 import { playerMode } from "./system/playerApi.ts";
 import { isMemoryStorage } from "./system/clientStorage.ts";
 import { appReturnUrl, isAppEntryPath } from "./system/resourceUrls.ts";
@@ -84,14 +84,15 @@ async function start(targetElement: HTMLElement) {
   renderLoading(targetElement);
   let deletingBrowserProgress = false;
   try {
-    if (playerMode === "browser" && isAppEntryPath(window.location.pathname, "/logout")) {
+    if (playerMode !== "server" && (isAppEntryPath(window.location.pathname, "/logout")
+      || (resetForTestingEnabled && isAppEntryPath(window.location.pathname, "/reset-for-testing")))) {
       deletingBrowserProgress = true;
       if (await deleteBrowserProgressForRestart()) return;
       deletingBrowserProgress = false;
       window.history.replaceState(window.history.state, "", appReturnUrl(window.location.pathname));
     }
     await initializeBrowserPlayerStorage({
-      enabled: playerMode === "browser",
+      enabled: playerMode !== "server",
       projectId,
       clientRevision: String(projectConstants["client.runtime_revision"] ?? "")
     });
@@ -102,8 +103,8 @@ async function start(targetElement: HTMLElement) {
     console.error("XStoryPhone の初期化に失敗しました。", error);
     renderGlobalError(
       targetElement,
-      isBrowserPlayerStorageError(error) ? "AP-STORAGE" : "AP-CLIENT",
-      playerMode === "browser" && !isMemoryStorage && isBrowserPlayerStorageError(error) && error.kind === "corrupt",
+      isBrowserPlayerStorageError(error) ? "AP-STORAGE" : error instanceof Error && error.name === "StaticResourceError" ? "AP-STATIC" : "AP-CLIENT",
+      playerMode !== "server" && !isMemoryStorage && isBrowserPlayerStorageError(error) && error.kind === "corrupt",
       deletingBrowserProgress
     );
   }

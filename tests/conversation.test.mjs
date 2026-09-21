@@ -18,8 +18,8 @@ const baseRule = {
 test("正規表現だけで分岐を選択できる", async () => {
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "found", isDefault: false, criteria: "/^見つけた[！!]?$/u" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "found", isDefault: false, type: "match", criteria: "/^見つけた[！!]?$/u" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "見つけた！",
@@ -36,8 +36,8 @@ test("自然文criteriaがある時だけsemantic selectorを使う", async () =
   let calls = 0;
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "positive", isDefault: false, criteria: "肯定している" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "positive", isDefault: false, type: "ai", criteria: "肯定している" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "はい",
@@ -54,8 +54,8 @@ test("自然文criteriaがある時だけsemantic selectorを使う", async () =
 test("正規表現にも自然文criteriaにも該当しなければdefaultへ進む", async () => {
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "found", isDefault: false, criteria: "/^見つけた$/u" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "found", isDefault: false, type: "match", criteria: "/^見つけた$/u" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "まだです",
@@ -68,8 +68,8 @@ test("正規表現にも自然文criteriaにも該当しなければdefaultへ�
 test("共通分岐を現在fromの分岐より先に評価し、defaultは現在fromから選ぶ", async () => {
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "help", from: "*", order: 1, intent: "ヘルプ", isDefault: false, criteria: "/^ヘルプ$/u" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "help", from: "*", order: 1, intent: "ヘルプ", isDefault: false, type: "match", criteria: "/^ヘルプ$/u" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "ヘルプ",
@@ -83,8 +83,8 @@ test("添付コマンドは正規表現へ内部ID、LLMへ説明文を渡せる
   let semanticInput = "";
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "semantic", isDefault: false, criteria: "写真を送った" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "semantic", isDefault: false, type: "ai", criteria: "写真を送った" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "photo:clue_photo",
@@ -102,8 +102,8 @@ test("添付コマンドは正規表現へ内部ID、LLMへ説明文を渡せる
 test("condは現在のplayer_inputを参照して候補を絞れる", async () => {
   const result = await resolveTalkRule({
     rules: [
-      { ...baseRule, id: "secret", isDefault: false, criteria: "/秘密/u", cond: "player_input =~ /秘密/u" },
-      { ...baseRule, id: "default", order: 999, isDefault: true, criteria: "" }
+      { ...baseRule, id: "secret", isDefault: false, type: "match", criteria: "/秘密/u", cond: "player_input =~ /秘密/u" },
+      { ...baseRule, id: "default", order: 999, isDefault: true, type: "default", criteria: "" }
     ],
     from: "start",
     playerInput: "秘密を見つけた",

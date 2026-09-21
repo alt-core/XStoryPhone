@@ -5,7 +5,9 @@ import { demoProjectConstantsGenerated as projectConstants } from "./src/client/
 import { resolveClientStorageSettings } from "./src/shared/clientStorage.ts";
 import { normalizeHttpOrigin, normalizeStaticBase } from "./src/shared/deploymentUrls.ts";
 import { staticBuildAssets } from "./scripts/static-build-assets.ts";
+import { staticExecutionAssets } from "./scripts/static-execution-assets.ts";
 
+const staticExecution = String(projectConstants["player.mode"]) === "static";
 const standaloneClient = process.env.BUILD_PLATFORM === "aws" || process.env.BUILD_PLATFORM === "static";
 
 export default defineConfig({
@@ -24,15 +26,17 @@ export default defineConfig({
         resolveClientStorageSettings(String(projectConstants["player.mode"] ?? "server"), config.env);
         normalizeStaticBase(config.base);
         if (config.env.VITE_XSTORYPHONE_API_BASE_URL) {
+          if (staticExecution) throw new Error("static実行モードではAPI接続先を設定しないでください。");
           normalizeHttpOrigin(config.env.VITE_XSTORYPHONE_API_BASE_URL, "VITE_XSTORYPHONE_API_BASE_URL");
         }
       }
     },
     staticBuildAssets({ operationEntrypoints: process.env.BUILD_PLATFORM === "static" }),
+    ...(staticExecution ? [staticExecutionAssets()] : []),
     ...(standaloneClient ? [svelte()] : [svelte(), cloudflare()])
   ],
   build: {
-    ...(standaloneClient ? { outDir: `dist/${process.env.BUILD_PLATFORM}` } : {}),
+    ...(standaloneClient ? { outDir: `dist/${process.env.BUILD_PLATFORM ?? "static"}` } : {}),
     sourcemap: false
   }
 });

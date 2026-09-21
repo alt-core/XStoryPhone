@@ -7,7 +7,7 @@ import { resolveScenarioTalkRule } from "../src/worker/services/talkResolver.ts"
 import { buildTalkFlowLlmMessages } from "../src/worker/product/talkFlowLlmSelection.ts";
 
 const base = {
-  order: 1, from: "guide::start", isDefault: false, cond: "", intent: "回答", criteria: "名前を伝えた", match: "",
+  order: 1, from: "guide::start", isDefault: false, cond: "", intent: "回答", type: "ai", criteria: "名前を伝えた", match: "",
   outputSteps: [{ kind: "block", blockId: "guide::reply" }], nextBlocks: ["guide::reply"], nextFromId: "guide::reply", set: [], mode: "", notes: "", example: ""
 };
 const scenario = {
@@ -15,9 +15,9 @@ const scenario = {
   talkPeople: [{ id: "guide", name: "案内役", role: "npc" }],
   talkBlocks: [{ id: "guide::start", messages: [{ sender: "guide", body: "{{scene}}の質問です。" }] }],
   talks: [{ id: "guide", kind: "sms", rules: [
-    { ...base, id: "answer", criteria: "{{scene}}で名前を述べた", match: '{"name":"名乗った名前"}', set: ["saved=$match.name"] },
-    { ...base, id: "hint", order: 2, criteria: "/^ヒント$/u", mode: "stay" },
-    { ...base, id: "default", order: 3, isDefault: true, intent: "", criteria: "現在は{{scene}}", mode: "stay" }
+    { ...base, id: "answer", type: "ai", criteria: "{{scene}}で名前を述べた", match: '{"name":"名乗った名前"}', set: ["saved=$extract.name"] },
+    { ...base, id: "hint", order: 2, type: "match", criteria: "/^ヒント$/u", mode: "stay" },
+    { ...base, id: "default", order: 3, isDefault: true, intent: "", type: "default", criteria: "現在は{{scene}}", mode: "stay" }
   ] }]
 };
 
