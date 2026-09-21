@@ -22,7 +22,7 @@ test("ProjectStage contextは進行revisionが変わらない画面操作も反�
     activeApp: null, activeIncomingCall: undefined, searchAgentOpen: false, shadeOpen: false,
     pendingPresentationCount: 0, noiseVisible: false, presentationEffectActive: false,
     gameOverVisible: false, gameOverReturning: false, allClearVisible: false, allClearReturning: false,
-    deviceViewFor, dispatchProjectScenarioEvent() {}
+    deviceViewFor, dispatchProjectScenarioEvent() {}, unlockProjectContent() {}
   };
   vm.createContext(context);
   const code = ts.transpileModule(reactions.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -49,4 +49,5 @@ test("ProjectStage contextは進行revisionが変わらない画面操作も反�
   assert.equal(context.projectStageContext.playerState, state, "表示だけで進行を変更しない");
   assert.equal(state.revision, "same");
   assert.equal(context.projectStageContext.dispatchScenarioEvent, context.dispatchProjectScenarioEvent);
+  assert.equal(context.projectStageContext.unlockContent, context.unlockProjectContent);
 });
