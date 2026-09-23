@@ -328,6 +328,19 @@ test("staticの到達済みリンクもhookで解放してから遷移先を返�
   assert.equal(opened.presentation.effects[0].type, "noise");
 });
 
+test("staticはgen_audioの固定代替を利用し、外部生成を実行しない", async t => {
+  const f = await filesFixture(t, ({ worker }) => {
+    const definition = worker.generatedAudio.find(item => item.id === "demo_voice");
+    Object.assign(definition, { provider: "external_fixture", staticUrl: "", fallbackAttachmentId: "fallback_fixture" });
+    worker.attachments.push({ id: "fallback_fixture", type: "audio", asset: "/fixture/fallback.wav", part: "base" });
+    delete worker.contents.find(item => item.id === "sample_radio").record.audioAttachmentId;
+  });
+  const execution = createStaticPlayerExecution(f.options);
+  await execution.initialize();
+  const state = (await request(execution, "/api/session/start")).playerState;
+  assert.equal(state.visibleDeviceState.radioItems.find(item => item.contentId === f.scenario.worker.publicIds.content.sample_radio).audioUrl, "/fixture/fallback.wav");
+});
+
 test("通常会話でもoptional抽出値はtemplateの空値として扱う", async t => {
   const f=await filesFixture(t,({worker})=>{
     const talk=worker.talks.find(item=>item.id==="guide");

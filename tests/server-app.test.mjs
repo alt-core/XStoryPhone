@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createApp } from "../src/server/app.ts";
 import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
-import { encodeBrowserProgress } from "../src/server/browserProgress.ts";
+import { decodeBrowserProgress, encodeBrowserProgress } from "../src/server/browserProgress.ts";
 import { mergeTranscriptAppend } from "../src/server/store.ts";
 import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import { staticAudioSample } from "../src/shared/staticAudio.ts";
+import { projectGeneratedAudioProviders } from "../src/project/generatedAudioProviders.ts";
 import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
 
 const configuredPlayerMode = workerScenario.playerMode;
@@ -143,6 +144,11 @@ class MemoryStore {
     this.audioJobs.set(job.audioId, structuredClone(job)); return true;
   }
   async generatedAudioJobs() { return [...this.audioJobs.values()].map((job) => structuredClone(job)); }
+  async replaceGeneratedAudioJob(_playerId, expectedId, job) {
+    const previous = this.audioJobs.get(job.audioId);
+    if (previous?.id !== expectedId || previous.status === "ready") return false;
+    this.audioJobs.set(job.audioId, structuredClone(job)); return true;
+  }
   async reviewJudgments() { return this.reviewJudgmentRows; }
   async reviewInputCounts() {
     return this.reviewEvents.reduce((counts, event) => ({ ...counts, [event.ruleId]: (counts[event.ruleId] ?? 0) + 1 }), {});
@@ -639,6 +645,55 @@ test("テストプレイ用進行リセットはdevとstgだけで公開ホス�
     headers: { authorization: "Bearer memory-token" }
   });
   assert.equal(recovered.status, 200, "dev/stgのリセットは壊れた予定イベントを実行せず初期化する");
+});
+
+test("browserの任意生成音声は補助jobだけ保存し、同じtokenで手動復旧を反映する", async () => {
+  const original = structuredClone(workerScenario);
+  const store = new MemoryStore();
+  const provider = { id: "fixture_external", enqueue: async () => ({ status: "failed", errorCode: "temporary" }), reconcile: async () => ({ status: "failed" }) };
+  projectGeneratedAudioProviders.push(provider);
+  try {
+    workerScenario.playerMode = "browser";
+    const definition = workerScenario.generatedAudio.find(item => item.id === "demo_voice");
+    definition.provider = provider.id;
+    definition.staticUrl = "";
+    const radio = workerScenario.contents.find(item => item.id === "sample_radio");
+    delete radio.record.audioAttachmentId;
+    radio.record.playbackCond = "image_color_reported";
+    workerScenario.hooks = [{ event: "session_started", target: "", handler: "audio_probe", cond: "", llm: false }];
+    scenarioHookHandlers.audio_probe = context => context.genAudio.prepare("demo_voice", { inputText: "未公開の台本fixture928471" });
+    const app = createApp({ store, config: { appEnv: "production", adminReviewSecret: "admin", browserStateSecret: "browser-secret", llm: {} } });
+    const started = await (await app.request("https://game.example/api/session/start", { method: "POST" })).json();
+    assert.equal(started.ok, true);
+    const token = started.playerState.progressToken;
+    assert.equal(store.createCalls, 0);
+    assert.equal(store.player.stateVersion, 0, "browserの進行をDBへ保存しない");
+    assert.equal(store.audioJobs.get("demo_voice").inputText, "未公開の台本fixture928471");
+    const job = store.audioJobs.get("demo_voice");
+    const signedPlayer = await decodeBrowserProgress("browser-secret", workerScenario.project.id, token);
+    assert.equal(JSON.stringify(signedPlayer.state).includes("未公開の台本fixture928471"), false);
+    assert.notEqual(signedPlayer.state.generatedAudioRequests[definition.publicId], job.inputHash);
+    const adminPath = `/api/admin/generated-audio/${encodeURIComponent(signedPlayer.id)}/demo_voice`;
+    assert.equal((await app.request(`https://game.example${adminPath}`)).status, 401);
+    const snapshot = await (await app.request(`https://game.example${adminPath}`, { headers: { authorization: "Bearer admin" } })).json();
+    assert.equal(snapshot.job.inputText, "未公開の台本fixture928471");
+    provider.enqueue = async () => ({ status: "ready", outputKey: "/regenerated-private.wav" });
+    const retried = await app.request(`https://game.example${adminPath}/retry`, { method: "POST", headers: { authorization: "Bearer admin", "content-type": "application/json" }, body: JSON.stringify({ expectedJobId: job.id, confirm: true }) });
+    assert.equal(retried.status, 200);
+    assert.notEqual(store.audioJobs.get("demo_voice").id, job.id);
+    const refresh = () => app.request("https://game.example/api/player-state", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ progressToken: token }) }).then(response => response.json());
+    const hidden = await refresh();
+    assert.equal(JSON.stringify(hidden).includes("/regenerated-private.wav"), false);
+    assert.equal(JSON.stringify(hidden).includes("未公開の台本fixture928471"), false);
+    radio.record.playbackCond = "";
+    const restored = await refresh();
+    assert.equal(restored.playerState.visibleDeviceState.radioItems.find(item => item.contentId === radio.publicId).audioUrl, "/regenerated-private.wav");
+    assert.equal(restored.playerState.progressToken, token);
+  } finally {
+    Object.assign(workerScenario, original);
+    delete scenarioHookHandlers.audio_probe;
+    projectGeneratedAudioProviders.splice(projectGeneratedAudioProviders.indexOf(provider), 1);
+  }
 });
 
 test("browserモードはDBを使わず署名済み進行トークンと差分履歴で進行する", async () => {

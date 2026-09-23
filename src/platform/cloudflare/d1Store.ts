@@ -348,6 +348,7 @@ export class D1Store implements AppStore {
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND last_mutation_id = ?)
        ON CONFLICT(player_id, audio_id) DO UPDATE SET
+         id = excluded.id, created_at = excluded.created_at,
          provider = excluded.provider, external_job_id = excluded.external_job_id,
          input_hash = excluded.input_hash, input_text = excluded.input_text, output_key = excluded.output_key,
          status = excluded.status, error_code = excluded.error_code, updated_at = excluded.updated_at,
@@ -603,6 +604,7 @@ export class D1Store implements AppStore {
         status, error_code, created_at, updated_at, completed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(player_id, audio_id) DO UPDATE SET
+         id = excluded.id, created_at = excluded.created_at,
          provider = excluded.provider,
          external_job_id = excluded.external_job_id,
          input_hash = excluded.input_hash,
@@ -626,8 +628,16 @@ export class D1Store implements AppStore {
 
   async updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob) {
     const result = await this.db.prepare(`UPDATE generated_audio_jobs SET external_job_id = ?, input_text = ?, output_key = ?, status = ?, error_code = ?, updated_at = ?, completed_at = ?
-      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ?`)
+      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ? AND status IN ('queued', 'running')`)
       .bind(job.externalJobId,job.inputText,job.outputKey,job.status,job.errorCode,nowIso(),job.completedAt,playerId,job.audioId,job.id,job.inputHash,job.provider).run();
+    return (result.meta.changes ?? 0) === 1;
+  }
+
+  async replaceGeneratedAudioJob(playerId: string, expectedId: string, job: GeneratedAudioJob) {
+    const result = await this.db.prepare(`UPDATE generated_audio_jobs SET id = ?, created_at = ?, updated_at = ?,
+      external_job_id = NULL, output_key = NULL, status = 'queued', error_code = NULL, completed_at = NULL
+      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ? AND status != 'ready'`)
+      .bind(job.id, job.createdAt, nowIso(), playerId, job.audioId, expectedId, job.inputHash, job.provider).run();
     return (result.meta.changes ?? 0) === 1;
   }
 

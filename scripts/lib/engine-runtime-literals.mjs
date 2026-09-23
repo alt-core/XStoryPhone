@@ -29,7 +29,7 @@ export function engineRuntimeLiterals(root, files) {
 }
 
 // 構造値と素材URLだけが免除候補。本文・答えや、未知の作品recordは免除しない。
-const structuralFields = new Set(["id", "publicId", "contentId", "talkId", "appId", "attachmentId", "genAudioId", "kind", "type", "mediaKind", "eventId", "imageUrl", "audioUrl", "videoUrl", "posterUrl", "thumbnailUrl", "assetUrl"]);
+const structuralFields = new Set(["id", "publicId", "contentId", "talkId", "appId", "attachmentId", "genAudioId", "kind", "type", "mediaKind", "eventId", "imageUrl", "audioUrl", "videoUrl", "posterUrl", "thumbnailUrl", "assetUrl", "asset"]);
 export function privateTextLeaves(value, key = "") {
   if (typeof value === "string") return structuralFields.has(key) ? [] : [value];
   if (Array.isArray(value)) return value.flatMap(item => privateTextLeaves(item, key));

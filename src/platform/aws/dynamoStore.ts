@@ -850,8 +850,21 @@ export class DynamoStore implements AppStore {
     try {
       await this.transport.execute("PutItem", {
         TableName: this.tableName, Item: item({ PK: playerPk(playerId), SK: `AUDIO#${job.audioId}`, entityType: "AUDIO", ...job, updatedAt: nowIso() }),
-        ConditionExpression: "id = :id AND inputHash = :hash AND provider = :provider",
-        ExpressionAttributeValues: item({ ":id": job.id, ":hash": job.inputHash, ":provider": job.provider })
+        ConditionExpression: "id = :id AND inputHash = :hash AND provider = :provider AND #status IN (:queued, :running)",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: item({ ":id": job.id, ":hash": job.inputHash, ":provider": job.provider, ":queued": "queued", ":running": "running" })
+      });
+      return true;
+    } catch (error) { if (conditionalFailure(error)) return false; throw error; }
+  }
+
+  async replaceGeneratedAudioJob(playerId: string, expectedId: string, job: GeneratedAudioJob) {
+    try {
+      await this.transport.execute("PutItem", {
+        TableName: this.tableName, Item: item({ PK: playerPk(playerId), SK: `AUDIO#${job.audioId}`, entityType: "AUDIO", ...job, updatedAt: nowIso() }),
+        ConditionExpression: "id = :id AND inputHash = :hash AND provider = :provider AND #status <> :ready",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: item({ ":id": expectedId, ":hash": job.inputHash, ":provider": job.provider, ":ready": "ready" })
       });
       return true;
     } catch (error) { if (conditionalFailure(error)) return false; throw error; }

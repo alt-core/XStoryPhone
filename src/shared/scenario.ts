@@ -270,6 +270,7 @@ export type GeneratedAudioDefinition = PartOwned & {
   title: string;
   provider: string;
   staticUrl: string;
+  fallbackAttachmentId?: string;
 };
 
 export type PublicGeneratedAudioState = {

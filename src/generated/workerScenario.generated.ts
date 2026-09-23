@@ -3,8 +3,8 @@ import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
   "revision": "902fc6d07867e51d",
-  "clientRevision": "client_8a2baa6cc9e2f3e9",
-  "transcriptRevision": "transcript_ced6cb28a4ade7c7",
+  "clientRevision": "client_1641225dc78de01c",
+  "transcriptRevision": "transcript_7272ca0cce8e2fc9",
   "playerMode": "browser",
   "project": {
     "id": "demo",

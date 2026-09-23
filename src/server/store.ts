@@ -138,6 +138,7 @@ export type StoredPlayerState = {
   incomingCallId: string | null;
   completedIncomingCallIds: string[];
   browserScheduledEvents: BrowserScheduledEvent[];
+  generatedAudioRequests: Record<string, string>;
 };
 
 export type PlayerRecord = {
@@ -362,6 +363,7 @@ export interface AppStore {
 
   generatedAudioJob(playerId: string, audioId: string): Promise<GeneratedAudioJob | null>;
   saveGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<void>;
+  replaceGeneratedAudioJob(playerId: string, expectedId: string, job: GeneratedAudioJob): Promise<boolean>;
   updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob): Promise<boolean>;
   generatedAudioJobs(playerId: string): Promise<GeneratedAudioJob[]>;
 
@@ -624,7 +626,8 @@ export function normalizeStoredState(value: StoredPlayerState): StoredPlayerStat
     completedIncomingCallIds: Array.isArray(value.completedIncomingCallIds)
       ? [...new Set(value.completedIncomingCallIds.filter((id): id is string => typeof id === "string"))]
       : [],
-    browserScheduledEvents: value.browserScheduledEvents ?? []
+    browserScheduledEvents: value.browserScheduledEvents ?? [],
+    generatedAudioRequests: value.generatedAudioRequests ?? {}
   };
 }
 
@@ -656,7 +659,8 @@ export function copyStoredPlayerState(state: StoredPlayerState): StoredPlayerSta
     talkReadCursors: { ...state.talkReadCursors },
     incomingCallId: state.incomingCallId,
     completedIncomingCallIds: [...state.completedIncomingCallIds],
-    browserScheduledEvents: state.browserScheduledEvents.map((event) => ({ ...event, fields: { ...event.fields } }))
+    browserScheduledEvents: state.browserScheduledEvents.map((event) => ({ ...event, fields: { ...event.fields } })),
+    generatedAudioRequests: { ...state.generatedAudioRequests }
   };
 }
 

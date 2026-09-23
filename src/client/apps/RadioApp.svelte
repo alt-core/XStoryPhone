@@ -46,6 +46,7 @@
   export let playbackFocusRequestId = 0;
   export let onStartPlayback: (request: RadioPlaybackStartRequest) => Promise<boolean> | boolean = () => false;
   export let onStopPlayback: (item?: RadioEpisodeItem) => void = () => {};
+  export let onRefresh: () => Promise<void> = async () => {};
   export let onSubmitRadioForm: (formId: string, fields: Record<string, string>) => Promise<RadioFormSubmitResult> = async () => ({
     ok: false,
     error: "unavailable",
@@ -66,6 +67,8 @@
   let lastAppliedFocusContentId = "";
   let lastAppliedFocusContentRequestId = focusContentRequestId;
   let lastAutoplayRequestId = 0;
+  let pendingAutoplayItemId = "";
+  let refreshingAudio = false;
   let lastAppliedPlaybackRequestId = 0;
   let lastAppliedPlaybackFocusRequestId = 0;
   let preloadDurationMs = 0;
@@ -98,6 +101,7 @@
   $: broadcastWaiting = Boolean(
     selectedItem && !selectedItem.corrupted && !playbackDisabledLabel && itemHasPendingGeneratedAudio(selectedItem)
   );
+  $: broadcastFailed = Boolean(selectedItem && !selectedItem.corrupted && !playbackDisabledLabel && itemHasFailedGeneratedAudio(selectedItem));
   $: playbackBlockedReason = playbackDisabledLabel || (broadcastWaiting ? broadcastWaitingTitle : "");
   $: playbackBlocked = Boolean(playbackBlockedReason);
   $: hasPlaybackSegments = selectedPlaybackSegments.length > 0;
@@ -159,6 +163,14 @@
       void autoplayContent(autoplayContentId);
     }
   }
+  // 選択直後のselectedItemはまだ旧番組なので、取消は即時更新されるIDで判定する。
+  $: if (pendingAutoplayItemId && (selectedItemId !== pendingAutoplayItemId || playbackItemId === pendingAutoplayItemId || playbackLoadingItemId === pendingAutoplayItemId)) {
+    pendingAutoplayItemId = "";
+  }
+  $: if (pendingAutoplayItemId && selectedItem?.id === pendingAutoplayItemId && !playbackBlocked && hasPlaybackSegments && !isSelectedLoading && !isSelectedPlaying) {
+    pendingAutoplayItemId = "";
+    void startSelectedItemPlayback();
+  }
 
   onMount(() => {
     window.addEventListener("xstoryphone:stop-audio-playback", handleGlobalAudioStop);
@@ -171,6 +183,7 @@
   });
 
   onDestroy(() => {
+    pendingAutoplayItemId = "";
     preloadToken += 1;
     onModalOpenChange(false);
   });
@@ -232,6 +245,7 @@
   }
 
   function stopPlayback() {
+    pendingAutoplayItemId = "";
     onStopPlayback(selectedItem);
     playlistLoading = false;
   }
@@ -272,7 +286,17 @@
   }
 
   function itemHasPendingGeneratedAudio(item: RadioEpisodeItem) {
-    return Boolean(item.audioSegments?.some((segment) => segment.kind === "generated" && !segment.audioUrl));
+    return Boolean((item.generatedAudio && !item.audioUrl && item.generatedAudio.status !== "failed")
+      || item.audioSegments?.some(segment => segment.kind === "generated" && !segment.audioUrl && segment.generatedAudio?.status !== "failed"));
+  }
+  function itemHasFailedGeneratedAudio(item: RadioEpisodeItem) {
+    return Boolean((item.generatedAudio?.status === "failed" && !item.audioUrl)
+      || item.audioSegments?.some(segment => segment.kind === "generated" && !segment.audioUrl && segment.generatedAudio?.status === "failed"));
+  }
+  async function refreshAudioState() {
+    if (refreshingAudio) return;
+    refreshingAudio = true;
+    try { await onRefresh(); } finally { refreshingAudio = false; }
   }
 
   async function preloadSelectedPlayback() {
@@ -342,6 +366,7 @@
   }
 
   async function autoplayContent(contentId: string) {
+    pendingAutoplayItemId = "";
     const item = items.find((entry) => (entry.contentId ?? entry.id) === contentId);
     if (!item || item.corrupted) {
       return;
@@ -349,11 +374,13 @@
 
     closeBroadcastModal();
     selectedItemId = item.id;
+    if (item.playbackDisabledLabel?.trim() || (!itemHasPendingGeneratedAudio(item) && !playbackSegmentsForItem(item).length)) return;
+    pendingAutoplayItemId = item.id;
+    // 選択更新を確定してから再生する。待機中の再試行は上のリアクティブ処理が担う。
     await tick();
-
-    if (selectedItem?.id === item.id && playbackItemId !== item.id && playbackLoadingItemId !== item.id) {
-      await startSelectedItemPlayback();
-    }
+    if (pendingAutoplayItemId !== item.id || selectedItem?.id !== item.id || broadcastWaiting || isSelectedLoading) return;
+    pendingAutoplayItemId = "";
+    if (playbackItemId !== item.id && playbackLoadingItemId !== item.id) await startSelectedItemPlayback();
   }
 
   function openBroadcastModal() {
@@ -494,13 +521,16 @@
             {/if}
           </div>
         </div>
-        {#if broadcastWaiting}
+        {#if broadcastWaiting || broadcastFailed}
           <div class="broadcast-waiting" role="status">
             <div class="broadcast-waiting-head">
               <TriangleAlert size={24} strokeWidth={2.2} aria-hidden="true" />
-              <strong>{broadcastWaitingTitle}</strong>
+              <strong>{broadcastFailed ? "音声を利用できません" : broadcastWaitingTitle}</strong>
             </div>
-            <p>{broadcastWaitingBody}</p>
+            <p>{broadcastFailed ? "音声の準備に失敗しました。" : broadcastWaitingBody}</p>
+            {#if broadcastFailed}
+              <button type="button" disabled={refreshingAudio} on:click={refreshAudioState}>{refreshingAudio ? "確認中…" : "もう一度確認"}</button>
+            {/if}
           </div>
         {:else}
           <div class="transport-stage" class:playing={isSelectedPlaying}>

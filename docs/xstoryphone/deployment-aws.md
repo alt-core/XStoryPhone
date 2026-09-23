@@ -86,7 +86,7 @@ ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 
 実プレイ入力を分岐監修へ保存する場合だけ、デプロイ時に `PLAYER_INPUT_LOGGING=true` を設定してください。未設定または `false` の場合は保存しません。入力本文をCloudWatch Logsへ出力する処理はありません。
 
-browserモードでは、これを無効にしている限り、通常プレイによるDynamoDB書込みはありません。DynamoDB自体は運営レビュー画面の試行入力と監修指示に使うため残ります。
+browserモードでは、入力ログと外部生成音声を使わなければ通常プレイによるDynamoDB書込みはありません。外部生成音声を準備する作品では、非公開の元台本を含む補助jobを保存します。DynamoDB自体は運営レビュー画面の試行入力と監修指示にも使います。
 
 ```sh
 export PLAYER_INPUT_LOGGING=true

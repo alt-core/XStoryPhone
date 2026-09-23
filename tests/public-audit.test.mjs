@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -87,4 +87,35 @@ test("公開呼出しevent名と非公開制作定数を混同しない", () => 
     assert.equal(privateResult.status, 1);
     assert.match(privateResult.stderr, /未到達シナリオ値/u);
   } finally { rmSync(buildDir, { recursive: true, force: true }); }
+});
+
+test("添付の標準素材URLは許可し、非公開素材や本文と重なるURLは配布監査で拒否する", () => {
+  const directory = mkdtempSync(join(tmpdir(), "xstoryphone-attachment-audit-"));
+  try {
+    const scenarioDir = join(directory, "scenario");
+    const buildDir = join(directory, "build");
+    cpSync("scenario/demo", scenarioDir, { recursive: true });
+    mkdirSync(buildDir);
+    const attachmentFile = join(scenarioDir, "authoring/attachments.tsv");
+    const original = readFileSync(attachmentFile, "utf8");
+    assert.ok(original.includes("/demo/album/rainy-window.webp"));
+    for (const { asset, body, status } of [
+      { asset: "/system/audio-only-video-thumbnail.png", status: 0 },
+      { asset: "/demo/private-attachment.png", status: 1 },
+      { asset: "/system/audio-only-video-thumbnail.png", body: true, status: 1 }
+    ]) {
+      let source = original.replace("/demo/album/rainy-window.webp", asset);
+      if (body) source = source.replace("鍵付き添付を開封できました。", asset);
+      writeFileSync(attachmentFile, source);
+      writeFileSync(join(buildDir, "fixture.js"), `export const image = ${JSON.stringify(asset)};`);
+      const result = spawnSync(process.execPath, [clientAuditScript, buildDir], {
+        env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: scenarioDir }, encoding: "utf8"
+      });
+      assert.equal(result.status, status, result.stderr);
+      if (status === 1) {
+        assert.match(result.stderr, /未到達シナリオ値がclient buildへ混入/u);
+        assert.ok(result.stderr.includes(asset), result.stderr);
+      }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -8,6 +8,7 @@ import { runScenarioHooks } from "../worker/services/scenarioHooks.ts";
 import { createPartSession } from "../worker/partSession.ts";
 import { createGeneratedAudioRuntime } from "../worker/services/generatedAudioRuntime.ts";
 import { registerTalkBranchReviewRoutes } from "../worker/admin/talkBranchReviewRoutes.ts";
+import { registerGeneratedAudioRoutes } from "../worker/admin/generatedAudioRoutes.ts";
 import { registerProjectRoutes } from "../project/routes.ts";
 import { createPlayerOperations } from "./playerApp.ts";
 import { parseAllowedOrigins } from "./cors.ts";
@@ -66,6 +67,7 @@ export function createApp(dependencies: AppDependencies) {
     });
   }
   registerTalkBranchReviewRoutes(outer);
+  registerGeneratedAudioRoutes(outer);
   registerProjectRoutes(outer);
   return outer;
 }

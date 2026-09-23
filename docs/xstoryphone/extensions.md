@@ -24,7 +24,26 @@ const myTtsProvider: GeneratedAudioProvider = {
 export const projectGeneratedAudioProviders = [myTtsProvider];
 ```
 
-次に `gen_audio` シートの `provider` を同じIDへ変更します。serverモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserモードは外部生成ジョブを保存せず、`staticUrl` の音声だけを使います。
+次に `gen_audio` シートの `provider` を同じIDへ変更します。server/browserモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserでも外部生成を使う場合だけ、補助jobをDBへ保存します。進行と履歴の保存先は変えず、外部生成を準備していない作品や固定音声だけのbrowser作品ではjob DBへアクセスしません。staticモードでは外部生成を行わず、固定音声を使います。
+
+`enqueue`には`jobId`と`createdAt`、`reconcile`のjobにも`createdAt`が渡ります。providerは有限の通信timeoutと短い再試行を持ち、再試行後に受け付けられなければfailedを返してください。待機の終了期限は作品側で決めます。成果物の完成を確認できるならreadyを優先し、確認不能のまま期限を超えた場合はfailedとします。queued/runningでは、次に照合できる外部job ID等を返してください。外部APIの応答本文や秘密値をerrorCodeへ入れず、短い識別コードにします。
+
+`gen_audio.fallback`へaudio attachment IDを指定すると、生成に失敗した場合だけ代替音声を使います。任意列であり、未指定なら失敗を表示します。素材URLは定義へコピーせず、利用時に取得済みpartから解決します。音声完了が進行条件になる作品では、代替音声か別の進行経路を用意してください。
+
+準備中は通常の状態取得で照合し、約15秒後を次回取得の目安にします。ブラウザー休止や通信失敗を含む厳密な時刻保証ではありません。明示的な自動再生は同じ画面・対象で準備が完了するまで待ち、対象変更・停止・画面離脱で取り消します。準備完了だけで未指示の音声を再生しません。
+
+### 運営による生成の再試行
+
+jobはplayer IDと音声IDごとに現在の1件だけを保持します。元台本は再生成用に非公開の`inputText`へ保存し、プレイヤー応答やbrowser tokenには含めません。保存期間と削除方法は運営側で決めてください。browserの保存消去ではサーバーjobや外部成果物を自動削除しません。公開前のプライバシーポリシーにも実際の保存方針を反映してください。
+
+運営用スクリプトから、`ADMIN_REVIEW_SECRET`をBearerに指定して次を使えます。静的な公開先ではなくAPIのoriginへ接続します。新しい管理画面はありません。
+
+1. `GET /api/admin/generated-audio/{playerId}/{audioId}`で現在jobを確認します。audioIdはシナリオのIDです。応答は元台本を含むため非公開資料として扱います。
+2. 再生成が必要なら、`POST /api/admin/generated-audio/{playerId}/{audioId}/retry`へ`{"expectedJobId":"確認したjobのid","confirm":true}`を送ります。外部生成費用が発生し得ます。
+
+確認後にjobが置き換わった、すでにreadyになった、元台本がない場合は409で再投入しません。再試行は同じ依頼を新しいjob ID・作成日時で置き換え、現在のproviderへ送ります。外部受付直後の通信断等による二重生成までは防ぎません。再送する前にGETで現在のjobを確認してください。元のhookやフォームを再実行する必要はありません。
+
+進行との照合には入力由来のhashを使い、job IDやURLが変わっても同じ依頼なら受け入れます。browserへは候補台本の照合に使えないよう既存の署名鍵によるHMACを保持します。DBが別入力のjobへ置き換わっていれば、その音声は使わず代替または失敗表示にします。同じ依頼の手動復旧は次の状態取得で反映できます。ラジオの失敗表示にある「もう一度確認」は状態を再取得するだけで、生成の再投入は行いません。memoryでも進行を消さずに使えます。すでに再生を始めた代替音声へは割り込みません。
 
 ラジオ投稿などの入力を作品固有hookで審査するときは、受理できない入力を`context.form.deny("message_rejected")`で返せます。成立した処理をゲームオーバー演出へ進める場合は`context.effectSequence.gameOver()`、生成音声を準備する受理経路は`context.genAudio.prepare()`を使います。単発の全画面演出には`context.effect.noise()`、`flash(options?)`、`blackout(options?)`を利用できます。フラッシュと暗転のoptionsには`fadeInMs`、`holdMs`、`fadeOutMs`、`intensity`を指定でき、フラッシュだけは6桁HEXの`color`も指定できます。フォームUIと共通APIを保ったまま、LLM審査や外部で生成した音声を使う処理だけを作品側へ置けます。
 

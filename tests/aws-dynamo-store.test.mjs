@@ -344,6 +344,18 @@ test("予定イベントclaimはqueuedまたは期限切れleaseだけを獲得�
   assert.equal(await new DynamoStore(rejected.transport, "table").claimScheduledEvent("player-1", instance), false);
 });
 
+test("DynamoDBの音声照会更新と明示再試行は世代と状態を条件にする", async () => {
+  const fake = fakeTransport();
+  const store = new DynamoStore(fake.transport, "table");
+  const job = { id: "new", audioId: "voice", inputHash: "input", provider: "fixture", status: "running" };
+  assert.equal(await store.updateGeneratedAudioJob("player", job), true);
+  assert.match(fake.calls[0].input.ConditionExpression, /#status IN/u);
+  assert.equal(await store.replaceGeneratedAudioJob("player", "old", job), true);
+  const replace = fake.calls[1].input;
+  assert.match(replace.ConditionExpression, /#status <> :ready/u);
+  assert.equal(dynamoDocument.valueFromItem(replace.ExpressionAttributeValues)[":id"], "old");
+});
+
 test("DynamoDB版hook LLM cacheは同じplayer partitionとTTL属性を使う", async () => {
   const fake = fakeTransport();
   const store = new DynamoStore(fake.transport, "table");

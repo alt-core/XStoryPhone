@@ -8,6 +8,7 @@ import { render } from "svelte/server";
 import ts from "typescript";
 import { pathnameKey, resolveResourceUrl, resolveStaticUrl } from "../src/shared/deploymentUrls.ts";
 import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
+import { noticeTextSegments } from "../src/client/system/noticeText.ts";
 
 const staticBase = "/works/story/";
 const staticOrigin = "https://site.example.test";
@@ -31,6 +32,7 @@ function renderComponent(relative, props = {}, resolveUrl = resourceUrl) {
       if (name === "svelte") return { onDestroy() {}, onMount() {}, tick: async () => {} };
       if (name === "@lucide/svelte") return new Proxy({}, { get: () => componentStub });
       if (name.endsWith("/resourceUrls")) return { resourceUrl: resolveUrl, staticUrl };
+      if (name.endsWith("/noticeText")) return { noticeTextSegments };
       if (name.endsWith("/audioEngine")) return { stopAudioPlayback() {} };
       if (name.endsWith("/appCatalog")) return { appCatalog: [] };
       if (name.endsWith("/corruptionNoise")) return { corruptionNoiseStyle: () => "" };
@@ -42,6 +44,14 @@ function renderComponent(relative, props = {}, resolveUrl = resourceUrl) {
   vm.runInContext(compiled, sandbox);
   return render(sandbox.exports.default, { props }).body;
 }
+
+test("開始告知は実Svelte描画でもHTMLを実行せず、対応した強調だけを表示する", () => {
+  const html = renderComponent("system/StartConfirmationScreen.svelte", { notices: '<img src=x onerror=alert(1)>\n**確認事項**\n**未閉鎖' });
+  assert.doesNotMatch(html, /<img src=x/u);
+  assert.match(html, /&lt;img/u);
+  assert.match(html, /<strong>確認事項<\/strong>/u);
+  assert.match(html, /\*\*未閉鎖/u);
+});
 
 for (const [component, props, expected] of [
   ["system/AttachmentImageFrame.svelte", { src: "/media/attachment.webp" }, "/works/story/media/attachment.webp"],

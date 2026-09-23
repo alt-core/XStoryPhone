@@ -882,8 +882,9 @@ export function loadAndValidateScenario(overrides = {}) {
   validateUniqueItems("generatedAudio", generatedAudio, errors);
   const generatedAudioIds = new Set(generatedAudio.map((item) => item.id));
   for (const audio of generatedAudio) {
-    validateObjectKeys(`generatedAudio ${audio?.id ?? ""}`, audio, ["id", "title", "provider"], errors);
+    validateObjectKeys(`generatedAudio ${audio?.id ?? ""}`, audio, ["id", "title", "provider", "fallbackAttachmentId"], errors);
     if (!idPattern.test(audio?.id ?? "") || !idPattern.test(audio?.provider ?? "") || !audio?.title) errors.push(`generatedAudio が不正です: ${audio?.id ?? ""}`);
+    if (audio.fallbackAttachmentId && !source.attachments?.some(item => item.id === audio.fallbackAttachmentId && item.type === "audio")) errors.push(`gen_audio ${audio.id}: fallbackは定義済みのaudio attachment IDを指定してください。`);
   }
   const formIds = new Set();
   for (const content of contents) {

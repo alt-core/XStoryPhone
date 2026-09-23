@@ -38,7 +38,7 @@ class LocalStatement {
 }
 
 class LocalD1 {
-  constructor() {
+  constructor({ audioMigration = true } = {}) {
     this.lastBatchSql = [];
     this.database = new sqlite.DatabaseSync(":memory:");
     this.database.exec(readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8"));
@@ -49,6 +49,7 @@ class LocalD1 {
     this.database.exec(readFileSync(new URL("../migrations/0006_hook_llm_results.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0007_generated_audio_intent.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0008_player_session_generation.sql", import.meta.url), "utf8"));
+    if (audioMigration) this.database.exec(readFileSync(new URL("../migrations/0009_generated_audio_browser.sql", import.meta.url), "utf8"));
   }
 
   prepare(sql) {
@@ -69,6 +70,39 @@ class LocalD1 {
     }
   }
 }
+
+reviewTest("補助音声migrationは既存jobの台本とindex・一意性を維持する", async () => {
+  const local = new LocalD1({ audioMigration: false });
+  const store = new D1Store(local);
+  const session = await store.createPasscodeSession("1234", null, []);
+  const job = { id: "existing", audioId: "voice", provider: "fixture", externalJobId: "external", inputHash: "hash", inputText: "保存済み台本", outputKey: "/ready.wav", status: "ready", errorCode: null, createdAt: "2020-01-01", completedAt: "2020-01-02" };
+  await store.saveGeneratedAudioJob(session.playerId, job);
+  local.database.exec(readFileSync(new URL("../migrations/0009_generated_audio_browser.sql", import.meta.url), "utf8"));
+  assert.deepEqual(await store.generatedAudioJob(session.playerId, "voice"), job);
+  assert.ok(local.database.prepare("PRAGMA index_list(generated_audio_jobs)").all().some(row => row.name === "idx_generated_audio_jobs_player"));
+  assert.equal(local.database.prepare("PRAGMA foreign_key_list(generated_audio_jobs)").all().length, 0);
+});
+
+reviewTest("D1はplayer行なしの補助音声jobを保存し、明示再試行と遅い応答を区別する", async () => {
+  const local = new LocalD1();
+  local.database.exec("PRAGMA foreign_keys=ON");
+  const store = new D1Store(local);
+  const job = { id: "old", audioId: "voice", provider: "fixture", externalJobId: "external", inputHash: "hash", inputText: "保持する台本", outputKey: null, status: "running", errorCode: null, createdAt: "2020-01-01", completedAt: null };
+  await store.saveGeneratedAudioJob("browser-player", job);
+  assert.equal(local.database.prepare("SELECT COUNT(*) AS n FROM players").get().n, 0);
+  const next = { ...job, id: "new", createdAt: "2026-09-23", status: "queued", externalJobId: null };
+  assert.equal(await store.replaceGeneratedAudioJob("browser-player", "old", next), true);
+  assert.equal(await store.updateGeneratedAudioJob("browser-player", { ...job, status: "ready", outputKey: "/old.wav" }), false);
+  assert.equal(await store.updateGeneratedAudioJob("browser-player", { ...next, status: "ready", outputKey: "/new.wav" }), true);
+  assert.equal(await store.updateGeneratedAudioJob("browser-player", { ...next, status: "running" }), false);
+  const ready = await store.generatedAudioJob("browser-player", "voice");
+  assert.equal(ready.outputKey, "/new.wav");
+  assert.equal(ready.createdAt, next.createdAt);
+  assert.equal(ready.inputText, job.inputText);
+  assert.equal(await store.replaceGeneratedAudioJob("browser-player", "new", { ...next, id: "again" }), false);
+  await store.saveGeneratedAudioJob("browser-player", { ...next, id: "replacement", createdAt: "2027-01-01" });
+  assert.equal((await store.generatedAudioJob("browser-player", "voice")).id, "replacement");
+});
 
 reviewTest("D1の開始失敗・PIN・reset・再開始は同じ初期化を使い、旧sessionと遅着を隔離する", async () => {
   const original = structuredClone(workerScenario);

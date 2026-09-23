@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { projectGeneratedAudioProviders } from "../src/project/generatedAudioProviders.ts";
 import { workerScenario } from "../src/worker/scenario.ts";
-import { publicGeneratedAudioStates } from "../src/worker/services/generatedAudio.ts";
+import { publicGeneratedAudioStates, requestHash } from "../src/worker/services/generatedAudio.ts";
 import { reconcileGeneratedAudio } from "../src/worker/services/generatedAudio.ts";
 import { createStructuredOutputProvider } from "../src/worker/providers/structuredOutput.ts";
 
@@ -24,7 +24,8 @@ test("固定音声のreadyジョブは現行URLへ追従し、外部providerの�
   try {
     for (const url of [fixed.staticUrl, "/updated-fixed.wav"]) {
       fixed.staticUrl = url;
-      const states = await publicGeneratedAudioStates(store, "player-1");
+      const requests = Object.fromEntries(await Promise.all(jobs.map(async job => [workerScenario.generatedAudio.find(item => item.id === job.audioId).publicId, await requestHash("player-1", job)])));
+      const states = await publicGeneratedAudioStates(store, "player-1", requests);
       assert.equal(states.find((item) => item.id === fixed.publicId).publicAudioUrl, url);
       assert.equal(states.find((item) => item.id === fixed.publicId).status, "ready");
       assert.equal(states.find((item) => item.id === external.publicId).publicAudioUrl, jobs[1].outputKey);
@@ -78,7 +79,7 @@ test("生成音声providerの照会失敗は保存済み状態を保ち、Player
   const originalConsoleError = console.error;
   console.error = () => {};
   try {
-    const states = await publicGeneratedAudioStates(store, "player-1");
+    const states = await publicGeneratedAudioStates(store, "player-1", { [definition.publicId]: await requestHash("player-1", job) });
     assert.equal(states.find((item) => item.id === definition.publicId)?.status, "running");
     assert.deepEqual(saved, []);
     assert.equal(reads, 1);
@@ -113,7 +114,7 @@ test("commit後に未dispatchの生成音声intentが残っても次のreconcile
     await reconcileGeneratedAudio(store, "player-1");
     assert.equal(enqueued, 1);
     assert.equal(saved.externalJobId, "external");
-    assert.equal(saved.inputText, null);
+    assert.equal(saved.inputText, "復旧入力", "運営による同じ依頼の再生成に備えて非公開jobへ保持する");
   } finally {
     projectGeneratedAudioProviders.splice(projectGeneratedAudioProviders.indexOf(provider), 1);
     workerScenario.generatedAudio.splice(workerScenario.generatedAudio.indexOf(definition), 1);
@@ -126,7 +127,7 @@ test("生成音声定義がない作品ではjobを読み込まない", async ()
   try {
     const states = await publicGeneratedAudioStates({
       async generatedAudioJobs() { reads += 1; return []; }
-    }, "player-1");
+    }, "player-1", {});
     assert.deepEqual(states, []);
     assert.equal(reads, 0);
   } finally {

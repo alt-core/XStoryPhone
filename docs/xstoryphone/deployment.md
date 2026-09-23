@@ -38,6 +38,8 @@ npm run db:migrate:remote:prod
 
 既存D1を更新する場合も、新しいWorkerを配備する前にmigrationを適用してください。serverモードの開始・reset処理には`0008_player_session_generation.sql`の列が必要で、未適用のままでは認証・状態取得が失敗します。デプロイスクリプトはmigrationを自動実行しません。
 
+browserモードで外部生成音声を使う場合は、`0009_generated_audio_browser.sql`も必要です。既存jobを保持したまま、player行を必要としない補助保存へ変更します。適用前に対象DBを確認してバックアップしてください。
+
 ## 3. secretと任意設定を登録する
 
 レビュー画面のsecretを環境ごとに登録します。prodの例は次のとおりです。

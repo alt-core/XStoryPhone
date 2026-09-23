@@ -74,6 +74,22 @@ test("初期UIの追加設定は公開指定を要求し、作品定数として
   }
 }));
 
+test("生成音声fallbackは音声添付IDだけを受理し、素材URLを定義へ複製しない", () => withAuthoring(({ edit, invoke }) => {
+  edit("gen_audio", (rows, headers) => {
+    if (!headers.includes("fallback")) headers.push("fallback");
+    rows[0].fallback = "fallback_fixture";
+  });
+  edit("attachments", rows => rows.push({ id: "fallback_fixture", type: "audio", asset: "/fixture/fallback-private.wav" }));
+  const accepted = invoke('console.log(JSON.stringify(result.worker.generatedAudio[0]));');
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(accepted.stdout).fallbackAttachmentId, "fallback_fixture");
+  assert.equal(accepted.stdout.includes("fallback-private.wav"), false);
+  edit("attachments", rows => { rows.find(row => row.id === "fallback_fixture").type = "image"; });
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /fallback.*audio attachment/u);
+}));
+
 test("親アプリ修復の定数は新しい列なしでboolean設定へ変換され、誤記を拒否する", () => withAuthoring(({ edit, invoke }) => {
   const defaults = invoke('console.log(JSON.stringify([result.worker.project.repairParentApp, result.worker.project.talkClock]));');
   assert.equal(defaults.status, 0, defaults.stderr);

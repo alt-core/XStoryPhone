@@ -688,7 +688,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       talkReadCursors: {},
       incomingCallId: null,
       completedIncomingCallIds: [],
-      browserScheduledEvents: []
+      browserScheduledEvents: [],
+      generatedAudioRequests: {}
     };
   }
   function revealTalkMessages(state: StoredPlayerState, talkId: string, messages: readonly {
@@ -1034,6 +1035,9 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     return { ...shared, programTitle: content.repairLabel ?? "□□□□□□ □□□□□" };
   }
   function generatedAudioUrl(state: PublicGeneratedAudioState | undefined) {
+    const definition = state?.status === "failed" ? workerScenario.generatedAudio.find(item => item.publicId === state.id) : undefined;
+    if (definition?.fallbackAttachmentId && !workerScenario.attachments.some(item => item.id === definition.fallbackAttachmentId))
+      throw new Error(`gen_audio ${definition.id}: fallbackの素材が未取得です: ${definition.fallbackAttachmentId}`);
     return state?.publicAudioUrl || state?.fallbackAudioUrl || "";
   }
   function resolveGeneratedAudioRecord(record: Record<string, unknown>, stateById: ReadonlyMap<string, PublicGeneratedAudioState>) {
@@ -1057,9 +1061,13 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       : undefined;
     const firstSegmentAudioUrl = audioSegments?.find((segment) => (segment && typeof segment === "object" && !Array.isArray(segment) && typeof segment.audioUrl === "string" && segment.audioUrl))?.audioUrl;
     const currentAudioUrl = typeof record.audioUrl === "string" ? record.audioUrl : "";
-    const resolvedAudioUrl = currentAudioUrl || generatedAudioUrl(generatedAudio) || firstSegmentAudioUrl || "";
+    const fixedProvider = workerScenario.generatedAudio.find(item => item.publicId === generatedAudioId)?.provider === "static";
+    const resolvedAudioUrl = currentAudioUrl && fixedProvider ? currentAudioUrl : generatedAudio
+      ? generatedAudioUrl(generatedAudio) || (generatedAudio.status === "failed" ? currentAudioUrl : "")
+      : currentAudioUrl || firstSegmentAudioUrl || "";
+    const { audioUrl: _sourceAudioUrl, ...withoutAudioUrl } = record;
     return {
-      ...record,
+      ...withoutAudioUrl,
       ...(generatedAudio ? { generatedAudio } : {}),
       ...(audioSegments ? { audioSegments } : {}),
       ...(resolvedAudioUrl ? { audioUrl: resolvedAudioUrl } : {})

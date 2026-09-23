@@ -26,6 +26,7 @@ import { isCompletionScenarioEvent, isCoreClientScenarioEvent } from "../shared/
 import type { LocalPlayerProgress } from "./localProgress.ts";
 import { StaticResourceError } from "../shared/staticAnswer.ts";
 import type { PartSession } from "../worker/partSession.ts";
+import type { GeneratedAudioJob } from "./store.ts";
 export type PlayerOperationInput = {
   hostname: string;
   authorization?: string;
@@ -399,6 +400,16 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       await localProgress?.commit(unchanged);
       return { ok: true, player: unchanged };
     }
+    const generatedAudioJobs: GeneratedAudioJob[] = [];
+    if (!localProgress) for (const effect of generatedAudioEffects) {
+      const definition = runtime.workerScenario.generatedAudio.find(item => item.id === effect.id)!;
+      if (clientProgressMode() && definition.provider === "static") continue;
+      const intent = await audio!.createGeneratedAudioIntent(storeFor(c), player.id, effect.id, effect.inputText);
+      const job = intent ?? await storeFor(c).generatedAudioJob(player.id, effect.id);
+      if (!job) throw new Error("generated_audio_job_missing");
+      reconciled.state.generatedAudioRequests[definition.publicId] = await audio!.requestHash(player.id, job, clientProgressMode() ? browserStateSecret(c) : "");
+      if (intent) generatedAudioJobs.push(intent);
+    }
     if (clientProgressMode()) {
       const next = {
         id: player.id, state: reconciled.state, stateVersion: player.stateVersion + 1, transcriptDeltas: responseAppends
@@ -406,14 +417,15 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       // browserで返せない候補は確定候補へ採らず、直前に確定した予約等を維持する。
       const token = localProgress ? undefined : await encodeBrowserProgress(browserStateSecret(c), runtime.workerScenario.project.id, next);
       await localProgress?.commit(next);
+      for (const job of generatedAudioJobs) await storeFor(c).saveGeneratedAudioJob(player.id, job);
       c.committedPlayer = next;
       c.committedProgressToken = token;
+      await dispatchAudioJobs(c, player.id, generatedAudioJobs);
       return {
         ok: true as const,
         player: next
       };
     }
-    const generatedAudioJobs = (await Promise.all(generatedAudioEffects.map((effect) => (audio!.createGeneratedAudioIntent(storeFor(c), player.id, effect.id, effect.inputText))))).filter((job): job is NonNullable<typeof job> => Boolean(job));
     const storedEffects = {
       schedules: [...new Map([...(mutation.initialSchedules ?? []).map(schedule => ({ type: "queue" as const, ...schedule })), ...scheduleEffects.map((effect) => effect.type === "cancel"
         ? { type: "cancel" as const, id: effect.id }
@@ -429,14 +441,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     if (!(await storeFor(c).savePlayer(player, reconciled.state, appends, storedEffects))) {
       return { ok: false as const };
     }
-    for (const job of generatedAudioJobs) {
-      try {
-        await audio!.dispatchGeneratedAudioIntent(storeFor(c), player.id, job);
-      }
-      catch (error) {
-        console.error("[generated_audio:dispatch]", { audioId: job.audioId, error: error instanceof Error ? error.name : "unknown" });
-      }
-    }
+    await dispatchAudioJobs(c, player.id, generatedAudioJobs);
     return {
       ok: true as const,
       player: {
@@ -446,6 +451,12 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         transcriptDeltas: responseAppends
       }
     };
+  }
+  async function dispatchAudioJobs(c: PlayerOperationContext, playerId: string, jobs: GeneratedAudioJob[]) {
+    for (const job of jobs) {
+      try { await audio!.dispatchGeneratedAudioIntent(storeFor(c), playerId, job); }
+      catch (error) { console.error("[generated_audio:dispatch]", { audioId: job.audioId, error: error instanceof Error ? error.name : "unknown" }); }
+    }
   }
   async function resolvePlayer(c: PlayerOperationContext, applyScheduledEvents = true) {
     if (clientProgressMode()) {
@@ -483,16 +494,18 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
   }
   async function stateJson(c: PlayerOperationContext, player: PlayerRecord, state = player.state, version = player.stateVersion) {
     const projection = parts ? await parts.runtimeFor(state) : runtime;
-    if (clientProgressMode()) {
-      const generatedAudio = projection.workerScenario.generatedAudio.map((definition) => ({
+    const generatedAudio = localProgress ? projection.workerScenario.generatedAudio.map((definition) => ({
         id: definition.publicId,
-        status: "idle" as const,
+        status: definition.provider === "static" ? "idle" as const : "failed" as const,
         requestedAt: null,
         completedAt: null,
         publicAudioUrl: null,
-        fallbackAudioUrl: definition.staticUrl
-      }));
-      const wakeAt = state.browserScheduledEvents[0]?.dueAt ?? null;
+        fallbackAudioUrl: definition.staticUrl || projection.workerScenario.attachments.find(item => item.id === definition.fallbackAttachmentId)?.asset || null
+      })) : await audio!.publicGeneratedAudioStates(storeFor(c), player.id, state.generatedAudioRequests, clientProgressMode() ? browserStateSecret(c) : "", projection.workerScenario);
+    const scheduledWake = clientProgressMode() ? state.browserScheduledEvents[0]?.dueAt ?? null : await storeFor(c).nextScheduledWakeAt(player.id);
+    const audioWake = generatedAudio.some(item => item.status === "queued" || item.status === "running") ? new Date(Date.now() + 15_000).toISOString() : null;
+    const wakeAt = [scheduledWake, audioWake].filter((value): value is string => Boolean(value)).sort()[0] ?? null;
+    if (clientProgressMode()) {
       if (localProgress) {
         return projection.publicPlayerState(state, version, generatedAudio, wakeAt, player.transcriptDeltas ?? []);
       }
@@ -506,10 +519,6 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
           })
       };
     }
-    const [generatedAudio, wakeAt] = await Promise.all([
-      audio!.publicGeneratedAudioStates(storeFor(c), player.id, projection.workerScenario.generatedAudio),
-      storeFor(c).nextScheduledWakeAt(player.id)
-    ]);
     return projection.publicPlayerState(state, version, generatedAudio, wakeAt, player.transcriptDeltas ?? []);
   }
   async function conflict(c: PlayerOperationContext, player: PlayerRecord, applyScheduledEvents = true) {

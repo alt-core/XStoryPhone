@@ -2440,6 +2440,12 @@
     radioPlayback = emptyRadioPlaybackState(radioPlaybackSerial);
   }
 
+  async function refreshRadioAudio() {
+    const token = uiState.sessionToken;
+    const generation = playerOperationGeneration;
+    if (token) await refreshPlayerStateWithRetry(token, "AP-STATE", () => uiState.sessionToken === token && playerOperationGeneration === generation);
+  }
+
   function completeIncomingCall(callId: string) {
     const call = activeIncomingCall;
 
@@ -3813,6 +3819,7 @@
               playbackFocusRequestId={radioPlaybackFocusRequestId}
               onStartPlayback={startRadioPlayback}
               onStopPlayback={stopRadioPlayback}
+              onRefresh={refreshRadioAudio}
               onShareContent={handleRadioShareContent}
               onSubmitRadioForm={handleSubmitRadioForm}
               onContentOpen={(contentId) => void handleContentOpen("radio", contentId)}

@@ -140,6 +140,9 @@ export function validateScenarioParts(worker, { workbook, hookScripts = {} } = {
     if (rule.loadParts?.length) entries.push({label,before,after,loads:rule.loadParts});
   }
   if (worker.chatAuthGate) warnCond(locate("project_constants", "chat_auth.link_sent_cond", "key"), worker.chatAuthGate.linkSentCond, startupParts);
+  for (const audio of worker.generatedAudio) {
+    if (audio.fallbackAttachmentId) needAttachment(locate("gen_audio", audio.id), audio.fallbackAttachmentId, new Set([...startupParts, owner(audio)]));
+  }
   for (const password of worker.lockedContentPasswords) {
     const before = new Set([...startupParts, owner(password)]);
     const after = new Set([...before, ...password.loadParts]);

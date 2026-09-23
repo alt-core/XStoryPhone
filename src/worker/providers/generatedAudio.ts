@@ -7,6 +7,7 @@ export type GeneratedAudioJob = {
   externalJobId: string | null;
   outputKey: string | null;
   status: "queued" | "running" | "ready" | "failed";
+  createdAt: string;
 };
 
 export type GeneratedAudioProviderResult = {
@@ -21,6 +22,8 @@ export type GeneratedAudioProvider = {
   enqueue(input: {
     definition: GeneratedAudioDefinition;
     inputText: string;
+    jobId: string;
+    createdAt: string;
   }): Promise<GeneratedAudioProviderResult>;
   reconcile(input: {
     definition: GeneratedAudioDefinition;

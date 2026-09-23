@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono";
 import type { ServerEnv } from "../../server/store.ts";
 import { decodeReviewCursor } from "../../server/store.ts";
-import { isProductionEnvironment } from "../../server/environment.ts";
+import { authorize } from "./authorization.ts";
 import { talkBranchReviewPageHtml } from "./talkBranchReviewPage.ts";
 import { playerInputReviewPageHtml } from "./playerInputReviewPage.ts";
 import {
@@ -26,42 +26,6 @@ type AppContext = Context<ServerEnv>;
 
 function dependencies(c: AppContext) {
   return c.var.dependencies;
-}
-
-function reviewSecret(c: AppContext) {
-  return dependencies(c).config.adminReviewSecret?.trim() ?? "";
-}
-
-function providedSecret(c: AppContext) {
-  const bearer = c.req.header("authorization")?.replace(/^Bearer\s+/iu, "").trim() ?? "";
-  return (bearer || c.req.header("x-admin-review-secret")?.trim() || "").slice(0, 4096);
-}
-
-async function digest(value: string) {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function authorize(c: AppContext) {
-  const expected = reviewSecret(c);
-  if (!expected) {
-    const hostname = new URL(c.req.url).hostname;
-    const localRequest = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-    return localRequest && !isProductionEnvironment(dependencies(c).config.appEnv)
-      ? { ok: true as const }
-      : { ok: false as const, status: 503 as const, error: "admin_unavailable" };
-  }
-  const provided = providedSecret(c);
-  if (!provided || provided.length !== expected.length) {
-    return { ok: false as const, status: 401 as const, error: "unauthorized" };
-  }
-  const [providedHash, expectedHash] = await Promise.all([
-    digest(`xstoryphone-review:v1:${provided}`),
-    digest(`xstoryphone-review:v1:${expected}`)
-  ]);
-  return providedHash === expectedHash
-    ? { ok: true as const }
-    : { ok: false as const, status: 401 as const, error: "unauthorized" };
 }
 
 function isJudgmentStatus(value: string): value is "open" | "reported" | "applied" | "dismissed" {

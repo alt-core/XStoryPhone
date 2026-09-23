@@ -101,7 +101,7 @@ export async function buildStaticScenario({ root, outputDir, scenario, releaseId
   worker.projectConstants = {};
   // 標準の固定サンプルはAPIと同じPCM内容をファイルにする。
   for (const audio of worker.generatedAudio) {
-    if (audio.provider !== "static" && !audio.staticUrl) {
+    if (audio.provider !== "static" && !audio.staticUrl && !audio.fallbackAttachmentId) {
       const consumers = worker.contents.filter(content => content.record.genAudioId === audio.id);
       const segmentUse = worker.contents.some(content => Array.isArray(content.record.audioSegments) && content.record.audioSegments.some(segment => segment.genAudioId === audio.id));
       if (segmentUse || !consumers.length || consumers.some(content => !resolveMediaRecord(content.record,worker.attachments).audioUrl)) {
