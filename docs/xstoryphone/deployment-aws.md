@@ -120,6 +120,8 @@ npm run deploy:aws:prod
 
 hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。
 
+会話のrule選択にJevを使う場合は、`LLM_TALK_SELECTOR=typesafe` と `TYPESAFE_API_KEY` を環境変数で渡します。`TYPESAFE_MODEL`、`TYPESAFE_MIN_CONFIDENCE`、`TYPESAFE_GAME_OVER_MIN_CONFIDENCE` は任意です。API keyはCloudFormation上で非表示にします。Jevの1試行は10秒で打ち切ります。意味は[会話エンジン](conversation.md#rule選択にjevを使う)を参照してください。
+
 一つのeventで解決するhook LLM要求の上限は `LLM_HOOK_MAX_REQUESTS`（既定5）です。変更する場合はデプロイ時の環境変数へ設定します。通信retryやmatchの標本数とは別であり、上限内でもLambda全体の実行時間以内に収まるとは限りません。
 
 GA4による任意の計測を使う場合だけ、デプロイ実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定または `VITE_XSTORYPHONE_CLIENT_STORAGE=memory` なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。

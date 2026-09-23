@@ -62,6 +62,11 @@ export type LlmProviderEnv = {
   LLM_ANALYTICS_ENABLED?: string;
   LLM_DEBUG_LOGS?: string;
   LLM_HOOK_MAX_REQUESTS?: string;
+  LLM_TALK_SELECTOR?: string;
+  TYPESAFE_API_KEY?: string;
+  TYPESAFE_MODEL?: string;
+  TYPESAFE_MIN_CONFIDENCE?: string;
+  TYPESAFE_GAME_OVER_MIN_CONFIDENCE?: string;
 };
 
 function cleanText(value: unknown) {

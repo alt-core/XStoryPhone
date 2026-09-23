@@ -189,7 +189,7 @@ export function selectTalkFlowRuleByRegexCriteria<T extends TalkFlowLlmRule>(
   return null;
 }
 
-function normalizeRecentMessages(messages: readonly TalkFlowLlmRecentMessage[] = []) {
+export function normalizeRecentMessages(messages: readonly TalkFlowLlmRecentMessage[] = []) {
   return messages
     .map((message) => ({
       speaker: compactPromptText(message.speaker || "other", talkFlowLlmRecentMessageSpeakerMaxLength) || "other",

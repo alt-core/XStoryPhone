@@ -15,31 +15,38 @@ import {
   talkFlowMatchExtractionResponseSchema
 } from "../product/talkFlowMatchExtraction.ts";
 import { runTalkFlowMatchExtractionSamples } from "../product/llmMatchExtractionRunner.ts";
-import { canonicalLlmJson, llmRequestHashes, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
+import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../product/talkFlowTypesafeSelection.ts";
+import { canonicalLlmJson, llmRequestHashes, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
+import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../providers/typesafe.ts";
 
 type RecentMessage = { speaker: string; body: string };
+export type TalkSelectorContext = { talkId: string; kind: "sms" | "chat" | "search_agent"; fromId: string };
+
+function talkFlowPromptInput(input: Parameters<SemanticRuleSelector>[0], context: TalkSelectorContext): TalkFlowLlmPromptInput {
+  return {
+    talkId: context.talkId,
+    kind: context.kind,
+    fromId: context.fromId,
+    playerInput: input.playerInput,
+    recentMessages: input.recentMessages,
+    rules: input.rules.map((rule) => ({
+      id: rule.id,
+      from: rule.from,
+      isDefault: rule.isDefault,
+      intent: rule.intent,
+      criteria: rule.criteria,
+      mode: rule.mode
+    })),
+    defaultRuleId: input.defaultRuleId
+  };
+}
 
 export function semanticRuleSelector(
   provider: StructuredOutputProvider,
-  context: { talkId: string; kind: "sms" | "chat" | "search_agent"; fromId: string } = { talkId: "", kind: "sms", fromId: "" }
+  context: TalkSelectorContext = { talkId: "", kind: "sms", fromId: "" }
 ): SemanticRuleSelector {
   return async (input) => {
-    const promptInput: TalkFlowLlmPromptInput = {
-      talkId: context.talkId,
-      kind: context.kind,
-      fromId: context.fromId,
-      playerInput: input.playerInput,
-      recentMessages: input.recentMessages,
-      rules: input.rules.map((rule) => ({
-        id: rule.id,
-        from: rule.from,
-        isDefault: rule.isDefault,
-        intent: rule.intent,
-        criteria: rule.criteria,
-        mode: rule.mode
-      })),
-      defaultRuleId: input.defaultRuleId
-    };
+    const promptInput = talkFlowPromptInput(input, context);
     const messages = buildTalkFlowLlmMessages(promptInput);
     const schema = talkFlowLlmResponseSchema(promptInput.rules.map((rule) => rule.id));
     const hashes = await llmRequestHashes(input.playerInput, canonicalLlmJson(messages), schema);
@@ -72,6 +79,59 @@ export function semanticRuleSelector(
       accepted: selected.accepted, selectedRuleId: decision.rule_id, finalRuleId: selected.ruleId,
       confidence: decision.confidence, reasonCode: decision.reason_code, fallbackReason: selected.fallbackReason });
     return { ok: true, ruleId: selected.ruleId, reviewSelection };
+  };
+}
+
+// 生成しない判定型provider。候補からの1択をChoiceで問い、閾値判定は既存のLLM経路と同じ関数で行う。
+export function typesafeRuleSelector(
+  env: LlmProviderEnv,
+  context: TalkSelectorContext = { talkId: "", kind: "sms", fromId: "" }
+): SemanticRuleSelector {
+  return async (input) => {
+    const config = resolveTypesafeConfig(env);
+    if (!config.ok) {
+      console.error(JSON.stringify({ event: "llm_config_error", provider: "typesafe", reason: config.reason }));
+      return { ok: false, error: "provider_unavailable" };
+    }
+    const promptInput = talkFlowPromptInput(input, context);
+    const request = buildTypesafeTalkRuleRequest(promptInput, config.model);
+    // schemaは既存経路の応答enumと同じく、選べるrule IDの一覧で表す。
+    const hashes = await llmRequestHashes(
+      input.playerInput,
+      canonicalLlmJson({ state: request.state, questions: request.questions }),
+      promptInput.rules.map((rule) => rule.id)
+    );
+    const observation = {
+      source: "talk_flow", taskId: "talk_rule_selection", talkId: context.talkId, fromId: context.fromId,
+      inputHash: hashes.inputHash.slice(0, 12), promptHash: hashes.promptHash.slice(0, 12), schemaHash: hashes.schemaHash.slice(0, 12)
+    };
+    const response = await requestTypesafeSystemOne(config, request, observation);
+    if (!response.ok) return { ok: false, error: response.error };
+    const answer = typesafeTalkRuleDecision(response.payload, promptInput);
+    if (!answer) {
+      if (config.analytics) console.log(JSON.stringify({ event: "llm_result", provider: "typesafe", ...observation, status: "invalid_response" }));
+      return { ok: false, error: "provider_invalid" };
+    }
+    const selected = selectTalkFlowRuleFromLlmDecision(answer.decision, promptInput, {
+      minConfidence: config.minConfidence,
+      minGameOverConfidence: config.minGameOverConfidence
+    });
+    if (config.analytics) {
+      console.log(JSON.stringify({
+        event: "llm_result", provider: "typesafe", ...observation, model: answer.model, status: selected.accepted ? "accepted" : "fallback",
+        accepted: selected.accepted, selectedRuleId: answer.decision.rule_id, finalRuleId: selected.ruleId,
+        confidence: answer.decision.confidence, reasonCode: answer.decision.reason_code, fallbackReason: selected.fallbackReason
+      }));
+    }
+    return {
+      ok: true,
+      ruleId: selected.ruleId,
+      reviewSelection: {
+        decision: answer.decision, accepted: selected.accepted, selectedRuleId: answer.decision.rule_id,
+        finalRuleId: selected.ruleId, ...(selected.fallbackReason ? { fallbackReason: selected.fallbackReason } : {}), ...hashes,
+        selector: "typesafe", model: answer.model, probabilities: answer.probabilities
+      }
+    };
   };
 }
 

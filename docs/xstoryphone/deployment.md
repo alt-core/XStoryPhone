@@ -60,6 +60,12 @@ npx wrangler secret put BROWSER_STATE_SECRET --env prod
 
 LLMを使う場合は `LLM_API_KEY` もsecretへ登録し、model、base URL、timeoutを対象環境のvarsへ設定します。
 
+会話のrule選択にJevを使う場合は、`TYPESAFE_API_KEY` をsecretへ登録し、対象環境のvarsへ `LLM_TALK_SELECTOR=typesafe` を設定します。`TYPESAFE_MODEL`、`TYPESAFE_MIN_CONFIDENCE`、`TYPESAFE_GAME_OVER_MIN_CONFIDENCE` は既定値から変える場合だけvarsへ設定します。意味は[会話エンジン](conversation.md#rule選択にjevを使う)を参照してください。
+
+```sh
+npx wrangler secret put TYPESAFE_API_KEY --env prod
+```
+
 serverモードで発行済みの8桁アクセスコードだけを受理する場合は、コード生成と同じ秘密値を登録します。人数限定を行わない場合は不要です。
 
 ```sh

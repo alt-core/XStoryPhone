@@ -29,6 +29,8 @@ npm run scenario:talk-flow:examples:test
 
 会話地点ごとの条件状態パターン上限は既定16です。必要な作品では`--cond-pattern-limit=40`のように正の整数で変更できます。`--dry-run`で対象を確認してから実行してください。上限を増やすと試験数が増え、liveではAPI利用・費用も増え得ます。
 
+`--live`で`LLM_TALK_SELECTOR=typesafe`の場合は、本番と同じrequest・再試行・閾値でJevを呼び、reportの各行と失敗詳細へ応答したmodel版と確率分布を加えます。`TYPESAFE_MIN_CONFIDENCE`等を変えて再実行すれば、閾値の影響を比べられます。
+
 既定のmockではLLMの期待応答を与えるため、自然文を実LLMが正しく分類することまでは検証しません。また、このコマンドはrule選択の確認であり、後続の抽出値・hook・プレイ全体を実行するものではありません。
 
 ## 一入力の選択と抽出を一緒に確認する
@@ -75,4 +77,4 @@ node scripts/scenario-talk-flow-cases-test.mjs \
   --i-understand-this-test-calls-a-paid-llm-api-and-requires-user-confirmation
 ```
 
-既存providerを使うため、model・timeout・限定retry・観測ログの設定は本番と共通です。このコマンドは`.dev.vars`を自動読込みせず、プロセスの環境変数を使用します。成功結果には選択・抽出それぞれの呼出し数を表示します。失敗をdefault成功として握りつぶさず、case失敗として非ゼロ終了します。
+既存providerを使うため、model・timeout・限定retry・観測ログの設定は本番と共通です。`LLM_TALK_SELECTOR=typesafe`を渡すとrule選択は本番と同じJevの経路と閾値で行い、`LLM_API_KEY`はAI抽出を含むcaseだけに必要です。このコマンドは`.dev.vars`を自動読込みせず、プロセスの環境変数を使用します。成功結果には選択・抽出それぞれの呼出し数を表示します。失敗をdefault成功として握りつぶさず、case失敗として非ゼロ終了します。

@@ -19,6 +19,9 @@ export type TalkReviewSelection = {
   promptHash?: string;
   schemaHash?: string;
   extraction?: { status: string; sampleCount: number; inputHash: string; promptHash: string; schemaHash: string };
+  selector?: "typesafe";
+  model?: string;
+  probabilities?: Record<string, number>;
 };
 
 export type SemanticRuleSelector = (input: {

@@ -90,6 +90,22 @@ Parameters:
     Type: Number
     Default: 5
     MinValue: 1
+  LlmTalkSelector:
+    Type: String
+    Default: ""
+  TypesafeApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  TypesafeModel:
+    Type: String
+    Default: ""
+  TypesafeMinConfidence:
+    Type: String
+    Default: ""
+  TypesafeGameOverMinConfidence:
+    Type: String
+    Default: ""
   ReservedConcurrency:
     Type: Number
     Default: 5
@@ -195,6 +211,11 @@ Resources:
           LLM_DEBUG_LOGS: !Ref LlmDebugLogs
           LLM_RESULT_RETENTION_DAYS: !Ref LlmResultRetentionDays
           LLM_HOOK_MAX_REQUESTS: !Ref LlmHookMaxRequests
+          LLM_TALK_SELECTOR: !Ref LlmTalkSelector
+          TYPESAFE_API_KEY: !Ref TypesafeApiKey
+          TYPESAFE_MODEL: !Ref TypesafeModel
+          TYPESAFE_MIN_CONFIDENCE: !Ref TypesafeMinConfidence
+          TYPESAFE_GAME_OVER_MIN_CONFIDENCE: !Ref TypesafeGameOverMinConfidence
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref AppTable

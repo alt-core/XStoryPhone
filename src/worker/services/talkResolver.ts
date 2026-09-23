@@ -1,9 +1,32 @@
-import { resolveTalkRule, type TalkReviewSelection } from "../../shared/conversation.ts";
+import { resolveTalkRule, type SemanticRuleSelector, type TalkReviewSelection } from "../../shared/conversation.ts";
 import { renderTemplate, requireTemplateValues } from "../../shared/condition.ts";
 import type { ScenarioTalk, TalkRule } from "../../shared/scenario.ts";
 import { parseTalkExtraction, regexExtract } from "../../shared/talkCriteria.ts";
 import { createStructuredOutputProvider, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
-import { extractTalkRuleMatch, semanticRuleSelector } from "./conversationLlm.ts";
+import { extractTalkRuleMatch, semanticRuleSelector, typesafeRuleSelector, type TalkSelectorContext } from "./conversationLlm.ts";
+
+// 制作試験も本番と同じ解決を使う。未知の値はnullで、既存LLMへ読み替えない。
+export function talkRuleSelectorKind(env: LlmProviderEnv): "openai-compatible" | "typesafe" | null {
+  const selector = env.LLM_TALK_SELECTOR?.trim() || "openai-compatible";
+  return selector === "openai-compatible" || selector === "typesafe" ? selector : null;
+}
+
+// 会話rule選択だけは、生成しない判定型providerへ明示的に切り替えられる。設定誤りは既存LLMへ戻さず503にする。
+export function createTalkRuleSelector(
+  env: LlmProviderEnv,
+  provider: StructuredOutputProvider | null,
+  context: TalkSelectorContext
+): SemanticRuleSelector | undefined {
+  const kind = talkRuleSelectorKind(env);
+  if (kind === "typesafe") return typesafeRuleSelector(env, context);
+  if (kind === null) {
+    return async () => {
+      console.error(JSON.stringify({ event: "llm_config_error", reason: `LLM_TALK_SELECTORが未対応です: ${env.LLM_TALK_SELECTOR?.trim()}` }));
+      return { ok: false, error: "provider_unavailable" };
+    };
+  }
+  return provider ? semanticRuleSelector(provider, context) : undefined;
+}
 
 export function renderTalkRuleCriteria<T extends { criteria: string; type?: string }>(rules: readonly T[], stateValues: Record<string, unknown>): T[] {
   const templateEnv = Object.fromEntries(Object.entries(stateValues).map(([key, value]) => [key, String(value)]));
@@ -24,6 +47,7 @@ export async function resolveScenarioTalkRule(input: {
   stateValues: Record<string, unknown>;
   recentMessages?: readonly { speaker: string; body: string }[];
   provider?: StructuredOutputProvider | null;
+  semanticSelector?: SemanticRuleSelector;
   secretSelector?: (rule: TalkRule, input: string) => Promise<TalkRule | null>;
 }) {
   const provider = input.llmEnabled ? (input.provider ?? createStructuredOutputProvider(input.env)) : null;
@@ -39,13 +63,8 @@ export async function resolveScenarioTalkRule(input: {
     stateValues: input.stateValues,
     recentMessages: input.recentMessages,
     secretSelector: input.secretSelector,
-    ...(provider ? {
-      semanticSelector: semanticRuleSelector(provider, {
-        talkId: talk.id,
-        kind: talk.kind,
-        fromId: input.from
-      })
-    } : {})
+    semanticSelector: input.semanticSelector
+      ?? (input.llmEnabled ? createTalkRuleSelector(input.env, provider, { talkId: talk.id, kind: talk.kind, fromId: input.from }) : undefined)
   });
   if (!selection.ok) return selection;
   const reviewSelection: TalkReviewSelection = {

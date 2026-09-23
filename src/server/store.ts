@@ -1,4 +1,5 @@
 import type { StoredTalkMessage } from "../shared/scenario.ts";
+import type { LlmProviderEnv } from "../worker/providers/structuredOutput.ts";
 import {
   MAX_SEARCH_AGENT_DISPLAY_ITEMS,
   SEARCH_AGENT_STREAM_ID,
@@ -417,25 +418,7 @@ export type AppConfig = {
   accessCodeSecret?: string;
   playerInputLogging?: boolean;
   llmResultRetentionDays?: number;
-  llm: {
-    LLM_API_KEY?: string;
-    LLM_MODEL?: string;
-    LLM_BASE_URL?: string;
-    LLM_TIMEOUT_MS?: string;
-    LLM_REASONING_EFFORT?: string;
-    LLM_PROFILE_FAST_MODEL?: string;
-    LLM_PROFILE_FAST_REASONING_EFFORT?: string;
-    LLM_PROFILE_FAST_TIMEOUT_MS?: string;
-    LLM_PROFILE_SUPER_MODEL?: string;
-    LLM_PROFILE_SUPER_REASONING_EFFORT?: string;
-    LLM_PROFILE_SUPER_TIMEOUT_MS?: string;
-    LLM_PROFILE_ULTRA_MODEL?: string;
-    LLM_PROFILE_ULTRA_REASONING_EFFORT?: string;
-    LLM_PROFILE_ULTRA_TIMEOUT_MS?: string;
-    LLM_ANALYTICS_ENABLED?: string;
-    LLM_DEBUG_LOGS?: string;
-    LLM_HOOK_MAX_REQUESTS?: string;
-  };
+  llm: LlmProviderEnv;
 };
 
 export type AppDependencies = {

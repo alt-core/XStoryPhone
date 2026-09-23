@@ -179,12 +179,18 @@ test("AWSデプロイは設定されたLLM項目だけをLambdaへ渡す", () =>
     ["LlmProfileUltraTimeoutMs", "LLM_PROFILE_ULTRA_TIMEOUT_MS"],
     ["LlmAnalyticsEnabled", "LLM_ANALYTICS_ENABLED"],
     ["LlmDebugLogs", "LLM_DEBUG_LOGS"],
-    ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"]
+    ["LlmResultRetentionDays", "LLM_RESULT_RETENTION_DAYS"],
+    ["LlmTalkSelector", "LLM_TALK_SELECTOR"],
+    ["TypesafeApiKey", "TYPESAFE_API_KEY"],
+    ["TypesafeModel", "TYPESAFE_MODEL"],
+    ["TypesafeMinConfidence", "TYPESAFE_MIN_CONFIDENCE"],
+    ["TypesafeGameOverMinConfidence", "TYPESAFE_GAME_OVER_MIN_CONFIDENCE"]
   ]) {
     assert.match(template, new RegExp(`${environmentVariable}: !Ref ${parameter}`, "u"));
     assert.match(deployAws, new RegExp(`\\["${parameter}", "${environmentVariable}"\\]`, "u"));
   }
   assert.match(template, /LlmApiKey:\s+[\s\S]*?NoEcho: true/u);
+  assert.match(template, /TypesafeApiKey:\n\s+Type: String\n\s+NoEcho: true/u);
   assert.match(template, /TimeToLiveSpecification:\s+[\s\S]*?AttributeName: expiresAtEpoch[\s\S]*?Enabled: true/u);
 });
 

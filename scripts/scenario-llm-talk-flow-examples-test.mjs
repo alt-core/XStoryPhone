@@ -8,8 +8,10 @@ import {
   selectTalkFlowRuleFromLlmDecision,
   talkFlowLlmResponseSchema
 } from "../src/worker/product/talkFlowLlmSelection.ts";
+import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../src/worker/product/talkFlowTypesafeSelection.ts";
+import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../src/worker/providers/typesafe.ts";
 import { evaluateConditionExpression } from "../src/shared/conditionExpression.ts";
-import { renderTalkRuleCriteria } from "../src/worker/services/talkResolver.ts";
+import { renderTalkRuleCriteria, talkRuleSelectorKind } from "../src/worker/services/talkResolver.ts";
 import { talkTestContext } from "./lib/talk-test-context.mjs";
 import { selectDeterministicRule } from "../src/shared/talkCriteria.ts";
 
@@ -146,6 +148,36 @@ function loadDevVars() {
   }
 }
 
+// 本番と同じ解決を使い、未知の値を既存LLMへ読み替えない。
+function typesafeSelected() {
+  loadDevVars();
+  const kind = talkRuleSelectorKind(process.env);
+  if (kind === null) throw new Error(`LLM_TALK_SELECTOR設定: 未対応の値です: ${process.env.LLM_TALK_SELECTOR}`);
+  if (kind === "typesafe" && args.has("retries")) {
+    throw new Error("LLM_TALK_SELECTOR設定: typesafeでは--retriesを使えません。本番と同じ1回の再試行で実行します。");
+  }
+  return kind === "typesafe";
+}
+
+// 本番と同じrequest・再試行・閾値でJevを呼び、検証用に確率分布とmodel版を返す。
+async function callLiveTypesafe(input, testCase) {
+  const config = resolveTypesafeConfig(process.env);
+  if (!config.ok) throw new Error(`TYPESAFE設定: ${config.reason}`);
+  const response = await requestTypesafeSystemOne(config, buildTypesafeTalkRuleRequest(input, config.model));
+  const answer = response.ok ? typesafeTalkRuleDecision(response.payload, input) : null;
+  if (!answer) {
+    const status = !response.ok && response.httpStatus ? ` http=${response.httpStatus}` : "";
+    throw new Error(`${testCase.id}: TypeSafe API error: ${response.ok ? "provider_invalid" : response.error}${status}`);
+  }
+  return {
+    decision: answer.decision,
+    usage: { inputTokens: answer.inputTokens },
+    model: answer.model,
+    probabilities: answer.probabilities,
+    thresholds: { minConfidence: config.minConfidence, minGameOverConfidence: config.minGameOverConfidence }
+  };
+}
+
 function usageFromPayload(payload) {
   const usage = tokenUsageFromPayload(payload);
   return usage
@@ -238,6 +270,8 @@ function shouldAbortRun(error) {
   return (
     failFast ||
     message.includes("LLM_API_KEY") ||
+    message.includes("TYPESAFE設定") ||
+    message.includes("LLM_TALK_SELECTOR設定") ||
     message.includes("PERMISSION_DENIED") ||
     message.includes("http=401") ||
     message.includes("http=403")
@@ -292,7 +326,8 @@ function fullFailureRow(testCase, error) {
             label: error.actualLabel ?? null,
             afterGuardRuleId: error.afterGuardRuleId ?? null,
             afterGuardLabel: error.afterGuardLabel ?? null,
-            decision: error.rawDecision ?? null
+            decision: error.rawDecision ?? null,
+            ...(error.probabilities ? { model: error.model, probabilities: error.probabilities } : {})
           }
         : null,
     error: failureMessage(error),
@@ -900,7 +935,7 @@ function mockDecisionFor(testCase) {
 }
 
 async function callLiveLlm(input, testCase) {
-  loadDevVars();
+  if (typesafeSelected()) return callLiveTypesafe(input, testCase);
   const apiKey = process.env.LLM_API_KEY;
   const baseUrl = (process.env.LLM_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
   const model = process.env.LLM_MODEL ?? "gemini-3.1-flash-lite";
@@ -1009,7 +1044,9 @@ async function runCase(testCase) {
 
   if (showPrompt) {
     console.log(`\n--- ${testCase.id} prompt ---`);
-    console.log(JSON.stringify(buildTalkFlowLlmChatCompletionBody("<model>", input), null, 2));
+    console.log(JSON.stringify(typesafeSelected()
+      ? buildTypesafeTalkRuleRequest(input, "<model>")
+      : buildTalkFlowLlmChatCompletionBody("<model>", input), null, 2));
   }
 
   const expectedRule = input.rules.find((rule) => rule.id === testCase.expectedRuleId);
@@ -1036,10 +1073,12 @@ async function runCase(testCase) {
     error.actualRuleId = rawDecision.rule_id;
     error.actualLabel = actualRule ? ruleLabel(actualRule) : null;
     error.rawDecision = rawDecision;
+    error.probabilities = liveResult?.probabilities;
+    error.model = liveResult?.model;
     throw error;
   }
 
-  const selected = selectTalkFlowRuleFromLlmDecision(rawDecision, input);
+  const selected = selectTalkFlowRuleFromLlmDecision(rawDecision, input, liveResult?.thresholds);
   if (!isEquivalentExpectedOutcome(testCase, selected.ruleId)) {
     const actualRule = input.rules.find((rule) => rule.id === rawDecision.rule_id);
     const afterGuardRule = input.rules.find((rule) => rule.id === selected.ruleId);
@@ -1049,6 +1088,8 @@ async function runCase(testCase) {
     error.afterGuardRuleId = selected.ruleId;
     error.afterGuardLabel = afterGuardRule ? ruleLabel(afterGuardRule) : null;
     error.rawDecision = rawDecision;
+    error.probabilities = liveResult?.probabilities;
+    error.model = liveResult?.model;
     throw error;
   }
   const selectedRule = input.rules.find((rule) => rule.id === selected.ruleId);
@@ -1062,6 +1103,7 @@ async function runCase(testCase) {
     expected: testCase.expectedLabel,
     mode: selectedRule.mode || "advance",
     confidence: rawDecision.confidence,
+    ...(liveResult?.probabilities ? { model: liveResult.model, probabilities: liveResult.probabilities } : {}),
     ...(liveResult?.usage
       ? {
           inputTokens: liveResult.usage.inputTokens,

@@ -204,7 +204,7 @@ LLM_REASONING_EFFORT=low
 
 `LLM_REASONING_EFFORT` は利用する互換providerが対応している場合だけ明示設定します。未設定時は、Gemini 2.5系またはFlash-Lite系の非Proへ`none`、その他のGemini 3系へ`minimal`を安全な既定値として送り、それ以外のmodelには送りません。明示値はこの既定より優先されます。
 
-providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「type=aiの判定」と「extractのAI抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。
+providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「type=aiの判定」と「extractのAI抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。ただし「type=aiの判定」だけは、JSONを生成しない判定型のproviderも選べます([rule選択にJevを使う](#rule選択にjevを使う))。
 
 AI判定には、現在のfrom blockの末尾2件と、表示履歴の直近2件を重複除去して渡します。stayの会話が続いても現在の問いを保持し、短い肯定・否定や指示語の文脈を補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。0〜1の範囲外や候補にないrule IDは、不正応答としてエラーにします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
 
@@ -215,6 +215,29 @@ hookの`llm.match`は`fast / super / ultra` profileと`stable / once`を選べ�
 `LLM_ANALYTICS_ENABLED=true`では本文を含まないtoken usage・試行回数・hashを構造化logへ出します。`LLM_DEBUG_LOGS=true`では入力・prompt・schema・応答も出るため、調査中だけ有効にし、公開環境では調査後にfalseへ戻してください。API keyやAuthorization headerはdebugにも出しません。
 
 通常logには、provider応答の取得結果に加えて検証後の採否・confidence・理由・標本番号を記録します。hookの保存結果とlogは同じ論理入力・指示・schemaのhashで照合でき、監修試行には選択結果とhashを保存します。生のHTTP payloadや長いprompt全体を監修DBへ複製するわけではありません。debugを無効にしていた期間の生応答は後から復元できません。
+
+### rule選択にJevを使う
+
+`type=ai`のrule選択だけは、TypeSafeのJev(文章を生成せず、型付きの質問へ確率付きで答えるmodel)へ切り替えられます。候補ruleをChoiceの選択肢として渡し、選ばれたruleと確率分布を受け取ります。`extract`のAI抽出、hookの`llm.*`、入力集計は値や文章を生成する処理なので、引き続き上の`LLM_*`を使います。
+
+```dotenv
+LLM_TALK_SELECTOR=typesafe
+TYPESAFE_API_KEY=...
+TYPESAFE_MODEL=jev-1.13.0              # 任意。既定値
+TYPESAFE_MIN_CONFIDENCE=0.65           # 任意。既定値
+TYPESAFE_GAME_OVER_MIN_CONFIDENCE=0.9  # 任意。既定値
+```
+
+- `TYPESAFE_API_KEY`を置くだけでは切り替わりません。`LLM_TALK_SELECTOR=typesafe`で明示します。
+- rule選択だけなら`LLM_API_KEY`は不要です。AI抽出を持つruleが選ばれた時にLLM providerがなければ、既存と同じ`llm_unavailable`になります。
+- keyがない、`LLM_TALK_SELECTOR`が未知の値、閾値が0〜1の数値でない、game over用の閾値が通常の閾値より小さい場合は、通信せず`llm_unavailable`にします。既存のLLMへ黙って戻しません。
+- 閾値はJevの`confidence`へ適用し、判定規則は既存のLLM経路と同じです。通常の閾値未満ならdefaultへ戻し、`game_over`のruleはgame over用の閾値以上の時だけ選びます。
+- `jev-latest`のような別名は新版へ自動で移り、調整した閾値の前提が変わります。閾値を調整したら`TYPESAFE_MODEL`を版IDで固定してください。
+- Jevの主な学習言語は英語で、日本語の精度は下がると公開されています。作品のexampleと会話caseを実APIで確認してから使ってください。
+- LLMに判断させるまでもない事前条件(特定の添付IDが必要、など)は、criteriaではなく`cond`に書きます。`cond`は`player_input`を参照でき、通らないruleは候補になりません。
+- プレイヤー入力と直近の会話はTypeSafeへ送られます。公開時は、実際の送信先に合わせてプライバシーポリシーを更新してください。
+
+通信は既存のLLMと同じく、通信例外と408・429・5xxだけを250ms後に1回再試行します。1試行のtimeoutは10秒です。`LLM_ANALYTICS_ENABLED` / `LLM_DEBUG_LOGS`のlogには`provider:"typesafe"`が付きます。監修試行の記録には、選択結果とhashに加えて、`selector`、応答したmodel版、全候補の確率分布が残ります。
 
 ### hook LLMの入力・出力制約
 
@@ -241,7 +264,7 @@ npm run scenario:talk-flow:writer-review -- --talk=guide
 npm run scenario:talk-flow:examples:test
 ```
 
-path dumpはfrom・example・nextの連結、writer reviewは全体の読み順とrepeat・独立block、example testは選択中scenarioの全exampleをlocal mockで確認します。実LLMを呼ぶ場合だけ、example testへ`--live`と表示される長い課金確認flagを明示します。
+path dumpはfrom・example・nextの連結、writer reviewは全体の読み順とrepeat・独立block、example testは選択中scenarioの全exampleをlocal mockで確認します。実LLMを呼ぶ場合だけ、example testへ`--live`と表示される長い課金確認flagを明示します。`LLM_TALK_SELECTOR=typesafe`ならJevで判定し、reportの各行へmodel版と確率分布を加えます。
 
 分岐IDは定義内容から生成する21文字の内部IDです。行番号・notes・exampleの変更では維持し、条件・抽出・状態更新・返答先等の変更では別IDになります。変更前の入力を返信先から推定して新分岐へ混ぜません。並べ替えによる候補優先順や、台詞本文・モデル設定の変更まで同じであることを保証するIDではありません。
 

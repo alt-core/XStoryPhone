@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveScenarioTalkRule } from "../../src/worker/services/talkResolver.ts";
+import { createTalkRuleSelector, resolveScenarioTalkRule, talkRuleSelectorKind } from "../../src/worker/services/talkResolver.ts";
 import { talkTestContext } from "./talk-test-context.mjs";
 
 // 本編は生成済みscenarioを使い、fixtureには一入力の開始条件と期待値だけを置く。
@@ -49,23 +49,29 @@ export async function runTalkCase(scenario, fixture, { provider = null, live = f
       return { ok: true, value, raw: JSON.stringify(value) };
     }
   };
-  if (live) assert.ok(provider, "live実行にはLLM provider設定が必要です。");
+  // mockではenvの切替設定を読まず、外部APIへ送らない。
+  const selectorEnv = live ? env : {};
+  if (live) assert.ok(provider || talkRuleSelectorKind(env) === "typesafe", "live実行にはLLM providerかLLM_TALK_SELECTOR=typesafeの設定が必要です。");
   let selectionCalls = 0;
   let extractionCalls = 0;
   const backend = live ? provider : mock;
-  const observedProvider = {
+  const observedProvider = backend && {
     id: backend.id,
     completeJson(request) {
       if (request.operation === "match_extraction") extractionCalls += 1;
-      else selectionCalls += 1;
       return backend.completeJson(request);
     },
     observeResult(result, debug) { backend.observeResult?.(result, debug); }
   };
+  // 選択回数はselector単位で数え、Jevでも既存LLMでも同じ意味にする。
+  const selector = scenario.features.llm
+    ? createTalkRuleSelector(selectorEnv, observedProvider, { talkId: talk.id, kind: talk.kind, fromId: from })
+    : undefined;
   const selected = await resolveScenarioTalkRule({
     env,
     llmEnabled: scenario.features.llm,
     provider: observedProvider,
+    ...(selector ? { semanticSelector: async (input) => { selectionCalls += 1; return selector(input); } } : {}),
     talk,
     from,
     playerInput: fixture.input,
