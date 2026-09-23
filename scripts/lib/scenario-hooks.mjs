@@ -22,7 +22,7 @@ function validateLiteralHookSchema(api, options) {
   hookLlmResponseSchema(Object.fromEntries(Object.entries(schema).map(([key, node]) => [key, node.text])));
 }
 
-// 元のhooks.scriptと同様、セル本文を同期handlerの中へそのまま埋め込む。
+// hooks.scriptのセル本文を同期handlerの中へそのまま埋め込む。
 export function buildScenarioHooksModule(scripts) {
   const handlers = Object.entries(scripts).map(([id, script]) => {
     const body = String(script).split("\n").map((line) => `    ${line}`).join("\n");

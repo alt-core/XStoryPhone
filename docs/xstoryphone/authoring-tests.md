@@ -27,6 +27,8 @@ npm run scenario:talk-flow:examples:test
 
 各ruleのexampleを使い、現在の状態条件、match/secretの選択順、LLMの候補と応答schemaを確認します。text・contextのtemplateは、試験stateの値で本番と同様に展開します。
 
+会話地点ごとの条件状態パターン上限は既定16です。必要な作品では`--cond-pattern-limit=40`のように正の整数で変更できます。`--dry-run`で対象を確認してから実行してください。上限を増やすと試験数が増え、liveではAPI利用・費用も増え得ます。
+
 既定のmockではLLMの期待応答を与えるため、自然文を実LLMが正しく分類することまでは検証しません。また、このコマンドはrule選択の確認であり、後続の抽出値・hook・プレイ全体を実行するものではありません。
 
 ## 一入力の選択と抽出を一緒に確認する

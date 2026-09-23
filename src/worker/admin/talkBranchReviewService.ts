@@ -649,8 +649,9 @@ export async function simulateTalkBranchReviewSelection(
     after.stateVariables, previewState.stateValues, selectedRule.set,
     selected.matchGroups, after.stateVariableDefinitions
   );
+  const outputStateValues = effectiveStateValues(after.stateVariables, previewState.stateValues);
   const outputEnv = {
-    ...effectiveStateValues(after.stateVariables, previewState.stateValues),
+    ...outputStateValues,
     ...talkOutputMatchEnv(selectedRule.match, selected.matchGroups)
   };
   const renderOptions = {
@@ -682,6 +683,7 @@ export async function simulateTalkBranchReviewSelection(
   } else {
     messages = outputRuntime.messagesForTalkOutputSteps({
       ...renderOptions, talk, steps: selectedRule.outputSteps, formatEnv: outputEnv,
+      displayStateValues: outputStateValues,
       useRepeat: selectedRule.mode !== "game_over"
     }).messages.map((message) => ({ ...message }));
   }

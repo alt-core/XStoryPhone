@@ -77,7 +77,7 @@ test("hook LLMの壊れた応答はfallbackがあればfallbackを使う", async
   }
 });
 
-test("hook LLM matchはonceとstableの正本選択を使う", async () => {
+test("hook LLM matchのonceは採用した抽出値をstateへ反映する", async () => {
   workerScenario.stateVariables.test_llm_match = "";
   workerScenario.stateVariableDefinitions.test_llm_match = { type: "string" };
   try {

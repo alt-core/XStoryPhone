@@ -293,7 +293,7 @@ test("DynamoDB版search agent履歴もtalk単位itemで直近200表示eventへ�
   assert.equal(transcript.messages.at(-1).seq, 202);
 });
 
-test("DynamoDB版talk履歴も展開本文ではなく正本形式のeventを保存する", async () => {
+test("DynamoDB版talk履歴はNPC本文を展開せずblock参照のcompact eventを保存する", async () => {
   const fake = fakeTransport();
   const store = new DynamoStore(fake.transport, "table");
   const state = createInitialPlayerState();

@@ -9,3 +9,7 @@ export function talkMessageTimeLabel(value: string) {
   const time = parsed.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
   return `${date} ${time}`;
 }
+
+export function talkMessageDisplayTime(message: { sentAt: string; displayTime?: string }) {
+  return message.displayTime ?? talkMessageTimeLabel(message.sentAt);
+}

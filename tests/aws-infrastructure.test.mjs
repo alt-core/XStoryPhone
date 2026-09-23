@@ -154,9 +154,10 @@ test("AWSデプロイはクライアントだけの変更でも静的ファイ�
 
 test("AWSの環境別スタック名と運用上限はデプロイスクリプトで一元管理する", () => {
   assert.doesNotMatch(samconfig, /stack_name|parameter_overrides/u);
-  assert.match(deployAws, /--stack-name", settings\.stackName/u);
+  assert.match(deployAws, /--stack-name", stackName/u);
+  assert.match(deployAws, /const stackName = `\$\{projectName\}-\$\{environment\}`/u);
   for (const environment of ["dev", "stg", "prod"]) {
-    assert.match(deployAws, new RegExp(`${environment}: \\{ stackName: "xstoryphone-${environment}"`, "u"));
+    assert.match(deployAws, new RegExp(`${environment}: \\{ concurrency:`, "u"));
   }
 });
 

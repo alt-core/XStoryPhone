@@ -4,9 +4,9 @@ import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import { parseAllowedOrigins } from "../src/server/cors.ts";
 
 const environments = {
-  dev: { stackName: "xstoryphone-dev", concurrency: "3", logDays: "7" },
-  stg: { stackName: "xstoryphone-stg", concurrency: "5", logDays: "14" },
-  prod: { stackName: "xstoryphone-prod", concurrency: "10", logDays: "14" }
+  dev: { concurrency: "3", logDays: "7" },
+  stg: { concurrency: "5", logDays: "14" },
+  prod: { concurrency: "10", logDays: "14" }
 };
 const environment = process.argv[2];
 const options = process.argv.slice(3);
@@ -21,6 +21,17 @@ if (!settings) {
   process.exit(1);
 }
 const resetForTesting = environment === "prod" ? "false" : "true";
+const projectName = process.env.XSTORYPHONE_PROJECT_NAME ?? "xstoryphone";
+if (!/^[a-z][a-z0-9-]{0,23}$/u.test(projectName) || /^(xn--|sthree-|amzn-s3-demo-)/u.test(projectName)) {
+  console.error("XSTORYPHONE_PROJECT_NAMEは英小文字で始まる小文字英数字・ハイフンの1〜24文字を指定してください。S3の予約prefixは使えません。");
+  process.exit(1);
+}
+const stackName = `${projectName}-${environment}`;
+const webAclArn = process.env.WEB_ACL_ARN;
+if (webAclArn !== undefined && webAclArn !== "" && !/^arn:aws(?:-[a-z]+)*:wafv2:us-east-1:\d{12}:global\/webacl\/[A-Za-z0-9_-]+\/[A-Za-z0-9-]+$/u.test(webAclArn)) {
+  console.error("WEB_ACL_ARNはus-east-1のCloudFront用WebACL ARN、または解除するための空文字を指定してください。");
+  process.exit(1);
+}
 const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS).join(",");
 
 if (loadAndValidateScenario().worker.playerMode === "static") {
@@ -94,12 +105,14 @@ run("sam", [
   "deploy",
   "--no-confirm-changeset",
   "--no-fail-on-empty-changeset",
-  "--stack-name", settings.stackName,
+  "--stack-name", stackName,
   "--template-file", ".aws-sam/build/template.yaml",
   "--config-file", samConfigPath,
   "--config-env", environment,
   "--parameter-overrides",
   `EnvironmentName=${environment}`,
+  `ProjectName=${projectName}`,
+  ...(webAclArn === undefined ? [] : [`WebAclArn="${webAclArn}"`]),
   `ReservedConcurrency=${settings.concurrency}`,
   `LogRetentionDays=${settings.logDays}`,
   `PlayerInputLogging=${playerInputLogging}`,
@@ -113,7 +126,7 @@ run("sam", [
 
 const outputJson = run("aws", [
   "cloudformation", "describe-stacks",
-  "--stack-name", settings.stackName,
+  "--stack-name", stackName,
   "--query", "Stacks[0].Outputs",
   "--output", "json"
 ], true);

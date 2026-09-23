@@ -48,6 +48,7 @@ type StoredTalkMessageBase = {
   attachment: MessageAttachment | null;
   quickReplies?: string[];
   sentAt: string;
+  displayTime?: string;
 };
 
 export type StoredSmsMessage = StoredTalkMessageBase;
@@ -647,7 +648,7 @@ export async function openMessageLink(
     target: {
       appId: AppId;
       contentId: string;
-    };
+    } | null;
   } & PresentationResponse>("/api/message-link/open", sessionToken, {
     method: "POST",
     headers: {

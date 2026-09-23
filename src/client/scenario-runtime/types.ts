@@ -107,6 +107,7 @@ export type Message = {
   avatarUrl?: string;
   segments?: MessageSegment[];
   sentAt: string;
+  displayTime?: string;
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
@@ -247,6 +248,7 @@ export type ChatAppMessage = {
   avatarUrl?: string;
   segments?: MessageSegment[];
   sentAt: string;
+  displayTime?: string;
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;

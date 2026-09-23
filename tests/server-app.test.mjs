@@ -1317,6 +1317,88 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
   }
 });
 
+test("server/browserとも発話時の作中日時を保存し、setや完了hookで時計が変わっても過去の表示を保つ", async () => {
+  const originalMode = workerScenario.playerMode;
+  const settings = workerScenario.project;
+  const originalClock = settings.talkClock;
+  const guide = workerScenario.talks.find(item => item.id === "guide");
+  const rule = {
+    ...guide.rules.find(item => item.from === guide.initialFrom && item.isDefault),
+    id: "test_story_clock", type: "match", criteria: "/^clock$/u", isDefault: false, mode: "stay", set: [],
+    nextBlocks: ["guide::message_reply"], outputSteps: [{ kind: "block", blockId: "guide::message_reply" }]
+  };
+  const hookDefinitions = [
+    { event: "session_started", target: "", handler: "test_clock_start", cond: "", llm: false },
+    { event: "talk_turn_completed", target: "guide", handler: "test_clock_completed", cond: "", llm: false }
+  ];
+  settings.talkClock = "scenario";
+  guide.rules.unshift(rule);
+  workerScenario.hooks.push(...hookDefinitions);
+  scenarioHookHandlers.test_clock_start = context => {
+    context.app.repair("messages");
+    context.state.set("os_date", "2027-12-31");
+    context.state.set("os_time_label", "23:59:59");
+  };
+  scenarioHookHandlers.test_clock_completed = (context, event) => {
+    if (event.playerInput !== "clock") return;
+    context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
+    context.state.set("os_date", "2020-01-01");
+    context.state.set("os_time_label", "06:30");
+  };
+  try {
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      rule.set = [];
+      const store = new MemoryStore();
+      store.player.state = null;
+      const app = createApp({ store, config: { appEnv: "dev", browserStateSecret: "clock-test-secret", llm: {} } });
+      const headers = { "content-type": "application/json", ...(mode === "server" ? { authorization: "Bearer memory-token" } : {}) };
+      let state;
+      const request = async (url, body = {}) => {
+        const response = await app.request(`http://localhost${url}`, { method: "POST", headers, body: JSON.stringify({ progressToken: state?.progressToken, ...body }) });
+        const result = await response.json();
+        assert.equal(response.status, 200, JSON.stringify(result));
+        state = result.playerState;
+        return state;
+      };
+      await request("/api/session/start", { serialCode: "1234" });
+      const send = () => request("/api/talk/send", { talkId: guide.publicId, turnKey: state.talks.find(item => item.talkId === guide.publicId).turnKey, message: "clock" });
+      await send();
+      const first = state.transcriptDeltas.find(item => item.talkId === guide.publicId).messages;
+      assert.equal(first[0].displayTime, "12/31 23:59", mode);
+      assert.ok(first.slice(1).length >= 2, "応答と完了hookの案内がある");
+      assert.ok(first.slice(1).every(item => item.displayTime === "12/31 23:59"), mode);
+      assert.equal(state.scenarioTime.date, "2020-01-01");
+      rule.set = ['os_date="2029-02-01"', 'os_time_label="09:50"'];
+      await send();
+      const second = state.transcriptDeltas.find(item => item.talkId === guide.publicId).messages;
+      assert.equal(second[0].displayTime, "1/1 06:30");
+      assert.ok(second.slice(1).every(item => item.displayTime === "2/1 09:50"));
+      assert.ok(second[0].seq > first.at(-1).seq);
+      assert.ok(Date.parse(second[0].sentAt) > Date.parse(first.at(-1).sentAt), "作中の日時逆行でも実際の記録順序は逆行しない");
+      if (mode === "server") {
+        const response = await app.request(`http://localhost/api/transcript/${guide.publicId}`, { headers });
+        assert.equal(response.status, 200);
+        const restored = (await response.json()).delta.messages;
+        for (const message of [...first, ...second]) {
+          const replay = restored.find(item => item.id === message.id);
+          for (const key of ["id", "seq", "sentAt", "displayTime", "body"]) assert.equal(replay[key], message[key], key);
+        }
+        const events = store.transcripts.get(`${store.player.id}\0talk:guide`).messages;
+        assert.ok(events.filter(item => item.event_type === "message_block").every(item => item.body === null));
+      }
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    settings.talkClock = originalClock;
+    guide.rules.splice(guide.rules.indexOf(rule), 1);
+    for (const hook of hookDefinitions) {
+      workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+      delete scenarioHookHandlers[hook.handler];
+    }
+  }
+});
+
 test("talk flowのgame_overは一時会話をpresentation sequenceで返す", async () => {
   const store = new MemoryStore();
   store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
@@ -1426,6 +1508,153 @@ test("修復対象を開く時は修復hookの後に開封hookを実行する", 
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(openedHook), 1);
     delete scenarioHookHandlers.test_capture_repaired_order;
     delete scenarioHookHandlers.test_capture_opened_order;
+  }
+});
+
+test("親アプリ同時修復はopt-inで到達済みの子だけを開き、親→子→開封を一括保存する", async () => {
+  const parent = workerScenario.apps.find(item => item.id === "notes");
+  const originalParent = { ...parent };
+  const settings = workerScenario.project;
+  const originalOption = settings.repairParentApp;
+  const order = [];
+  let deny = false;
+  let denyChild = false;
+  let invalidateParent = false;
+  let terminate = false;
+  const hooks = [
+    { event: "content_repaired", target: "notes", handler: "test_parent_repair", cond: "", llm: false },
+    { event: "content_repaired", target: "old_note", handler: "test_child_repair", cond: "", llm: false },
+    { event: "content_opened", target: "old_note", handler: "test_child_open", cond: "", llm: false }
+  ];
+  workerScenario.hooks.push(...hooks);
+  scenarioHookHandlers.test_parent_repair = context => {
+    order.push("parent");
+    if (deny) context.form.deny("parent_denied");
+    if (invalidateParent) context.state.set("chat_auth_verified", true);
+    if (terminate) context.effectSequence.gameOver();
+  };
+  scenarioHookHandlers.test_child_repair = context => {
+    order.push("child");
+    if (denyChild) context.form.deny("child_denied");
+  };
+  scenarioHookHandlers.test_child_open = () => order.push("opened");
+  try {
+    parent.initialState = "repairable";
+    const store = new MemoryStore();
+    const initialized = await reconcileScenarioState(store.player.state, store.player.id);
+    store.player.state = initialized.state;
+    for (const append of initialized.transcriptAppends) {
+      store.transcripts.set(`${store.player.id}\0${append.streamId}`, structuredClone(append));
+    }
+    const contentId = workerScenario.publicIds.content.old_note;
+    const app = createApp({ store, config: { appEnv: "dev", llm: {} } });
+    const open = () => app.request("http://localhost/api/content/opened", {
+      method: "POST", headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+      body: JSON.stringify({ appId: "notes", contentId })
+    });
+    settings.repairParentApp = true;
+    assert.equal((await open()).status, 409, "未検索のID指定では親を修復できない");
+    store.player.state.discoveredTargetKeys.push(`notes:${contentId}`);
+    settings.repairParentApp = false;
+    assert.equal((await open()).status, 409, "既定動作では親の個別修復が必要");
+    settings.repairParentApp = true;
+    for (const unavailable of ["hidden", "cond", "part"]) {
+      parent.initialState = unavailable === "hidden" ? "hidden" : "repairable";
+      parent.cond = unavailable === "cond" ? "chat_auth_verified" : "";
+      parent.unavailable = unavailable === "part";
+      assert.equal((await open()).status, 409, unavailable);
+    }
+    parent.initialState = "repairable"; parent.cond = ""; delete parent.unavailable;
+    deny = true;
+    assert.equal((await open()).status, 422);
+    assert.equal(store.player.state.repairedAppIds.includes("notes"), false);
+    assert.equal(store.player.state.repairedContentIds.includes("old_note"), false);
+    assert.deepEqual(order, ["parent"]);
+    deny = false; order.length = 0;
+    parent.cond = "!chat_auth_verified"; invalidateParent = true;
+    assert.equal((await open()).status, 409, "親hookでcondが変わったら再検査する");
+    assert.equal(store.player.state.repairedAppIds.includes("notes"), false);
+    parent.cond = ""; invalidateParent = false; order.length = 0; denyChild = true;
+    assert.equal((await open()).status, 422);
+    assert.equal(store.player.state.repairedAppIds.includes("notes"), false, "子hookの拒否でも親だけ保存しない");
+    assert.equal(store.player.state.repairedContentIds.includes("old_note"), false);
+    assert.deepEqual(order, ["parent", "child"]);
+    denyChild = false; order.length = 0;
+    const before = structuredClone(store.player.state);
+    assert.equal((await open()).status, 200);
+    assert.deepEqual(order, ["parent", "child", "opened"]);
+    assert.ok(store.player.state.repairedAppIds.includes("notes"));
+    assert.ok(store.player.state.repairedContentIds.includes("old_note"));
+    order.length = 0;
+    assert.equal((await open()).status, 200);
+    assert.deepEqual(order, ["opened"], "修復hookを再実行しない");
+    store.player.state = before; order.length = 0; terminate = true;
+    const ended = await open();
+    assert.equal(ended.status, 200);
+    assert.ok((await ended.json()).presentation);
+    assert.deepEqual(order, ["parent"], "親修復の終了演出後は子を開かない");
+    assert.equal(store.player.state.repairedContentIds.includes("old_note"), false);
+  } finally {
+    for (const key of Object.keys(parent)) delete parent[key];
+    Object.assign(parent, originalParent);
+    settings.repairParentApp = originalOption;
+    for (const hook of hooks) {
+      workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+      delete scenarioHookHandlers[hook.handler];
+    }
+  }
+});
+
+test("server/browserとも通常状態のコンテンツ・ルームを検索して未修復の親を開ける", async () => {
+  const originalMode = workerScenario.playerMode;
+  const originalOption = workerScenario.project.repairParentApp;
+  const parent = workerScenario.apps.find(item => item.id === "notes");
+  const content = workerScenario.contents.find(item => item.id === "old_note");
+  const originalParentInitial = parent.initialState;
+  const originalContentInitial = content.initialState;
+  const hook = { event: "session_started", target: "", handler: "test_normal_child_setup", cond: "", llm: false };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers.test_normal_child_setup = context => context.state.set("sealed_note_unlocked", true);
+  workerScenario.project.repairParentApp = true;
+  parent.initialState = "repairable";
+  content.initialState = "normal";
+  try {
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      for (const [appId, contentId, query] of [
+        ["notes", content.publicId, "古いメモ"],
+        ["chat", workerScenario.publicIds.talk.lobby, "サンプルルーム"]
+      ]) {
+        const store = new MemoryStore();
+        store.player.state = null;
+        const app = createApp({ store, config: { appEnv: "dev", llm: {}, browserStateSecret: "normal-child-test" } });
+        const headers = { "content-type": "application/json", ...(mode === "server" ? { authorization: "Bearer memory-token" } : {}) };
+        let state;
+        const post = async (route, values) => {
+          const response = await app.request(`http://localhost${route}`, { method: "POST", headers, body: JSON.stringify({ progressToken: state?.progressToken, ...values }) });
+          const payload = await response.json();
+          if (payload.playerState) state = payload.playerState;
+          return { status: response.status, payload };
+        };
+        assert.equal((await post("/api/session/start", { serialCode: "1234" })).status, 200);
+        assert.equal((await post("/api/content/opened", { appId, contentId })).status, 409, "未検索の直接指定は拒否する");
+        const searchTalk = state.talks.find(item => item.kind === "search_agent");
+        const searched = await post("/api/talk/send", { talkId: searchTalk.talkId, turnKey: searchTalk.turnKey, message: query });
+        assert.equal(searched.status, 200, JSON.stringify(searched.payload));
+        const result = searchResultsFrom(searched.payload).find(item => item.appId === appId && item.contentId === contentId);
+        assert.equal(result?.repairable, true, `${mode}/${appId}: 子がnormalでも親を修復する検索結果`);
+        const opened = await post("/api/content/opened", { appId, contentId });
+        assert.equal(opened.status, 200, JSON.stringify(opened.payload));
+        assert.equal(state.visibleDeviceState.apps.find(item => item.id === appId)?.available, true);
+      }
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    workerScenario.project.repairParentApp = originalOption;
+    parent.initialState = originalParentInitial;
+    content.initialState = originalContentInitial;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_normal_child_setup;
   }
 });
 
@@ -1726,6 +1955,60 @@ test("メッセージ内リンクhookへ照合済みの遷移先を渡す", asyn
   } finally {
     workerScenario.hooks.splice(workerScenario.hooks.indexOf(linkHook), 1);
     delete scenarioHookHandlers.test_capture_message_link;
+  }
+});
+
+test("到達済みリンクのhookを先に確定し、遷移できなくても状態と演出を返す", async () => {
+  const originalMode = workerScenario.playerMode;
+  const talk = workerScenario.talks.find(item => item.id === "guide");
+  const content = workerScenario.contents.find(item => item.id === "welcome_note");
+  const parent = workerScenario.apps.find(item => item.id === content.appId);
+  const initial = [content.initialState, parent.initialState];
+  const hook = { event: "message_link_opened", target: "link_probe", handler: "link_probe", cond: "", llm: false };
+  workerScenario.hooks.push(hook);
+  workerScenario.stateVariables.link_probe = false;
+  workerScenario.stateVariableDefinitions.link_probe = { type: "boolean" };
+  try {
+    for (const mode of ["server", "browser"]) for (const kind of ["open", "notice", "deny", "unexposed", "nohook"]) {
+      workerScenario.playerMode = mode;
+      content.initialState = "repairable";
+      parent.initialState = "repairable";
+      const store = new MemoryStore();
+      store.player.state = (await reconcileScenarioState(store.player.state, store.player.id)).state;
+      store.player.state.revealedMessageLinks.push({ id: "probe:link:1", talkId: talk.id, appId: content.appId, contentId: content.id, actionId: kind === "nohook" ? "" : "link_probe" });
+      let calls = 0;
+      scenarioHookHandlers.link_probe = context => {
+        calls += 1;
+        context.state.set("link_probe", true);
+        context.effect.noise();
+        if (kind === "open" || kind === "deny") {
+          context.app.repair(parent.id);
+          context.content.setState(content.id, "repaired");
+        }
+        if (kind === "deny") context.form.deny("not_now");
+      };
+      const app = createApp({ store, config: { appEnv: "development", browserStateSecret: "link-secret", llm: {} } });
+      const progressToken = mode === "browser" ? await encodeBrowserProgress("link-secret", workerScenario.project.id, store.player) : undefined;
+      const response = await app.request("http://localhost/api/message-link/open", {
+        method: "POST", headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
+        body: JSON.stringify({ talkId: talk.publicId, messageRef: kind === "unexposed" ? "unknown" : "probe", segmentIndex: 0, progressToken })
+      });
+      const result = await response.json();
+      assert.equal(response.status, kind === "deny" ? 422 : ["unexposed", "nohook"].includes(kind) ? 409 : 200, `${mode}/${kind}`);
+      assert.equal(calls, ["unexposed", "nohook"].includes(kind) ? 0 : 1);
+      if (result.ok) {
+        assert.deepEqual(result.target, kind === "open" ? { appId: content.appId, contentId: content.publicId } : null);
+        assert.equal(result.presentation.effects[0].type, "noise");
+      } else assert.equal(result.presentation, undefined);
+      if (mode === "server") assert.equal(store.player.state.stateValues.link_probe === true, kind === "open" || kind === "notice");
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    [content.initialState, parent.initialState] = initial;
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.link_probe;
+    delete workerScenario.stateVariables.link_probe;
+    delete workerScenario.stateVariableDefinitions.link_probe;
   }
 });
 

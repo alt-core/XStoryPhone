@@ -441,7 +441,7 @@ test("デモtalk flowの通常遷移先は返信可能な位置を持つ", () =>
   }
 });
 
-test("生成ナビアトラスは元UIと同じ8x9契約を持つ", () => {
+test("生成ナビアトラスは検索ナビ用の8列9行の配置を持つ", () => {
   const source = fs.readFileSync("public/search-agent/search-agent-spritesheet.svg", "utf8");
   assert.match(source, /viewBox="0 0 1536 1872"/u);
   assert.equal((source.match(/<ellipse /gu) ?? []).length, 10);
@@ -1363,6 +1363,13 @@ test("シナリオディレクトリを明示してデモと別の原本を選�
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "選択された作品");
+    fs.writeFileSync(path.join(temporaryRoot, "package.json"), JSON.stringify({ xstoryphone: { scenarioDir: "scenario/my-story" } }));
+    const configured = spawnSync(process.execPath, [
+      "--input-type=module", "--eval",
+      `import { loadAndValidateScenario } from ${JSON.stringify(scenarioLibUrl)}; console.log(loadAndValidateScenario().worker.project.name);`
+    ], { cwd: temporaryRoot, env: { ...process.env, XSTORYPHONE_SCENARIO_DIR: "" }, encoding: "utf8" });
+    assert.equal(configured.status, 0, configured.stderr);
+    assert.equal(configured.stdout.trim(), "選択された作品");
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
@@ -2098,6 +2105,21 @@ test("未修復の親アプリに属するコンテンツも検索候補へ出�
   } finally {
     workerScenario.contents.splice(workerScenario.contents.indexOf(testContent), 1);
   }
+});
+
+test("親修復を選んだ作品だけ通常ルームの検索結果に修復の必要性を示す", () => {
+  const previous = workerScenario.project.repairParentApp;
+  try {
+    const state = createInitialPlayerState();
+    state.stateValues.sealed_note_unlocked = true;
+    const result = () => searchScenario("サンプルルーム", state).find(item => item.contentId === workerScenario.publicIds.talk.lobby);
+    workerScenario.project.repairParentApp = false;
+    assert.equal(result()?.repairable, false);
+    workerScenario.project.repairParentApp = true;
+    assert.equal(result()?.repairable, true);
+    state.repairedAppIds.push("chat");
+    assert.equal(result()?.repairable, false, "親が直れば通常ルームは修復対象でなくなる");
+  } finally { workerScenario.project.repairParentApp = previous; }
 });
 
 test("検索語はNFKCで正規化し、入れ子配列だけをAND条件として扱う", () => {

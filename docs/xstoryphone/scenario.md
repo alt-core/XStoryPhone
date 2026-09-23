@@ -8,7 +8,13 @@
 
 `npm run scenario:build` は取得済みTSVを検証し、クライアント用とWorker用のデータ、型付きhook handlerを生成します。Google Sheetsを自動取得・更新する処理ではありません。内部IDから公開IDも同時に生成するため、生成済みファイルを手で編集しないでください。別の`scenario.json`や`hooks.ts`を作者原本として併用しません。
 
-デモを残して別の作品を作る場合は、`scenario/demo` を作品用ディレクトリへ複製し、`XSTORYPHONE_SCENARIO_DIR` で選びます。環境変数を省略した場合だけ `scenario/demo` を使います。
+デモを残して別の作品を作る場合は、`scenario/demo` を作品用ディレクトリへ複製します。リポジトリの既定は `package.json` に次の設定を追加して選べます。dev・build・検証・Sheets同期・制作ツールで共通です。
+
+```json
+"xstoryphone": { "scenarioDir": "scenario/my-story" }
+```
+
+選択順は `XSTORYPHONE_SCENARIO_DIR` → `package.json` の `xstoryphone.scenarioDir` → `scenario/demo` です。パスはリポジトリ直下を基準に解決します。一時的に別の作品を選ぶ場合は環境変数で上書きします。`npm test` は作品設定によらずエンジンのdemo fixtureを使い、実行前の生成物を復元します。
 
 ```sh
 XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run scenario:build
@@ -51,6 +57,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `project.id` / `project.name` | `my_story` / `My Story` | 安定した作品ID／作品名 |
 | `device.os_name` / `search_agent.name` | `StoryOS` / `ナビ` | 画面上の名称 |
 | `device.date` / `device.time_label` | `2026-08-12` / `20:14` | 作中の日時 |
+| `talk.clock` | `scenario` | 発話の表示時計。`real`（既定）/ `scenario`。exposureはprivate |
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
 | `device.lock_pin` | `0420` | fixed-pin時だけ指定し、exposureはprivate |
@@ -63,9 +70,32 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 進行中は予約状態変数`os_date`と`os_time_label`を更新できます。上の定数が初期値になるため、`state_vars`へ重ねて宣言しません。hookのscriptセルには`state.set("os_date", "2026-08-13")`、会話のsetセルには`os_time_label = "21:30"`のように書きます。日付が変わるとカレンダーはその週を表示します。
 
+`talk.clock=scenario` の場合、メッセージ・チャットの新しい発言は、追加時点の `os_date` / `os_time_label` を使って日付・時刻を表示します。プレイヤーの投稿はruleのset適用前、応答は適用後、hookの `talk.addBlock` はその記述位置までの状態を捕捉します。後から時計を進めたり戻したりしても、過去の発言日時や履歴順序・既読は変わりません。初期履歴は引き続き `talk_blocks.time` の指定を使います。
+
+作中時計を変更しない間は、投稿・応答とも同じ作中日時を表示します。発話数や実際の経過時間で日付・時刻を自動的に進めません。年越しなどの演出はsetやhookで時計を明示的に変更してください。`HH:mm:ss` の数値時刻も、表示は従来どおり分までです。「夕方」などの任意の時刻ラベルは、その表記を保持します。端末のタイムゾーンによる時差は付けません。
+
+server/browser/staticで同じ規則を使います。時刻欄のない検索AIには表示日時を追加しません。設定変更前の発言へ日時を後付けすることはありません。内部の `sentAt` は記録順序のための実時刻を保ち、公開messageの `displayTime` が作中の表示文字列です。設定はビルド時に型付きの実行設定へ変換されます。staticにもその設定を渡しますが、作品独自のprivate定数をまとめて公開するものではありません。
+
 固定PINは4〜8桁の数字文字列です。Sheetで先頭ゼロを落とさず文字列として保持してください。正答はクライアントへ出さず、server/browserではAPIで、staticでは部分hashと回答JSONで判定します。入力画面の順序と保存方式は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
 
 破損リンク案内の`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`もこの表で制作します。必須定数と初期画面の値はデモ表を基に編集し、`client.*`と`device.lock_pin_length`は自動生成されるため書きません。
+
+## 初期UIの画像と告知
+
+次の任意設定も`project_constants`の行として追加できます。すべてexposureは`public`です。未指定なら標準表示を維持します。
+
+| key | 用途 |
+|---|---|
+| `search_agent.sprite_url` | 検索ナビのスプライト画像URL |
+| `effect.game_over_image_url` | GAME OVER演出のロゴ画像URL |
+| `effect.all_clear_image_url` | ALL CLEAR演出のロゴ画像URL |
+| `start_confirmation.notices` | 開始前の追加告知。セル内改行で1項目ずつ |
+
+スプライトは8列×9行で、標準は1536×1872px（1セル192×208px）です。待機は1行目の左から6枚、喜びは4行目の左から4枚を使います。画像取得に失敗したら一度だけ標準画像へ戻します。作品画像は標準の自動生成先とは別pathへ置いてください。
+
+告知は標準の保存・通信説明へ追記され、本文領域内でスクロールします。対応する`**強調**`だけを太字にし、HTML・リンクは解釈しません。
+
+これらの設定値と画像URLは開始前から配布されます。未到達の結末・謎の答えを隠すための設定ではありません。秘密の画像や本文は到達条件・partを使って後から公開してください。
 
 ## アプリとコンテンツの状態
 
@@ -192,7 +222,13 @@ player_input =~ /^(はい|了解)/u
 
 入力はNFKCで正規化し、プレイヤーの入力に検索語が含まれる場合に一致します。短い入力を長い検索語へ逆向きに一致させることはありません。
 
-コンテンツ自身の`cond`を満たしていれば、親アプリが未修復でも検索結果には現れます。その結果を開こうとした時は修復せず、まだ開けない旨を検索AIが返します。
+コンテンツ自身の`cond`を満たしていれば、親アプリが未修復でも検索結果には現れます。既定では、その結果を開こうとした時は修復せず、まだ開けない旨を検索AIが返します。
+
+`project_constants` に `content.repair_parent_app = true`（exposureはprivate）を指定すると、検索済みのコンテンツや会話ルームを開く際に、未修復の親アプリも同じ操作で修復します。親が `repairable` でcondを満たし、必要なpartを取得済みの場合だけです。hiddenアプリ、未取得part、条件不成立、未検索のIDを指定する操作では解放しません。添付から別アプリを横断的に修復する設定ではありません。
+
+子自身が `normal`、または修復済みでも、親アプリが未修復ならこの操作の対象です。親が修復された後の通常コンテンツは、新たな検索では修復対象になりません。
+
+hookの順序は、親アプリの `content_repaired` → 子自身の `content_repaired`（必要な場合）→ 子の `content_opened` です。親の `content_opened` は追加しません。変更は一括保存し、hook拒否時は親だけ修復した状態を残しません。途中で終了演出が指定されたら後続hookを止めます。設定省略・falseの場合は従来どおりです。
 
 `repair_label` は修復前に表示する壊れた名称です。
 
@@ -223,6 +259,12 @@ project_constantsの`chat_auth.cond`を満たす間、チャットは再認証�
 初期予約は`schedules`のid/event/delay_msで指定します。fieldsは必要な場合だけ、文字列値のJSON objectを1セルへ書きます（例: `{"source":"opening"}`）。eventには対応するscheduled_event hookのtargetを指定します。進行中の予約には後述の`context.schedule.after`を使います。
 
 作品固有アプリはコード側のregistryと画面componentを登録し、home_itemsへアプリを加え、`project_items`へid/app/recordを書きます。recordはそのアプリ固有のJSON objectを1セルに記述する場所です（例: `{"title":"資料","body":"本文"}`）。標準アプリの本文を別JSON原本へ戻すための欄ではありません。registryの検証と公開投影を通し、未修復のrecordをクライアントへ先に出しません。詳細は[作品固有の拡張](extensions.md)を参照してください。
+
+## 検索AIの吹き出し
+
+`assistant_messages` は指定surfaceとcondに応じた案内を吹き出しで表示します。吹き出しをタップすると検索AIの会話を開き、会話を閉じたら吹き出しを消してナビを端へ引っ込めます。この非表示はその画面だけの一時状態で、別アプリへ移動して戻ると条件に合う案内を再表示できます。吹き出しの文言を会話履歴へ自動追加する機能ではありません。
+
+通常の案内は背景タップでも引っ込みます。ただし、ホームの初回破損リンク案内は操作の手がかりを残すため、背景タップでは消しません。会話を開いて閉じれば、ほかの吹き出しと同様に引っ込みます。
 
 ## hook
 

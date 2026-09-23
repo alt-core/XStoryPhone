@@ -99,6 +99,7 @@ function navigationHarness() {
     uiState: { sessionToken: "session", locked: false }, globalErrorVisible: false,
     shadeOpen: false, transientAssistantMessage: undefined, suppressedContentOpenKeys: [], inFlightContentOpenKeys: [],
     displayedTalkTarget: null, notificationToast: null,
+    playerState: null,
     focusedTalkHistoryRepairId: "", showTransientAssistantMessage() {}, rememberAppContent() {},
     isSearchAgentResultAlreadyRepaired: () => false,
     openContentFromExplicitNavigation: () => response.promise,
@@ -114,7 +115,7 @@ function inFlightNavigationHarness() {
   const harness = navigationHarness();
   let requests = 0;
   Object.assign(harness.context, {
-    qaMode: false, playerState: { stateVersion: 1 },
+    qaMode: false, playerState: { stateVersion: 1, visibleDeviceState: { apps: [] }, contentStates: [] },
     apps: [{ id: "notes", available: true }],
     deviceState: { notifications: [{ id: "notification", appId: "notes", targetContentId: "note" }] },
     pendingTalkReadCursorPayload: () => [], clearSyncedTalkReadCursors() {},
@@ -127,6 +128,19 @@ function inFlightNavigationHarness() {
   ], harness.context);
   return { ...harness, get requests() { return requests; } };
 }
+
+test("遷移先のないリンク成功も状態と演出を適用し、画面を移動しない", async () => {
+  const { context, response, focused, states } = navigationHarness();
+  const presentations = [];
+  context.enqueuePresentation = value => presentations.push(value);
+  const pending = context.openTalkMessageLink("talk", "message", 0, { backLinkSource: null });
+  const presentation = { effects: [{ type: "noise", durationMs: 100 }] };
+  response.resolve({ ok: true, playerState: { stateVersion: 2 }, target: null, presentation });
+  await pending;
+  assert.equal(states.length, 1);
+  assert.deepEqual(presentations, [presentation]);
+  assert.deepEqual(focused, []);
+});
 
 test("同じ対象の開封待ちに再選択しても先行要求を取消さず一度だけ開く", async () => {
   const harness = inFlightNavigationHarness();

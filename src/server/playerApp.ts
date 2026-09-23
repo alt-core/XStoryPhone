@@ -17,6 +17,7 @@ import { resolveScenarioTalkRule } from "../worker/services/talkResolver.ts";
 import { createTalkContextRuntime } from "../worker/services/talkContextRuntime.ts";
 import { evaluateTalkOutputSteps, talkOutputMatchEnv } from "../worker/services/talkOutput.ts";
 import { latestTalkDeliveredAt, nextTalkMessageSentAt } from "../worker/talkMessageClock.ts";
+import { captureTalkDisplayTime, talkDisplayTimeLabel, talkEventFormatEnv } from "../worker/talkDisplayClock.ts";
 import { applyCompactStateAssignments, effectiveStateValues } from "../worker/stateValues.ts";
 import { BrowserProgressTooLargeError, decodeBrowserProgress, encodeBrowserProgress } from "./browserProgress.ts";
 import { accessCodeCheckDigits } from "./accessCode.ts";
@@ -947,62 +948,86 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const contentId = cleanText(body?.contentId, 160);
     const appId = cleanText(body?.appId, 64);
     const content = contentByPublicId(contentId);
-    const contentParentUnavailable = content?.appId === appId && !appAvailable(appId, player.state);
-    if (!contentId || !appId || contentParentUnavailable || !openTargetExists(contentId, appId, player.state)) {
+    const openedTalk = talkByPublicId(contentId);
+    const parent = appById(appId);
+    const ownContent = content?.appId === appId || (openedTalk && isDeviceTalk(openedTalk) && openedTalk.appId === appId);
+    const parentUnavailable = ownContent && !appAvailable(appId, player.state);
+    let nextState = copyStoredPlayerState(player.state);
+    const repairParent = Boolean(parentUnavailable
+      && runtime.workerScenario.project.repairParentApp
+      && parent?.initialState === "repairable" && !parent.unavailable
+      && !player.state.repairedAppIds.includes(appId)
+      && !content?.unavailable && !openedTalk?.unavailable
+      && repairTargetWasFound(player.state, contentId, appId));
+    // 子の到達権限を先に検査する。親の検索カードを経由しないだけで、検索・cond・partは迂回しない。
+    if (repairParent) nextState.repairedAppIds = unique([...nextState.repairedAppIds, appId]);
+    if (!contentId || !appId || (parentUnavailable && !repairParent)
+      || (repairParent && !appAvailable(appId, nextState)) || !openTargetExists(contentId, appId, nextState)) {
       return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
     }
     const notificationIdsToClear = notificationIdsForTarget(contentId, player.state);
-    let nextState = copyStoredPlayerState(player.state);
     await syncTalkReadCursors(c, player, nextState, body);
     const target = repairTarget(contentId, appId);
     let repaired = false;
     const transcriptAppends: TranscriptAppend[] = [];
     const contentHookResults: ScenarioHookResult[] = [];
     let internalTargetId = contentByPublicId(contentId)?.id ?? talkByPublicId(contentId)?.id ?? contentId;
-    if (target?.kind === "app" && !nextState.repairedAppIds.includes(target.internalId)) {
-      if (!repairTargetWasFound(player.state, contentId, appId)) {
+    if (repairParent) {
+      const parentHook = await applyHooks(c, player.id, nextState, { eventId: "content_repaired", contentId: appId });
+      nextState = parentHook.state;
+      transcriptAppends.push(...parentHook.transcriptAppends);
+      contentHookResults.push(parentHook);
+      if (parentHook.rejection)
+        return operationResult({ ok: false, error: parentHook.rejection.error, playerState: await stateJson(c, player) }, 422);
+      if (!parentHook.presentationSequence && (!appAvailable(appId, nextState) || !openTargetExists(contentId, appId, nextState)))
         return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
-      }
-      nextState.repairedAppIds = unique([...nextState.repairedAppIds, target.internalId]);
-      internalTargetId = target.internalId;
-      repaired = true;
     }
-    else if (target?.kind === "content" && !nextState.repairedContentIds.includes(target.internalId)) {
-      if (!repairTargetWasFound(player.state, contentId, appId)) {
-        return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+    if (!contentHookResults.some((result) => result.presentationSequence)) {
+      if (target?.kind === "app" && !nextState.repairedAppIds.includes(target.internalId)) {
+        if (!repairTargetWasFound(player.state, contentId, appId)) {
+          return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+        }
+        nextState.repairedAppIds = unique([...nextState.repairedAppIds, target.internalId]);
+        internalTargetId = target.internalId;
+        repaired = true;
       }
-      const restoredHistory = restoredTalkHistoryMessages(nextState, target.internalId);
-      if (restoredHistory && !restoredHistory.ok) {
-        return operationResult({
-          ok: false,
-          error: restoredHistory.error === "history_layout_changed" ? "scenario_changed" : "not_available",
-          playerState: await stateJson(c, player)
-        }, 409);
+      else if (target?.kind === "content" && !nextState.repairedContentIds.includes(target.internalId)) {
+        if (!repairTargetWasFound(player.state, contentId, appId)) {
+          return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+        }
+        const restoredHistory = restoredTalkHistoryMessages(nextState, target.internalId);
+        if (restoredHistory && !restoredHistory.ok) {
+          return operationResult({
+            ok: false,
+            error: restoredHistory.error === "history_layout_changed" ? "scenario_changed" : "not_available",
+            playerState: await stateJson(c, player)
+          }, 409);
+        }
+        nextState.repairedContentIds = unique([...nextState.repairedContentIds, target.internalId]);
+        internalTargetId = target.internalId;
+        if (restoredHistory?.ok && restoredHistory.messages.length) {
+          nextState = revealTalkMessages(nextState, restoredHistory.talk.id, restoredHistory.messages);
+          synchronizeInitialTalkLastOtherMessageId(nextState, restoredHistory.talk.id);
+        }
+        repaired = true;
       }
-      nextState.repairedContentIds = unique([...nextState.repairedContentIds, target.internalId]);
-      internalTargetId = target.internalId;
-      if (restoredHistory?.ok && restoredHistory.messages.length) {
-        nextState = revealTalkMessages(nextState, restoredHistory.talk.id, restoredHistory.messages);
-        synchronizeInitialTalkLastOtherMessageId(nextState, restoredHistory.talk.id);
+      else if (target?.kind === "talk" && !nextState.repairedContentIds.includes(target.internalId)) {
+        if (!repairTargetWasFound(player.state, contentId, appId)) {
+          return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+        }
+        nextState.repairedContentIds = unique([...nextState.repairedContentIds, target.internalId]);
+        synchronizeInitialTalkLastOtherMessageId(nextState, target.internalId);
+        internalTargetId = target.internalId;
+        repaired = true;
       }
-      repaired = true;
-    }
-    else if (target?.kind === "talk" && !nextState.repairedContentIds.includes(target.internalId)) {
-      if (!repairTargetWasFound(player.state, contentId, appId)) {
-        return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
+      if (repaired) {
+        const hookResult = await applyHooks(c, player.id, nextState, { eventId: "content_repaired", contentId: internalTargetId }, { precedingTranscriptAppends: transcriptAppends });
+        nextState = hookResult.state;
+        transcriptAppends.push(...hookResult.transcriptAppends);
+        contentHookResults.push(hookResult);
+        if (hookResult.rejection)
+          return operationResult({ ok: false, error: hookResult.rejection.error, playerState: await stateJson(c, player) }, 422);
       }
-      nextState.repairedContentIds = unique([...nextState.repairedContentIds, target.internalId]);
-      synchronizeInitialTalkLastOtherMessageId(nextState, target.internalId);
-      internalTargetId = target.internalId;
-      repaired = true;
-    }
-    if (repaired) {
-      const hookResult = await applyHooks(c, player.id, nextState, { eventId: "content_repaired", contentId: internalTargetId });
-      nextState = hookResult.state;
-      transcriptAppends.push(...hookResult.transcriptAppends);
-      contentHookResults.push(hookResult);
-      if (hookResult.rejection)
-        return operationResult({ ok: false, error: hookResult.rejection.error, playerState: await stateJson(c, player) }, 422);
     }
     if (!contentHookResults.some((result) => result.presentationSequence)) {
       const openedHookResult = await applyHooks(c, player.id, nextState, { eventId: "content_opened", contentId: internalTargetId, fields: { appId } }, { precedingTranscriptAppends: transcriptAppends });
@@ -1012,7 +1037,6 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       if (openedHookResult.rejection)
         return operationResult({ ok: false, error: openedHookResult.rejection.error, playerState: await stateJson(c, player) }, 422);
     }
-    const openedTalk = talkByPublicId(contentId);
     if (openedTalk && isDeviceTalk(openedTalk) && openedTalk.appId === appId) {
       nextState.repairedContentIds = unique([
         ...nextState.repairedContentIds,
@@ -1203,14 +1227,10 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const app = appById(link.appId);
     const content = contentByInternalId(link.contentId);
     const targetTalk = talkByInternalId(link.contentId);
-    const targetAppAvailable = Boolean(app && appAvailable(app.id, player.state));
-    const targetContentAvailable = Boolean(content && content.appId === link.appId && contentAvailable(content, player.state));
-    const targetTalkAvailable = Boolean(targetTalk && isDeviceTalk(targetTalk) && targetTalk.appId === link.appId && talkAvailable(targetTalk, player.state));
-    if (!targetAppAvailable || (!targetContentAvailable && !targetTalkAvailable)) {
+    if (!app || !(content?.appId === link.appId || (targetTalk && isDeviceTalk(targetTalk) && targetTalk.appId === link.appId))) {
       return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
     }
     let nextState = player.state;
-    let stateChanged = false;
     let transcriptAppends: TranscriptAppend[] = [];
     let linkHookResult: ScenarioHookResult | null = null;
     if (link.actionId) {
@@ -1224,7 +1244,6 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       nextState = hookResult.state;
       linkHookResult = hookResult;
       transcriptAppends = hookResult.transcriptAppends;
-      stateChanged = JSON.stringify(nextState) !== JSON.stringify(player.state);
     }
     if (linkHookResult?.rejection)
       return operationResult({ ok: false, error: linkHookResult.rejection.error, playerState: await stateJson(c, player) }, 422);
@@ -1238,10 +1257,15 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       : { ok: true as const, player };
     if (!committed.ok)
       return conflict(c, player);
+    // リンクの処理で対象を解放できるため、遷移可否は確定後の状態で判定する。
+    const targetAvailable = appAvailable(app.id, committed.player.state)
+      && (content ? contentAvailable(content, committed.player.state) : Boolean(targetTalk && talkAvailable(targetTalk, committed.player.state)));
+    if (!targetAvailable && !linkHookResult)
+      return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, committed.player) }, 409);
     const targetContentId = content?.publicId ?? targetTalk?.publicId ?? link.contentId;
     return operationResult({
       ok: true,
-      target: { appId: link.appId, contentId: targetContentId },
+      target: targetAvailable && !presentation?.sequence ? { appId: link.appId, contentId: targetContentId } : null,
       playerState: await stateJson(c, committed.player),
       ...(presentation ? { presentation } : {})
     });
@@ -1314,8 +1338,9 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       const nextTalk = nextState.talks[talk.id];
       const nextFrom = selection.rule.mode === "stay" ? fromId : selection.rule.nextFromId;
       nextState.stateValues = applyCompactStateAssignments(runtime.workerScenario.stateVariables, nextState.stateValues, selection.rule.set, selection.matchGroups, runtime.workerScenario.stateVariableDefinitions);
+      const outputStateValues = effectiveStateValues(runtime.workerScenario.stateVariables, nextState.stateValues);
       const outputEnv = {
-        ...effectiveStateValues(runtime.workerScenario.stateVariables, nextState.stateValues),
+        ...outputStateValues,
         ...talkOutputMatchEnv(selection.rule.match, selection.matchGroups),
         player_input: message
       };
@@ -1416,6 +1441,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       });
     }
     const now = nextTalkMessageSentAt(storedTalk.lastDeliveredAt, new Date().toISOString());
+    const ownerDisplayTime = captureTalkDisplayTime(runtime.workerScenario.project.talkClock, effectiveStateValues(runtime.workerScenario.stateVariables, readState.stateValues));
     const nextState = copyStoredPlayerState(readState);
     const nextTalk = nextState.talks[talk.id];
     const nextFrom = selection.rule.mode === "stay" || selection.rule.mode === "game_over"
@@ -1432,7 +1458,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       event_type: "player_message",
       body: message,
       block_id: null,
-      format_env_json: null,
+      format_env_json: talkEventFormatEnv(undefined, ownerDisplayTime),
       delivered_at: now
     };
     const ownerMessage: StoredTalkMessage = {
@@ -1443,14 +1469,17 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       body: message,
       ...(talk.kind === "chat" ? { senderName: "あなた" } : {}),
       attachment: null,
-      sentAt: now
+      sentAt: now,
+      ...(ownerDisplayTime ? { displayTime: talkDisplayTimeLabel(ownerDisplayTime) } : {})
     };
+    const replyStateValues = effectiveStateValues(runtime.workerScenario.stateVariables, nextState.stateValues);
     const reply = messagesForTalkOutputSteps({
       talk,
+      displayStateValues: replyStateValues,
       steps: selection.rule.outputSteps,
       previousCounts: nextTalk.blockDisplayCounts,
       formatEnv: {
-        ...effectiveStateValues(runtime.workerScenario.stateVariables, nextState.stateValues),
+        ...replyStateValues,
         ...talkOutputMatchEnv(selection.rule.match, selection.matchGroups)
       },
       baseSentAt: new Date(Date.parse(now) + 1000).toISOString(),

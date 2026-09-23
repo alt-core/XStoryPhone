@@ -28,6 +28,7 @@
 </script>
 
 <DocumentListApp
+  mailLayout
   appTitle="メール"
   subtitle={`${mails.length}件・端末内`}
   indexLabel="メール"

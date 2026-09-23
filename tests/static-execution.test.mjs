@@ -138,6 +138,63 @@ test("staticのpersistent保存はcompact eventを保持し、再開・別tab競
   assert.ok(!restarted.searchAgentMessages.some(item => item.body === "未到達の本文マーカー7391"));
 });
 
+test("staticも作中の表示時計をcompact eventへ保存し、IndexedDBから同じ日時で復元する", async t => {
+  const f = await filesFixture(t, ({ worker }) => {
+    worker.project.talkClock = "scenario";
+    worker.projectConstants["private_answer_table"] = "非公開の正答表-63815";
+    worker.stateVariables.os_date = "2027-12-31";
+    worker.stateVariables.os_time_label = "23:59:59";
+    worker.apps.find(item => item.id === "messages").initialState = "normal";
+  });
+  assert.ok(!fs.readFileSync(path.join(f.outputDir, f.manifest.base), "utf8").includes("非公開の正答表-63815"));
+  const previous = globalThis.indexedDB;
+  globalThis.indexedDB = new IDBFactory();
+  t.after(() => { globalThis.indexedDB = previous; });
+  const options = { ...f.options, storage: { mode: "persistent", prefix: "static-story-clock" } };
+  const first = createStaticPlayerExecution(options);
+  await first.initialize();
+  let state = (await request(first, "/api/session/start")).playerState;
+  const talkId = f.scenario.worker.publicIds.talk.guide;
+  const talk = state.talks.find(item => item.talkId === talkId);
+  state = (await request(first, "/api/talk/send", { talkId, turnKey: talk.turnKey, message: "メッセージテスト" })).playerState;
+  const owner = state.smsMessages.find(item => item.body === "メッセージテスト");
+  assert.equal(owner.displayTime, "12/31 23:59");
+  const replies = state.smsMessages.filter(item => item.talkId === talkId && item.seq > owner.seq);
+  assert.ok(replies.length);
+  assert.ok(replies.every(item => item.displayTime === "12/31 23:59"));
+  const second = createStaticPlayerExecution(options);
+  await second.initialize();
+  const resumed = (await request(second, "/api/player-state")).playerState;
+  assert.deepEqual(resumed.smsMessages, state.smsMessages);
+  const database = await openPlayerRecordDatabase(`static-story-clock:xstoryphone-static-player-${f.scenario.worker.project.id}`, 1, "records");
+  const records = await readPlayerRecords(database, "records");
+  database.close();
+  assert.ok(records.some(record => record.messages?.some(event => event.format_env_json?.includes("$display_time"))));
+  assert.ok(!JSON.stringify(records).includes("メッセージの送受信を確認できました。"), "NPC本文を展開して保存しない");
+});
+
+test("staticでも通常・破損どちらの子からも未修復の親を同時修復できる", async t => {
+  for (const initial of ["normal", "repairable"]) {
+    const f = await filesFixture(t, ({ worker }) => {
+      worker.project.repairParentApp = true;
+      worker.apps.find(item => item.id === "notes").initialState = "repairable";
+      worker.contents.find(item => item.id === "old_note").initialState = initial;
+    });
+    const base = JSON.parse(fs.readFileSync(path.join(f.outputDir, f.manifest.base), "utf8"));
+    assert.ok(!JSON.stringify(base).includes('"content.repair_parent_app"'), "raw定数をstaticへ特別に残さない");
+    const execution = createStaticPlayerExecution(f.options);
+    await execution.initialize();
+    const started = (await request(execution, "/api/session/start")).playerState;
+    const searched = (await send(execution, started, "古いメモ")).playerState;
+    assert.equal(searched.searchAgentMessages.flatMap(item => item.kind === "search_results" ? item.results : [])
+      .find(item => item.contentId === f.scenario.worker.publicIds.content.old_note)?.repairable, true);
+    const state = (await request(execution, "/api/content/opened", {
+      appId: "notes", contentId: f.scenario.worker.publicIds.content.old_note
+    })).playerState;
+    assert.ok(state.visibleDeviceState.notes.some(item => item.contentId === f.scenario.worker.publicIds.content.old_note && !item.corrupted));
+  }
+});
+
 test("passwordの複数候補はsecretと同じ照合で、必要partの取得後にだけ本文を解錠する", async t => {
   const f = await filesFixture(t, ({ worker }) => {
     const attachment = worker.attachments.find(item => item.content === "sealed_note");
@@ -250,6 +307,25 @@ test("非baseのpassword入口は次のpartの鍵付き添付の枠を持ち、�
   assert.ok(!JSON.stringify(state).includes("後段password本文"));
   const unlocked=await request(execution,"/api/content/unlock",{contentId:f.scenario.worker.publicIds.content.sealed_note,password:"0420"});
   assert.equal(unlocked.playerState.unlockedAttachments[0].body,"後段password本文");
+});
+
+test("staticの到達済みリンクもhookで解放してから遷移先を返す", async t => {
+  const f = await filesFixture(t, ({ worker, hookScripts }) => {
+    const block = worker.talkBlocks.find(item => item.id === "search_agent::intro");
+    assert.ok(block);
+    block.messages[0].body = "[メモを開く](open:notes:old_note;action:link_open)";
+    block.messages[0].segments = [{ kind: "link", text: "メモを開く", appId: "notes", contentId: "old_note", actionId: "link_open", linkId: "static_link_probe" }];
+    worker.hooks.push({ event: "message_link_opened", target: "link_open", handler: "link_open", cond: "", llm: false, part: "base" });
+    hookScripts.link_open = 'content.setState("old_note", "repaired"); effect.noise();';
+  });
+  const execution = createStaticPlayerExecution(f.options);
+  await execution.initialize();
+  const state = (await request(execution, "/api/session/start")).playerState;
+  const message = state.searchAgentMessages.find(item => item.segments?.some(segment => segment.kind === "link"));
+  assert.ok(message);
+  const opened = await request(execution, "/api/message-link/open", { talkId: f.scenario.worker.publicIds.talk.search_agent, messageRef: message.id, segmentIndex: 0, linkId: message.segments[0].linkId });
+  assert.equal(opened.target.contentId, f.scenario.worker.publicIds.content.old_note);
+  assert.equal(opened.presentation.effects[0].type, "noise");
 });
 
 test("通常会話でもoptional抽出値はtemplateの空値として扱う", async t => {

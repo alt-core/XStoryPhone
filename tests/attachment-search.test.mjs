@@ -56,6 +56,12 @@ for (const kind of ["sms", "chat"]) {
       assert.equal(repairTarget(f.content.publicId, f.talk.appId), null, "添付タップで所有albumを横から修復しない");
       f.app.initialState = "repairable";
       assert.equal(openTargetExists(f.content.publicId, f.talk.appId, f.exposed), false, "appが使えなければ開けない");
+      const previous = workerScenario.project.repairParentApp;
+      try {
+        workerScenario.project.repairParentApp = true;
+        assert.equal(searchScenario("添付の手掛かり", f.exposed).find(item => item.contentId === f.content.publicId && item.appId === f.talk.appId)?.repairable, false,
+          "親の同時修復を有効にしても、添付の検索結果から別アプリを修復しない");
+      } finally { workerScenario.project.repairParentApp = previous; }
       f.app.initialState = "normal";
       f.attachment.cond = "false";
       assert.ok(!searchScenario("添付の手掛かり", f.exposed).some((item) => item.appId === f.talk.appId && item.contentId === f.content.publicId));

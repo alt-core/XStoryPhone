@@ -3,6 +3,13 @@ Transform: AWS::Serverless-2016-10-31
 Description: XStoryPhoneのAWSサーバーレス構成
 
 Parameters:
+  ProjectName:
+    Type: String
+    Default: xstoryphone
+    AllowedPattern: '^[a-z][a-z0-9-]{0,23}$'
+  WebAclArn:
+    Type: String
+    Default: ""
   EnvironmentName:
     Type: String
     AllowedValues: [dev, stg, prod]
@@ -93,13 +100,16 @@ Parameters:
     Default: 14
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
 
+Conditions:
+  HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
+
 Resources:
   AppTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub xstoryphone-${EnvironmentName}
+      TableName: !Sub ${ProjectName}-${EnvironmentName}
       BillingMode: PAY_PER_REQUEST
       TimeToLiveSpecification:
         AttributeName: expiresAtEpoch
@@ -150,7 +160,7 @@ Resources:
   AppFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub xstoryphone-${EnvironmentName}-api
+      FunctionName: !Sub ${ProjectName}-${EnvironmentName}-api
       Runtime: nodejs22.x
       Architectures: [arm64]
       CodeUri: ../../
@@ -226,7 +236,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub xstoryphone-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+      BucketName: !Sub ${ProjectName}-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -244,7 +254,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub xstoryphone-${EnvironmentName}-s3
+        Name: !Sub ${ProjectName}-${EnvironmentName}-s3
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
@@ -252,7 +262,7 @@ Resources:
   SpaRewriteFunction:
     Type: AWS::CloudFront::Function
     Properties:
-      Name: !Sub xstoryphone-${EnvironmentName}-spa-rewrite
+      Name: !Sub ${ProjectName}-${EnvironmentName}-spa-rewrite
       AutoPublish: true
       FunctionConfig:
         Comment: 拡張子のない画面URLをindex.htmlへ解決する
@@ -270,6 +280,7 @@ Resources:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
+        WebACLId: !If [HasWebAcl, !Ref WebAclArn, !Ref AWS::NoValue]
         Enabled: true
         HttpVersion: http2and3
         IPV6Enabled: true

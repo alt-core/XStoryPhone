@@ -53,7 +53,7 @@ test("公開PlayerStateは内部stateやcompact履歴fieldをspreadせず、許�
   initialized.state.privateAuditMarker = "private-field-must-not-leak";
   const projected = await publicPlayerState(initialized.state, 1, [], null, initialized.transcriptAppends);
   assert.equal(JSON.stringify(projected).includes("private-field-must-not-leak"), false);
-  const forbidden = new Set(["privateAuditMarker", "stateValues", "progress_json", "hookState", "format_env_json", "block_id", "inputHash", "r2Key", "runpodJobId"]);
+  const forbidden = new Set(["privateAuditMarker", "stateValues", "progress_json", "hookState", "format_env_json", "block_id", "inputHash", "r2Key", "externalJobId"]);
   function check(value) {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {

@@ -15,7 +15,7 @@
   import RadioApp from "./apps/RadioApp.svelte";
   import AlbumApp from "./apps/PhotosApp.svelte";
   import { clearTalkDelaySeenMessagesForMemoryKey } from "./apps/talkDelaySeenStorage";
-  import { talkMessageTimeLabel } from "./apps/talkMessageTime.ts";
+  import { talkMessageDisplayTime } from "./apps/talkMessageTime.ts";
   import { demoDeviceStateGenerated as demoDeviceState } from "./generated/demoDeviceState.generated";
   import { demoProjectConstantsGenerated as projectConstants } from "./generated/demoProjectConstants.generated";
   import type {
@@ -138,6 +138,7 @@
   const qaRadioPlaybackBlocked = queryParams.get("playback") === "blocked";
   const qaRadioFormDisabled = queryParams.get("form") === "disabled";
   type DeviceLockMethod = "player-passcode" | "fixed-pin" | "none";
+  const publicProjectSettings: Readonly<Record<string, unknown>> = projectConstants;
   const configuredDeviceLockMethod = String(projectConstants["device.lock_method"] ?? "none") as DeviceLockMethod;
   const deviceLockMethod: DeviceLockMethod = qaMode && qaView === "lock" && configuredDeviceLockMethod === "none"
     ? "fixed-pin"
@@ -170,7 +171,6 @@
   const INITIAL_MESSAGE_LINK_TUTORIAL_BODY = projectConstants["searchAgent.broken_link_tutorial_body"];
   const BROKEN_LINK_ASSISTANT_BODY = projectConstants["searchAgent.broken_link_body"];
   const TALK_INITIAL_DATE_LABEL = formatStoryDateCompact(projectConstants["device.date"]);
-  type SurfaceMessageMode = "search" | "dismissOnTap";
   type TalkKind = "sms" | "chat";
   type ReplyDelayAnchor = {
     waiting: boolean;
@@ -399,7 +399,6 @@
   $: updateSelectedAssistantMessage(assistantSurfaceKey, playerState?.revision ?? deviceState.revision, playerState?.assistantMessages ?? []);
   $: rawAssistantSurfaceMessage = transientAssistantMessage ?? selectedAssistantMessage;
   $: assistantSurfaceMessage = visibleSurfaceMessageFor(rawAssistantSurfaceMessage, activeAppId, shadeOpen);
-  $: assistantSurfaceMessageMode = surfaceMessageModeFor(assistantSurfaceMessage, activeAppId, shadeOpen);
   $: searchAgentTalkView = searchAgentTalkViewFor(playerState);
   $: updateNotificationToast(deviceState.notifications);
   $: syncScenarioWakeTimer(
@@ -745,20 +744,6 @@
     }
 
     return messages[messages.length - 1];
-  }
-
-  function isInitialMessageLinkTutorial(message: AssistantMessage | undefined, currentAppId: AppId | null, notificationShadeOpen: boolean) {
-    return Boolean(
-      message &&
-        message.id.startsWith("broken-link-") &&
-        message.body === INITIAL_MESSAGE_LINK_TUTORIAL_BODY &&
-        currentAppId === null &&
-        !notificationShadeOpen
-    );
-  }
-
-  function surfaceMessageModeFor(message: AssistantMessage | undefined, currentAppId: AppId | null, notificationShadeOpen: boolean): SurfaceMessageMode {
-    return isInitialMessageLinkTutorial(message, currentAppId, notificationShadeOpen) ? "search" : "dismissOnTap";
   }
 
   function visibleSurfaceMessageFor(message: AssistantMessage | undefined, currentAppId: AppId | null, notificationShadeOpen: boolean) {
@@ -1189,7 +1174,7 @@
     const threads = baseThreads.map((thread) => ({
       ...thread,
       messages: thread.messages.map((message) => applyAttachmentState(
-        { ...message, sentAt: talkMessageTimeLabel(message.sentAt) },
+        { ...message, sentAt: talkMessageDisplayTime(message) },
         contentStates,
         unlockedAttachments
       ))
@@ -1224,7 +1209,7 @@
         ...("quickReplies" in smsMessage && Array.isArray(smsMessage.quickReplies) && smsMessage.quickReplies.length
           ? { quickReplies: smsMessage.quickReplies }
           : {}),
-        sentAt: talkMessageTimeLabel(smsMessage.sentAt),
+        sentAt: talkMessageDisplayTime(smsMessage),
         ...(typeof smsMessage.delayMs === "number" ? { delayMs: smsMessage.delayMs } : {}),
         ...(smsMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
         ...(smsMessage.historyRepairId ? { historyRepairId: smsMessage.historyRepairId } : {}),
@@ -1280,7 +1265,7 @@
   ) {
     const threads = baseThreads.map((thread) => ({
       ...thread,
-      messages: thread.messages.map((message) => ({ ...message, sentAt: talkMessageTimeLabel(message.sentAt) }))
+      messages: thread.messages.map((message) => ({ ...message, sentAt: talkMessageDisplayTime(message) }))
     }));
 
     const chatMessages = [
@@ -1313,7 +1298,7 @@
         ...("quickReplies" in chatMessage && Array.isArray(chatMessage.quickReplies) && chatMessage.quickReplies.length
           ? { quickReplies: chatMessage.quickReplies }
           : {}),
-        sentAt: talkMessageTimeLabel(chatMessage.sentAt),
+        sentAt: talkMessageDisplayTime(chatMessage),
         ...(typeof chatMessage.delayMs === "number" ? { delayMs: chatMessage.delayMs } : {}),
         ...(chatMessage.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
         ...(chatMessage.historyRepairId ? { historyRepairId: chatMessage.historyRepairId } : {}),
@@ -2969,7 +2954,8 @@
     }
 
     const canNavigate = captureContentNavigation();
-    const shouldShowRepairMessage = result.repairable && !isSearchAgentResultAlreadyRepaired(result);
+    const targetWasRepaired = isSearchAgentResultAlreadyRepaired(result);
+    const parentWasCorrupted = playerState?.visibleDeviceState.apps?.find((app) => app.id === result.appId)?.corrupted === true;
     const historyTalkId = result.targetKind === "talk_history" ? result.targetTalkId ?? "" : "";
     const opened = await handleContentOpen(result.appId, result.contentId, {
       ignoreSuppression: true,
@@ -2985,7 +2971,9 @@
         focusedTalkHistoryRepairId = result.contentId;
         rememberAppContent(result.appId, historyTalkId);
       }
-      if (shouldShowRepairMessage) {
+      const parentWasRepaired = parentWasCorrupted
+        && playerState?.visibleDeviceState.apps?.some((app) => app.id === result.appId && app.available && app.corrupted !== true);
+      if (result.repairable && (parentWasRepaired || (!targetWasRepaired && isSearchAgentResultAlreadyRepaired(result)))) {
         showTransientAssistantMessage({
           id: `repair-${result.contentId}`,
           surface: result.appId as AssistantMessage["surface"],
@@ -3000,7 +2988,7 @@
 
   function isSearchAgentResultAlreadyRepaired(result: SearchAgentSearchResult) {
     if (result.targetKind === "app") {
-      const app = apps.find((item) => item.id === result.appId);
+      const app = playerState?.visibleDeviceState.apps?.find((item) => item.id === result.appId);
       return Boolean(app?.available && app.corrupted !== true);
     }
 
@@ -3533,6 +3521,7 @@
     enqueuePresentation(result.presentation);
     if (result.presentation?.sequence) return;
     if (!canNavigate()) return;
+    if (!result.target) return;
     const targetAppId = result.target.appId;
     focusOpenedContent(targetAppId, result.target.contentId);
     showTalkBackLink(options.backLinkSource, targetAppId);
@@ -3683,7 +3672,7 @@
     </div>
   {:else if startConfirmationRequired}
     <div class="out-game-dialog">
-      <StartConfirmationScreen browserMode={playerMode !== "server"} staticMode={playerMode === "static"} memoryMode={isMemoryStorage} onConfirm={confirmStart} />
+      <StartConfirmationScreen browserMode={playerMode !== "server"} staticMode={playerMode === "static"} memoryMode={isMemoryStorage} notices={String(publicProjectSettings["start_confirmation.notices"] ?? "")} onConfirm={confirmStart} />
     </div>
   {:else if playerPasscodeEntryRequired}
     <div class="out-game-dialog">
@@ -3698,10 +3687,10 @@
           {frameOnly}
           osName={String(projectConstants["device.os_name"] ?? "XStoryPhone")}
           searchAgentName={String(projectConstants["search_agent.name"] ?? "ナビ")}
+          searchAgentSpriteUrl={String(publicProjectSettings["search_agent.sprite_url"] ?? "").trim()}
           assistantVisible={!uiState.locked && !appModalOpen && !assistantHiddenByComposerPhotoDraft(activeAppId, composerPhotoDraftByApp)}
           assistantSurfaceKey={assistantSurfaceKey}
           assistantSurfaceMessage={assistantSurfaceMessage}
-          assistantSurfaceMessageMode={assistantSurfaceMessageMode}
           {shadeOpen}
           homeButtonVisible={!uiState.locked && (activeAppId !== null || shadeOpen)}
           backLinkLabel={visibleTalkBackLink ? TALK_BACK_LINK_LABELS[visibleTalkBackLink.sourceAppId] : ""}
@@ -3917,6 +3906,7 @@
       visible={gameOverVisible}
       returning={gameOverReturning}
       titleText="GAME OVER"
+      imageUrl={String(publicProjectSettings["effect.game_over_image_url"] ?? "").trim()}
       reasonMessage={gameOverReasonMessage}
       onDismiss={() => void dismissGameOver()}
     />
@@ -3924,6 +3914,7 @@
       visible={allClearVisible}
       returning={allClearReturning}
       titleText="ALL CLEAR"
+      imageUrl={String(publicProjectSettings["effect.all_clear_image_url"] ?? "").trim()}
       label={ALL_CLEAR_LABEL}
       ariaLabel={allClearReturning ? "オールクリア後の移動中" : "オールクリア後に移動"}
       onDismiss={() => void dismissAllClear()}

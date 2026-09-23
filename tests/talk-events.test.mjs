@@ -7,7 +7,7 @@ import {
 } from "../src/worker/talkEvents.ts";
 import { workerScenario } from "../src/worker/scenario.ts";
 
-test("正本形式どおりplayer本文とmessage blockを復元する", () => {
+test("player本文とmessage block参照から会話履歴を復元する", () => {
   const rows = [
     {
       id: "sms_player_turn",
@@ -74,7 +74,7 @@ test("message blockは参照する文字列だけをenvへ保存し、現在台�
   }
 });
 
-test("XStoryPhoneの型付き状態は正本関数の手前で文字列化して必要な値だけ保存する", () => {
+test("templateが参照する型付き状態値だけを文字列化して保存する", () => {
   const block = workerScenario.talkBlocks.find((item) => item.id === "guide::message_reply");
   assert.ok(block);
   const originalBody = block.messages[0].body;

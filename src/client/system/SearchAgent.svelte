@@ -24,9 +24,8 @@
   } from "../apps/talkDelaySeenStorage";
   import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
   import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
-  import { resourceUrl, staticUrl } from "./resourceUrls";
-
-  type SurfaceMessageMode = "search" | "dismissOnTap";
+  import { resourceUrl } from "./resourceUrls";
+  import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated";
 
   type ContentStateSnapshot = {
     contentId: string;
@@ -41,6 +40,9 @@
   export let talk: SearchAgentTalkView | null = null;
   export let apps: AppCatalogItem[] = appCatalog;
   export let name = "ナビ";
+  export let spriteUrl = "";
+  let failedSpriteUrl = "";
+  $: spriteSource = spriteUrl && spriteUrl !== failedSpriteUrl ? spriteUrl : "/search-agent/search-agent-spritesheet.svg";
   export let deviceState: DeviceState;
   export let contentStates: ContentStateSnapshot[] = [];
   export let onSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
@@ -59,7 +61,6 @@
   export let surfaceKey = "home";
   export let closeRequestId = 0;
   export let surfaceMessage: AssistantMessage | undefined = undefined;
-  export let surfaceMessageMode: SurfaceMessageMode = "dismissOnTap";
   export let onOpenChange: (open: boolean) => void = () => {};
 
   let expanded = false;
@@ -91,8 +92,8 @@
 
   $: if (surfaceKey !== lastSurfaceKey) {
     lastSurfaceKey = surfaceKey;
-    dismissedSurfaceMessageKey = "";
     closeExpanded();
+    dismissedSurfaceMessageKey = "";
   }
   $: if (closeRequestId !== lastCloseRequestId) {
     lastCloseRequestId = closeRequestId;
@@ -102,7 +103,7 @@
   $: surfaceBubbleVisible = Boolean(
     surfaceMessage &&
       !expanded &&
-      (surfaceMessageMode === "search" || surfaceMessageKey !== dismissedSurfaceMessageKey)
+      surfaceMessageKey !== dismissedSurfaceMessageKey
   );
   $: agentPeeking = peeking && !expanded && !surfaceBubbleVisible;
   $: agentAction = surfaceBubbleVisible ? surfaceMessage?.agentAction ?? "idle" : "idle";
@@ -188,6 +189,8 @@
 
   function openExpanded() {
     expandedFromVisible = !agentPeeking;
+    // 画面内だけの既読扱い。別画面へ移ると解除し、同じ案内を再び表示できる。
+    dismissSurfaceMessage();
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
     expanded = true;
     onOpenChange(true);
@@ -205,6 +208,7 @@
   }
 
   function closeExpanded() {
+    if (expanded) dismissSurfaceMessage();
     expanded = false;
     expandedFromVisible = false;
     onOpenChange(false);
@@ -214,10 +218,13 @@
     dismissedSurfaceMessageKey = surfaceMessageKey;
   }
 
-  function handleScreenPointerDown() {
-    if (!surfaceBubbleVisible || surfaceMessageMode !== "dismissOnTap") {
+  function handleScreenPointerDown(event: PointerEvent) {
+    if (!surfaceBubbleVisible || (event.target instanceof Element && event.target.closest(".search-agent"))) {
       return;
     }
+    // 初回の操作導線だけは、会話を開くまで背景タップで消さない。
+    if (surfaceKey === "home" && surfaceMessage?.id.startsWith("broken-link-")
+      && surfaceMessage.body === projectConstants["searchAgent.broken_link_tutorial_body"]) return;
 
     dismissSurfaceMessage();
   }
@@ -630,24 +637,20 @@
     </div>
   {/if}
 
-  {#if surfaceBubbleVisible && surfaceMessage && surfaceMessageMode === "search"}
+  {#if surfaceBubbleVisible && surfaceMessage}
     <button
       class="surface-bubble"
       type="button"
-      aria-label={`${name}の検索窓を開く`}
+      aria-label={`${name}の会話を開く`}
       on:click={openExpanded}
     >
       <span>{surfaceMessage.body}</span>
     </button>
-  {:else if surfaceBubbleVisible && surfaceMessage}
-    <div class="surface-bubble passive" aria-live="polite">
-      <span>{surfaceMessage.body}</span>
-    </div>
   {/if}
 
   <button class="agent-float" type="button" aria-expanded={expanded} aria-label={`${name}を開く`} title={name} on:click={toggleExpanded}>
     <span class="sprite-window" aria-hidden="true">
-      <img src={staticUrl("/search-agent/search-agent-spritesheet.svg")} alt="" />
+      <img src={resourceUrl(spriteSource)} alt="" on:error={() => { failedSpriteUrl = spriteUrl; }} />
     </span>
   </button>
 </section>
@@ -777,10 +780,6 @@
     border-bottom: 1px solid rgba(15, 23, 31, 0.14);
     background: rgba(255, 255, 255, 0.96);
     transform: rotate(45deg);
-  }
-
-  .surface-bubble.passive {
-    pointer-events: none;
   }
 
   .search-agent.peeking .surface-bubble {

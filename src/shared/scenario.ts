@@ -21,6 +21,8 @@ export type ProjectSettings = {
   assistantName: string;
   accentColor: string;
   lockScreen: DeviceLockSettings;
+  talkClock: "real" | "scenario";
+  repairParentApp: boolean;
   date: string;
   timeLabel: string;
   batteryLevel: number;
@@ -301,6 +303,8 @@ export type StoredTalkMessage = {
   quickReplies?: readonly string[];
   attachment: ScenarioMessageAttachment | null;
   sentAt: string;
+  // 作中日時の表示だけに使う。記録順序・既読判定はsentAtとseqを維持する。
+  displayTime?: string;
   scenarioBlockId?: string;
   historyRepairId?: string;
 };

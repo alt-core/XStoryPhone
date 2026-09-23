@@ -14,7 +14,7 @@ export function evaluateCondition(expression: string, state: Record<string, unkn
 // partで定義が後読みされる実行側だけで使う。未取得の変数をfalseへ読み替えない。
 export function definedConditionState(state: Record<string, unknown>) {
   const requireKey = (values: Record<string, unknown>, key: string | symbol) => {
-    // player_inputは会話入力のない評価では空文字とする正本の予約変数。
+    // 予約変数player_inputは、会話入力のない評価では空文字として扱う。
     if (typeof key === "string" && key !== "player_input" && !Object.prototype.hasOwnProperty.call(values, key)) {
       throw new Error(`条件の状態変数が未取得または未定義です: ${key}`);
     }

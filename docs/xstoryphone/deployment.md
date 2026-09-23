@@ -82,7 +82,7 @@ LLM_PROFILE_ULTRA_MODEL / REASONING_EFFORT / TIMEOUT_MS
 
 一つのeventで解決するhook LLM要求の上限は、varsの `LLM_HOOK_MAX_REQUESTS`（既定5）で変更できます。通信retryやmatchの標本数とは別の制限です。D1の期限切れcache清掃はセッション開始時とcache書込後に試み、清掃失敗だけで進行を止めません。
 
-プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser専用で、serverとの組合せや不正値はクライアントビルドで拒否します。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
+プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser/staticで利用でき、serverとの組合せや不正値はクライアントビルドで拒否します。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
 GA4による任意の計測を使う場合だけ、ビルド実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定または `VITE_XSTORYPHONE_CLIENT_STORAGE=memory` なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 

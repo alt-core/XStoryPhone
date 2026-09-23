@@ -7,6 +7,7 @@ import { SEARCH_AGENT_STREAM_ID, SEARCH_AGENT_TALK_ID } from "../shared/searchAg
 import type { StoredPlayerState, StoredSearchAgentEvent, StoredTalkEvent, TranscriptAppend } from "../server/store.ts";
 import { compactStateValues, effectiveStateValues } from "./stateValues.ts";
 import { createTalkEventsRuntime } from "./talkEventsRuntime.ts";
+import { captureTalkDisplayTime, talkEventFormatEnv } from "./talkDisplayClock.ts";
 import { normalizeQuery, searchResponseTermsMatch } from "./product/search.ts";
 import { evaluateTalkOutputSteps, type ResolvedTalkOutputStep } from "./services/talkOutput.ts";
 type TalkInputAction = Extract<TalkOutputStep, {
@@ -259,12 +260,14 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     singleBlockMessageIds?: boolean;
     includeScenarioBlockId?: boolean;
     blockIndexOffset?: number;
+    displayStateValues?: Record<string, unknown>;
   }) {
     for (const id of input.blockIds) {
       if (!blocksById.has(id) || blocksById.get(id)?.unavailable)
         throw new Error(`出力blockのpartが未取得です: ${id}`);
     }
     const blockDisplayCounts = { ...input.previousCounts };
+    const displayTime = captureTalkDisplayTime(workerScenario.project.talkClock, input.displayStateValues ?? input.formatEnv);
     const messages: StoredTalkMessage[] = [];
     const events: StoredTalkEvent[] = [];
     const blockLastMessageSeqs: number[] = [];
@@ -284,7 +287,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
         event_type: "message_block",
         body: null,
         block_id: blockId,
-        format_env_json: formatEnv ? JSON.stringify(formatEnv) : null,
+        format_env_json: talkEventFormatEnv(formatEnv, displayTime),
         delivered_at: new Date(Date.parse(input.baseSentAt) + effectiveBlockIndex * 1000).toISOString()
       };
       events.push(event);
@@ -340,6 +343,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     inputEnabled: boolean;
     inputEnabledAfterSeq: number;
     useRepeat?: boolean;
+    displayStateValues?: Record<string, unknown>;
   }) {
     const blockIds = input.steps.flatMap((step) => step.kind === "block" ? [step.blockId] : []);
     const rendered = messagesForTalkBlocks({
@@ -350,7 +354,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       baseSentAt: input.baseSentAt,
       idPrefix: input.idPrefix,
       startSeq: input.startSeq,
-      useRepeat: input.useRepeat
+      useRepeat: input.useRepeat,
+      displayStateValues: input.displayStateValues
     });
     const inputState: TalkInputState = {
       inputVisible: input.inputVisible,
@@ -1216,7 +1221,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       ...(typeof message.delayMs === "number" ? { delayMs: message.delayMs } : {}),
       ...(message.delayOnFirstDisplay ? { delayOnFirstDisplay: true } : {}),
       attachment: message.attachment,
-      sentAt: message.sentAt
+      sentAt: message.sentAt,
+      ...(message.displayTime ? { displayTime: message.displayTime } : {})
     }));
   }
   function visibleTalkMessagesForState(talk: ScenarioDeviceTalk, state: StoredPlayerState, events: readonly StoredTalkEvent[] = []) {
@@ -1456,6 +1462,10 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     const value = normalizeQuery(query);
     if (!value)
       return [];
+    // 子がnormalでも、開封時に親の修復が必要なら検索済みの能力を記録する。
+    // condとpartの取得状況は開く時に再検査するため、ここでは修復の必要性だけを見る。
+    const parentNeedsRepair = (appId: string) => workerScenario.project.repairParentApp
+      && appById(appId)?.initialState === "repairable" && !state.repairedAppIds.includes(appId);
     const appResults = workerScenario.apps
       .filter((app) => app.search.length > 0 && conditionMet(app.cond, state) && termsMatch(app.search, value))
       .map((app) => ({
@@ -1480,7 +1490,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
         ...(historyRepair ? { targetTalkId: historyRepair.talk.publicId } : {}),
         title: historyRepair ? content.repairLabel ?? "破損した履歴" : contentTitle(content),
         ...(typeof imageUrl === "string" && imageUrl ? {thumbnailUrl:imageUrl} : {}),
-        repairable: content.initialState !== "normal" && !state.repairedContentIds.includes(content.id)
+        repairable: (content.initialState !== "normal" && !state.repairedContentIds.includes(content.id))
+          || (typeof content.record.attachment !== "string" && parentNeedsRepair(content.appId))
       };
     });
     const talkResults = workerScenario.talks
@@ -1493,7 +1504,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       appId: talk.appId,
       targetKind: "content" as const,
       title: talk.label,
-      repairable: talk.initialState !== "normal" && !state.repairedContentIds.includes(talk.id)
+      repairable: (talk.initialState !== "normal" && !state.repairedContentIds.includes(talk.id)) || parentNeedsRepair(talk.appId)
     }));
     const attachmentResults = workerScenario.attachments.flatMap((attachment) => {
       const content = attachment.content ? contentByInternalId(attachment.content) : null;

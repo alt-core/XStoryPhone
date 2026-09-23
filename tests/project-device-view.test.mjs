@@ -9,7 +9,7 @@ import { render } from "svelte/server";
 import ts from "typescript";
 import { deviceViewFor } from "../src/client/system/deviceView.ts";
 import { latestQuickReplyPlacement, resolvedTalkInputState } from "../src/client/system/talkInputState.ts";
-import { componentScriptHarness } from "./helpers/component-script-harness.mjs";
+import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
 const baseViewInput = {
   locked: false,
@@ -58,6 +58,24 @@ test("snapshotは読み取り専用の2項目だけで、以前の値を後か�
 
 const searchAgentUrl = new URL("../src/client/system/SearchAgent.svelte", import.meta.url);
 
+test("検索結果から親だけを修復した場合も案内し、同じ結果を開き直しても修復案内を繰り返さない", async () => {
+  const messages = [];
+  const state = { visibleDeviceState: { apps: [{ id: "chat", available: false, corrupted: true }] }, contentStates: [] };
+  const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), [
+    "handleOpenSearchAgentResult", "isSearchAgentResultAlreadyRepaired"
+  ], {
+    uiState: { sessionToken: "session" }, playerState: state, displayedTalkTarget: null,
+    captureContentNavigation: () => () => true,
+    handleContentOpen: async () => { state.visibleDeviceState.apps = [{ id: "chat", available: true, corrupted: false }]; return true; },
+    focusOpenedContent() {}, showTransientAssistantMessage: message => messages.push(message)
+  });
+  const result = { appId: "chat", contentId: "room", targetKind: "content", repairable: true };
+  assert.equal(await context.handleOpenSearchAgentResult(result), true);
+  assert.equal(messages.length, 1);
+  assert.equal(await context.handleOpenSearchAgentResult(result), true);
+  assert.equal(messages.length, 1);
+});
+
 function searchAgentHarness(props = {}, dependencies = {}) {
   return componentScriptHarness(searchAgentUrl, {
     deviceState: { apps: [] },
@@ -65,6 +83,8 @@ function searchAgentHarness(props = {}, dependencies = {}) {
     ...props
   }, {
     appCatalog: [],
+    Element: class Element {},
+    projectConstants: { "searchAgent.broken_link_tutorial_body": "初回の検索案内" },
     tick: () => Promise.resolve(),
     window: { clearTimeout() {}, matchMedia: () => ({ matches: false }) },
     loadTalkDelaySeenMessages: () => ({}),
@@ -102,6 +122,51 @@ test("検索の手動開閉は実expandedの更新直後に通知する", () => 
   assert.deepEqual(opened, [true, false, true, false]);
   harness.flush();
   assert.deepEqual(opened, [true, false, true, false], "後から古いtrueを再通知しない");
+});
+
+test("初回の破損リンク案内は背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {
+  const harness = searchAgentHarness({
+    peeking: true, surfaceKey: "home",
+    surfaceMessage: { id: "broken-link-1", surface: "home", body: "初回の検索案内" }
+  });
+  harness.evaluate("handleScreenPointerDown({ target: null })");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.evaluate("openExpanded(); closeExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false);
+  assert.equal(harness.evaluate("agentPeeking"), true);
+  harness.update({ surfaceKey: "notes" });
+  harness.update({ surfaceKey: "home" });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.update({ surfaceMessage: { id: "other", surface: "home", body: "通常案内" } });
+  harness.evaluate("handleScreenPointerDown({ target: null })");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "通常案内の背景タップは従来どおり");
+});
+
+test("吹き出しから会話を開いて閉じると引っ込み、画面へ戻ったときだけ案内を再表示する", () => {
+  const harness = searchAgentHarness({
+    peeking: true, surfaceKey: "home",
+    surfaceMessage: { id: "hint", surface: "home", body: "案内" }
+  });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.evaluate("openExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("expanded"), true);
+  harness.evaluate("closeExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false);
+  assert.equal(harness.evaluate("agentPeeking"), true);
+  harness.update({ surfaceMessage: { id: "hint", surface: "home", body: "案内" } });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "同じ画面でstateを再取得しても再表示しない");
+  harness.update({ surfaceKey: "notes" });
+  harness.update({ surfaceKey: "home" });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.evaluate("openExpanded()");
+  harness.flush();
+  harness.update({ surfaceKey: "notes", surfaceMessage: { id: "note-hint", body: "別画面の案内" } });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true, "画面遷移によるcloseが新しい案内を既読にしない");
 });
 
 for (const [name, change] of [

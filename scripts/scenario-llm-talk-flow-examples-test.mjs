@@ -106,7 +106,12 @@ const showPrompt = flags.has("show-prompt");
 const verbose = flags.has("verbose");
 const dryRun = flags.has("dry-run");
 const failFast = flags.has("fail-fast");
-const condStatePatternLimit = 16;
+const condLimitArgument = args.get("cond-pattern-limit");
+const condStatePatternLimit = condLimitArgument === undefined ? 16 : Number(condLimitArgument);
+if (flags.has("cond-pattern-limit") || (condLimitArgument !== undefined && !/^\d+$/u.test(condLimitArgument))
+  || !Number.isSafeInteger(condStatePatternLimit) || condStatePatternLimit < 1) {
+  throw new Error("--cond-pattern-limitには正の安全な整数を指定してください（例: --cond-pattern-limit=40）。");
+}
 const blockKeyByCanonicalId = new Map(scenario.talkBlocks.map((block) => [block.block, block.blockKey ?? block.block]));
 
 if (live && !dryRun && !flags.has(paidApiConfirmationFlag)) {
@@ -693,6 +698,7 @@ function assertCondStatePatternLimit(talk, node) {
     [
       `talk_flow cond 状態パターンが ${condStatePatternLimit} を超えています: ${talk.id}/${node.id}`,
       `patterns=${patterns.length}`,
+      "必要なら --cond-pattern-limit=40 のように上限を明示してください。試験数とlive時のAPI利用が増えます。",
       ...patterns.map((pattern, index) => `${index + 1}: ${stableJson(pattern)}`)
     ].join("\n")
   );

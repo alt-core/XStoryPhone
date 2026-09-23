@@ -63,8 +63,9 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
     ? Array.from({ length: 8 }, (_, index) => ({
         id: `qa-mail-extra-${index + 1}`,
         contentId: `qa-mail-extra-${index + 1}`,
-        from: `確認担当 ${index + 1}`,
-        to: "プレイヤー",
+        from: index === 7 ? "とても長い部署名と差出人名の表示確認用テキスト".repeat(4) : `確認担当 ${index + 1}`,
+        to: index === 7 ? "長い宛先名でも本文領域を維持する表示確認用テキスト".repeat(4) : "プレイヤー",
+        ...(index === 7 ? { cc: "関係者の名前も省略せず読めることを確認するための長い宛先" } : {}),
         subject: index === 7 ? "一覧で省略されることを確認するための非常に長いメール件名" : `確認用メール ${index + 1}`,
         date: `2026年8月12日 ${String(10 + index).padStart(2, "0")}:00`,
         body: index === 0

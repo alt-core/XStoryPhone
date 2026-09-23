@@ -28,6 +28,7 @@
   export let countColor = accent;
   export let indexIcon: Component;
   export let documents: DocumentItem[] = [];
+  export let mailLayout = false;
   export let focusContentId = "";
   export let focusContentRequestId = 0;
   export let onContentOpen: (contentId: string) => void = () => {};
@@ -74,7 +75,7 @@
 </script>
 
 <AppShell title={appTitle} {subtitle} {accent}>
-  <div class="documents-layout" style={`--document-accent: ${accent}; --document-count-color: ${countColor}`}>
+  <div class="documents-layout" class:mail-layout={mailLayout} style={`--document-accent: ${accent}; --document-count-color: ${countColor}`}>
     {#if selectedDocument}
       <article
         class="document-paper"
@@ -89,8 +90,10 @@
             {#if selectedDocument.metadata?.length}
               <dl class="document-metadata">
                 {#each selectedDocument.metadata as field}
-                  <dt>{field.label}</dt>
-                  <dd>{field.value}</dd>
+                  <div class="metadata-field">
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  </div>
                 {/each}
               </dl>
             {/if}
@@ -139,6 +142,37 @@
   .documents-layout :global(.scroll-hint-shell) {
     min-height: 0;
     height: 100%;
+  }
+
+  /* メールは宛先情報がある分だけ本文を広くする。一覧は約2行を常時残す。 */
+  .documents-layout.mail-layout {
+    grid-template-rows: minmax(0, 1fr) auto 112px;
+  }
+
+  .mail-layout .document-paper {
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .mail-layout .document-heading {
+    max-height: 128px;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    gap: 6px;
+  }
+
+  .mail-layout h3 {
+    font-size: 1.08rem;
+    line-height: 1.35;
+  }
+
+  .mail-layout .document-metadata {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mail-layout .document-metadata dd {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .documents-index-head {
@@ -255,13 +289,20 @@
 
   .document-metadata {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
     gap: 4px 9px;
     min-width: 0;
     margin: 0;
     color: rgba(255, 255, 255, 0.66);
     font-size: 0.72rem;
     line-height: 1.35;
+  }
+
+  .metadata-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 9px;
+    min-width: 0;
+    align-content: start;
   }
 
   .document-metadata dt {

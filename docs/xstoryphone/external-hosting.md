@@ -10,7 +10,7 @@
 - JavaScript、CSS、画像・音声・動画を適切なContent-Typeで配信でき、APIとの通信と必要なiframeがホストのCSP等で禁止されていないこと。
 - 作品のブラウザアプリで読むHTMLを、ゲーム画面と同じ静的originへ置けること。別originのHTMLのDOM読取りは、APIのCORS設定では許可できません。
 - 公開ファイルの一覧や、配布ファイルをまとめたZIPを閲覧者へ公開しないこと。未到達素材のURLを一覧で知らせない運用が必要です。
-- persistentを使う場合は必要なブラウザー保存機能を利用できること。browser専用memoryにはIndexedDB等を要求しませんが、通常reloadで進行を失います。
+- persistentを使う場合は必要なブラウザー保存機能を利用できること。memoryにはIndexedDB等を要求しませんが、通常reloadで進行を失います。
 
 originはscheme・host・portの組合せです。同じ `https://static.example` の別pathも、保存とCORSの信頼境界は同じです。`ALLOWED_ORIGINS` で `/works/story/` だけを許可することはできません。同一originに置かれる他作者のコードも信頼できる運用か、配置前に確認してください。
 
@@ -35,7 +35,7 @@ npm run build:static -- --base=/works/story/
 | 静的配置path | Viteの `--base=/works/story/`。未指定は `/` |
 | APIの接続先 | `VITE_XSTORYPHONE_API_BASE_URL`。未指定は現在と同じ相対 `/api/...` |
 | 保存名 | `VITE_XSTORYPHONE_STORAGE_PREFIX`。未指定は従来の保存名 |
-| 保存方式 | `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent\|memory`。既定はpersistent、memoryはbrowser専用 |
+| 保存方式 | `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent\|memory`。既定はpersistent、memoryはbrowser/staticで利用可能 |
 
 baseは `/` または `/works/story/` のような固定pathです。相対baseの `./`、静的originを含む絶対URL、query・fragment、相対階層は受け付けません。ビルド後に配置pathを変更する場合は、再ビルドしてください。
 

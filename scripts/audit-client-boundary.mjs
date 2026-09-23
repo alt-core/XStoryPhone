@@ -3,6 +3,7 @@ import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import { collectClientImportGraph } from "./lib/client-import-graph.mjs";
 import { auditStaticDistribution } from "./lib/static-audit.mjs";
+import { engineRuntimeLiterals, privateTextLeaves } from "./lib/engine-runtime-literals.mjs";
 
 const root = process.cwd();
 const scenario = loadAndValidateScenario();
@@ -55,6 +56,13 @@ const publicSystemValues = new Set([
   ...scenario.worker.clientCallableEvents
 ]);
 const structuralValues = new Set(["normal", "repairable", "hidden", "image", "audio", "password", "missed", "search_agent"]);
+const engineValues = !staticExecution && process.argv.length > 2 ? engineRuntimeLiterals(root, graph.files) : new Set();
+const privateTextValues = new Set([
+  ...privateTextLeaves(scenario.worker),
+  ...stringLeaves(scenario.worker.projectConstants),
+  ...scenario.worker.contents.filter(content => scenario.projectApps.some(app => app.id === content.appId)).flatMap(content => stringLeaves(content.record))
+].map(value => value.trim()));
+const engineExemptions = new Set();
 const protectedValues = new Set([
   ...stringLeaves(scenario.worker.projectConstants),
   // 対象IDはStageの公開APIで指定する識別子。判定種別等の構造値を秘密文言と混同しない。
@@ -94,12 +102,15 @@ const protectedValues = new Set([
   ...scenario.worker.todos.flatMap(stringLeaves),
   ...scenario.worker.notifications.flatMap(stringLeaves),
   ...scenario.worker.assistantMessages.flatMap(stringLeaves)
-].map((value) => value.trim()).filter((value) =>
-  (value.startsWith("/") || value.length >= 10)
-  && !publicInitialValues.has(value)
-  && !publicSystemValues.has(value)
-  && !structuralValues.has(value)
-));
+].map((value) => value.trim()).filter((value) => {
+  if (!(value.startsWith("/") || value.length >= 10) || publicInitialValues.has(value)
+    || publicSystemValues.has(value) || structuralValues.has(value)) return false;
+  if (engineValues.has(value) && !privateTextValues.has(value)) {
+    engineExemptions.add(value);
+    return false;
+  }
+  return true;
+}));
 for (const content of scenario.worker.contents) {
   if (typeof content.record.unlockCode === "string") protectedValues.add(content.record.unlockCode);
 }
@@ -140,5 +151,5 @@ if (failures.length) {
   console.error(failures.map((failure) => `- ${failure}`).join("\n"));
   process.exitCode = 1;
 } else {
-  console.log(`クライアント境界監査OK: 到達可能な${reachable.size}ファイルを確認`);
+  console.log(`クライアント境界監査OK: 到達可能な${reachable.size}ファイルを確認、engineの実行時literalと一致する構造値・素材URL ${engineExemptions.size}件を除外`);
 }

@@ -29,6 +29,8 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 本文には `[表示名](open:notes:content_id)` のような内部リンクと、HTTPSの外部リンクを書けます。内部リンクへhookを結び付ける場合は、`open:app_id:content_id;action:action_id` とし、`message_link_opened`のtargetへaction IDを指定します。`{{state_id}}` templateは通常の本文で使い、リンクの表示名には使用しないでください。リンク表示名はtemplate展開されません。
 
+内部リンクは表示済みであることを確認してからhookを実行し、その結果で遷移先の利用可否を判定します。hookで対象を解放してから開くことができます。hookが成立しても対象が開けない場合は、状態更新と演出だけを適用して現在の画面に留まります。`form.deny`による拒否ではhookの変更を保存しません。
+
 `attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `password`に、引用符付き候補を改行して書きます。`content`で対象を、`load_part`で正解後の追加取得先を指定します。server/browserではAPI側で判定し、staticでは部分hashと回答JSONを使います。正答原文はプレイヤーへ配布しません。
 
 `quick_replies`はセル内改行で選択肢を並べます。表示文字列がそのままプレイヤー発話として送信され、通常の会話ruleで判定されます。本文と同じ`{{state_id}}` templateを使用できます。Quick Reply固有の個数・20文字制限は設けず、空の選択肢、同一message内の重複、定義時点で既存プレイヤー入力上限を超える文字列を拒否します。template展開結果は正規化後に同じ上限へ収めます。
@@ -43,7 +45,7 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 正解の検索語へ到達する前に、本来の名称、avatar URL、初期発話、添付、リンクはクライアントへ送りません。`content_repaired` と `content_opened` のhook targetにはtalk IDを指定できます。`content_repaired`は修復時、`content_opened`は修復hookがeffect sequenceで後続処理を終了した場合を除き、利用可能なtalkを開くたびにシナリオで定義したtalk IDで発火します。talk全体の修復と、次項の初期履歴block修復は同じtalkで併用できません。
 
-`cond` が偽の間は破損ルームと検索結果のどちらも出ません。`cond` を満たしても親アプリが未修復なら検索候補だけを提示でき、ルームを開く操作は親アプリが利用可能になるまで拒否します。
+`cond` が偽の間は破損ルームと検索結果のどちらも出ません。既定では、`cond` を満たしても親アプリが未修復なら検索候補だけを提示でき、ルームを開く操作は親アプリが利用可能になるまで拒否します。作品設定の `content.repair_parent_app=true` を使うと、検索済みのルームを開く操作で親アプリも修復できます。条件とhookの順序は[検索語と修復の説明](scenario.md#検索語)を参照してください。
 
 `start` はセル内改行でblock IDを並べます。空欄なら初期履歴と返答待ち位置を持ちません。初期block単位の `cond` は仕様にありません。talk全体の表示条件には同じitem行の `cond` を使います。
 

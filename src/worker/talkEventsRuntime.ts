@@ -4,6 +4,7 @@ import type { ScenarioMessageAttachment, ScenarioMessageSegment } from "../share
 import { SEARCH_AGENT_TALK_ID } from "../shared/searchAgent.ts";
 import type { StoredSearchAgentEvent, StoredSearchAgentMessageBlockEvent, StoredSearchAgentPlayerMessageEvent, StoredSearchAgentResultEvent, StoredSearchResult, StoredTalkEvent } from "../server/store.ts";
 import type { ScenarioTalkBlockMessage } from "../shared/scenario.ts";
+import { TALK_DISPLAY_TIME_KEY, talkDisplayTimeLabel } from "./talkDisplayClock.ts";
 type TalkEventRow = StoredTalkEvent;
 export type ResolvedTalkMessage = {
   kind: "sms" | "chat";
@@ -19,6 +20,7 @@ export type ResolvedTalkMessage = {
   attachment: ScenarioMessageAttachment | null;
   quickReplies?: readonly string[];
   sentAt: string;
+  displayTime?: string;
 };
 export type ResolvedSearchAgentTimelineItem = {
   type: "message";
@@ -86,6 +88,7 @@ export function createTalkEventsRuntime(templates: TalkTemplates) {
     });
   }
   function resolveTalkEvent(row: TalkEventRow, displayBlockId = row.block_id ?? ""): ResolvedTalkMessage[] {
+    const displayTime = talkDisplayTimeLabel(parseObject(row.format_env_json)[TALK_DISPLAY_TIME_KEY]);
     if (row.event_type === "player_message") {
       return [
         {
@@ -96,7 +99,8 @@ export function createTalkEventsRuntime(templates: TalkTemplates) {
           senderName: row.kind === "chat" ? "あなた" : null,
           body: row.body ?? "",
           attachment: null,
-          sentAt: row.delivered_at
+          sentAt: row.delivered_at,
+          ...(displayTime ? { displayTime } : {})
         }
       ];
     }
@@ -122,7 +126,8 @@ export function createTalkEventsRuntime(templates: TalkTemplates) {
         ...(typeof template.delayMs === "number" ? { delayMs: template.delayMs } : {}),
         ...(template.senderRole !== "owner" && typeof template.delayMs === "number" && template.delayMs > 0 ? { delayOnFirstDisplay: true } : {}),
         attachment: template.attachment ?? null,
-        sentAt: isoWithOffset(row.delivered_at, index * 1000)
+        sentAt: isoWithOffset(row.delivered_at, index * 1000),
+        ...(displayTime ? { displayTime } : {})
       };
     });
   }

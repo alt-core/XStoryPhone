@@ -7,14 +7,11 @@
   import StatusBar from "./StatusBar.svelte";
   import { resourceUrl } from "./resourceUrls";
 
-  type SurfaceMessageMode = "search" | "dismissOnTap";
-
   export let deviceState: DeviceState;
   export let apps: AppCatalogItem[] = appCatalog;
   export let assistantVisible = false;
   export let assistantSurfaceKey = "home";
   export let assistantSurfaceMessage: AssistantMessage | undefined = undefined;
-  export let assistantSurfaceMessageMode: SurfaceMessageMode = "dismissOnTap";
   export let shadeOpen = false;
   export let homeButtonVisible = false;
   export let backLinkLabel = "";
@@ -27,6 +24,7 @@
   export let incomingCall: IncomingCallItem | undefined = undefined;
   export let osName = "XStoryPhone";
   export let searchAgentName = "ナビ";
+  export let searchAgentSpriteUrl = "";
   export let wallpaperUrl = "";
   export let wallpaperVisible = false;
   export let frameOnly = false;
@@ -99,6 +97,7 @@
       {#if assistantVisible && searchAgentTalk}
         <SearchAgent
           name={searchAgentTalk.label || searchAgentName}
+          spriteUrl={searchAgentSpriteUrl}
           {apps}
           talk={searchAgentTalk}
           {deviceState}
@@ -108,7 +107,6 @@
           peeking={searchAgentPeeking}
           surfaceKey={assistantSurfaceKey}
           surfaceMessage={assistantSurfaceMessage}
-          surfaceMessageMode={assistantSurfaceMessageMode}
           onSend={onSearchAgentSend}
           onOpenChange={onSearchAgentOpenChange}
           onOpenMessageLink={onOpenSearchAgentMessageLink}
@@ -182,7 +180,8 @@
     position: relative;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    /* フォーカス移動でも端末全体をスクロールさせない。各アプリ内の領域だけが動く。 */
+    overflow: clip;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 31px;
     background:

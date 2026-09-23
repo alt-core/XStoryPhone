@@ -245,7 +245,7 @@ reviewTest("D1版search agent履歴は既存JSON streamへ絶対seqのcompact ev
   }]), false);
 });
 
-reviewTest("D1版talk履歴は展開済みNPC本文ではなく正本形式のeventを保存する", async () => {
+reviewTest("D1版talk履歴はNPC本文を展開せずblock参照のcompact eventを保存する", async () => {
   const local = new LocalD1();
   const store = new D1Store(local);
   const session = await store.createPasscodeSession("87654321", createInitialPlayerState());

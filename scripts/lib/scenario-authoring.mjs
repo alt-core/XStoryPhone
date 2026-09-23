@@ -155,8 +155,8 @@ export function compileScenarioAuthoring(workbook) {
     if (exposure !== "public" && exposure !== "private") throw new Error(`project_constants!${row.__rowNumber}: exposureはpublic/privateです。`);
     if (["client.runtime_revision", "client.public_id_revision", "device.lock_pin_length"].includes(key)) throw new Error(`${key}は自動生成される予約定数です。`);
     if (key === "device.lock_pin" && exposure === "public") throw new Error("固定PINはprivateにしてください。");
-    if (["search_agent.broken_link_tutorial_body", "search_agent.broken_link_body"].includes(key) && exposure !== "public") {
-      throw new Error(`${key}は初期画面で使う案内文のため、exposureをpublicにしてください。`);
+    if (["search_agent.broken_link_tutorial_body", "search_agent.broken_link_body", "search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices"].includes(key) && exposure !== "public") {
+      throw new Error(`${key}は初期画面で使う公開設定のため、exposureをpublicにしてください。`);
     }
     constants[key] = String(row.value ?? "");
     if (exposure === "public") publicConstants[key] = constants[key];
@@ -276,9 +276,13 @@ export function compileScenarioAuthoring(workbook) {
       llm: booleanCell(row.llm, `hooks.${handler}.llm`, /\bllm\.(extract|screen|match)\s*\(/u.test(script)) };
   });
   const method = value("device.lock_method", "none");
+  const talkClock = value("talk.clock", "real");
+  if (!["real", "scenario"].includes(talkClock)) throw new Error("project_constants.talk.clock はreal/scenarioにしてください。");
+  const repairParentApp = booleanCell(value("content.repair_parent_app"), "project_constants.content.repair_parent_app", false);
   const source = {
     schemaVersion: 1, playerMode: value("player.mode", "server"), features: { llm: booleanCell(value("features.llm"), "features.llm", false) },
     project: { id: value("project.id"), name: value("project.name"), osName: value("device.os_name"), assistantName: value("search_agent.name"),
+      talkClock, repairParentApp,
       accentColor: value("device.accent_color", "#8fd2ff"), date: value("device.date"), timeLabel: value("device.time_label"),
       batteryLevel: Number(value("device.battery_level", "72")), signalLabel: value("device.signal_label", "4G"), wallpaperUrl: value("device.wallpaper_url"),
       lockScreen: { method, ...(method === "fixed-pin" ? { pin: value("device.lock_pin"), loadParts: splitList(value("device.unlock_load_part")) } : {}) } },

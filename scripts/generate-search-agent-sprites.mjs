@@ -43,8 +43,14 @@ const svg = [
   ""
 ].join("\n");
 
-fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-fs.writeFileSync(outputPath, svg);
+function writeGeneratedFile(file, content) {
+  const bytes = Buffer.from(content);
+  if (fs.existsSync(file) && fs.readFileSync(file).equals(bytes)) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, bytes);
+}
+
+writeGeneratedFile(outputPath, svg);
 
 function createWav(durationSeconds, sampleAtTime, sampleRate = 16_000) {
   const sampleCount = Math.round(sampleRate * durationSeconds);
@@ -90,10 +96,9 @@ const radioSampleWav = createWav(9, (time) => {
   const fade = Math.min(1, time * 4, (9 - time) * 4);
   return tone * beat * fade * 0.15;
 });
-fs.mkdirSync(path.dirname(bellOutputPath), { recursive: true });
-fs.writeFileSync(bellOutputPath, bellWav);
-fs.writeFileSync(callSampleOutputPath, callSampleWav);
-fs.writeFileSync(radioSampleOutputPath, radioSampleWav);
+writeGeneratedFile(bellOutputPath, bellWav);
+writeGeneratedFile(callSampleOutputPath, callSampleWav);
+writeGeneratedFile(radioSampleOutputPath, radioSampleWav);
 console.log(`検索エージェントのスプライトを生成しました: ${outputPath}`);
 console.log(`着信音を生成しました: ${bellOutputPath}`);
 console.log(`字幕確認用音声を生成しました: ${callSampleOutputPath}`);

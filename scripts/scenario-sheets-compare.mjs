@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { selectedScenarioDir } from "./lib/scenario-directory.mjs";
 import { accessToken, maxColumns, readJson, readSheetsAuthoring, sheetValues, validateSheetsArguments } from "./lib/google-sheets.mjs";
 import { parseTsv, validateTsvSyntax } from "./lib/tsv-utils.mjs";
 
 const rootDir = process.cwd();
-const defaultScenarioPath = path.join(process.env.XSTORYPHONE_SCENARIO_DIR?.trim() || "scenario/demo", "scenario.source.json");
+const defaultScenarioPath = path.join(selectedScenarioDir(), "scenario.source.json");
 const defaultCredentialsPath = "";
 
 function argValue(name) {

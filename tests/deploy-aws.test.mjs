@@ -67,6 +67,36 @@ test("AWS API-onlyは静的公開を実行せず、シナリオ監査・source�
   assert.deepEqual(result.health, ["https://api.example/api/health"]);
 });
 
+test("AWSの任意接頭辞は全環境のstackとparameterへ渡り、未指定なら標準名を保つ", async () => {
+  for (const environment of ["dev", "stg", "prod"]) for (const prefix of [undefined, "my-story", "a".repeat(24)]) {
+    const env = prefix === undefined ? {} : { XSTORYPHONE_PROJECT_NAME: prefix };
+    const result = await deployment([environment, "--api-only"], { env });
+    assert.equal(result.exitCode, 0, result.logs.join("\n"));
+    const deploy = result.calls.find(call => call.command === "sam" && call.args[0] === "deploy").args;
+    assert.equal(deploy[deploy.indexOf("--stack-name") + 1], `${prefix ?? "xstoryphone"}-${environment}`);
+    assert.ok(deploy.includes(`ProjectName=${prefix ?? "xstoryphone"}`));
+    assert.ok(`${prefix ?? "xstoryphone"}-${environment}-123456789012-ap-northeast-1`.length <= 63);
+  }
+  for (const value of ["", "UPPER", "bad_name", "a".repeat(25), "xn--reserved"]) {
+    const result = await deployment(["dev"], { env: { XSTORYPHONE_PROJECT_NAME: value } });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.calls.length, 0);
+  }
+});
+
+test("WAFは未指定ならparameterを省き、空文字では明示解除する", async () => {
+  const arn = "arn:aws:wafv2:us-east-1:123456789012:global/webacl/example/11111111-2222-3333-4444-555555555555";
+  for (const value of [undefined, "", arn]) {
+    const result = await deployment(["dev", "--api-only"], { env: value === undefined ? {} : { WEB_ACL_ARN: value } });
+    assert.equal(result.exitCode, 0);
+    const parameters = result.calls.find(call => call.command === "sam" && call.args[0] === "deploy").args.filter(arg => arg.startsWith("WebAclArn="));
+    assert.deepEqual(parameters, value === undefined ? [] : [`WebAclArn="${value}"`]);
+  }
+  const invalid = await deployment(["dev"], { env: { WEB_ACL_ARN: arn.replace("us-east-1", "ap-northeast-1") } });
+  assert.equal(invalid.exitCode, 1);
+  assert.equal(invalid.calls.length, 0);
+});
+
 test("既存AWS公開はclient build・監査・S3同期・invalidation・SiteUrl healthを維持する", async () => {
   for (const environment of ["dev", "stg", "prod"]) {
     const result = await deployment([environment]);

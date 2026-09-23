@@ -2,15 +2,17 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "5b32a29799efc5c2",
-  "clientRevision": "client_de4a14aa7fe2af7a",
-  "transcriptRevision": "transcript_ac357c85435ce829",
+  "revision": "902fc6d07867e51d",
+  "clientRevision": "client_8a2baa6cc9e2f3e9",
+  "transcriptRevision": "transcript_ced6cb28a4ade7c7",
   "playerMode": "browser",
   "project": {
     "id": "demo",
     "name": "XStoryPhone Demo",
     "osName": "StoryOS",
     "assistantName": "ナビ",
+    "talkClock": "real",
+    "repairParentApp": false,
     "accentColor": "#8fd2ff",
     "date": "2026-08-12",
     "timeLabel": "20:14",

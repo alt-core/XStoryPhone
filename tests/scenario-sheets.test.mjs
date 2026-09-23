@@ -104,6 +104,16 @@ test("Sheets pullはmanifest親相対へ保存し、引用符・改行・先頭0
   assert.ok(result.calls.slice(1).every((call) => new URL(call.url).searchParams.get("valueRenderOption") === "FORMATTED_VALUE"));
 }));
 
+test("Sheets同期もリポジトリで選んだ作品を既定とする", () => withFixture(({ temporary, scenarioDir, exports, execute }) => {
+  fs.writeFileSync(path.join(temporary, "package.json"), JSON.stringify({ xstoryphone: { scenarioDir: path.relative(temporary, scenarioDir) } }));
+  const config = { rows: { First: [["id"], ["first"]], Second: [["id"], ["second"]] } };
+  const pull = execute("pull", config, [], { XSTORYPHONE_SCENARIO_DIR: "" });
+  assert.equal(pull.status, 0, pull.stderr);
+  assert.ok(fs.readFileSync(path.join(exports, "First.tsv"), "utf8").includes("first"));
+  const compare = execute("compare", config, [], { XSTORYPHONE_SCENARIO_DIR: "" });
+  assert.equal(compare.status, 0, compare.stderr);
+}));
+
 test("Sheets pullは指定tableだけ取得し、全取得が失敗したら既存TSVを更新しない", () => withFixture(({ exports, execute }) => {
   fs.writeFileSync(path.join(exports, "First.tsv"), "id\nold-first\n");
   fs.writeFileSync(path.join(exports, "Second.tsv"), "id\nold-second\n");

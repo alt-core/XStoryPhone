@@ -28,11 +28,11 @@ import { talkFlowRows } from "./lib/talk-flow-rows.mjs";
 import { validateScenarioParts } from "./lib/scenario-parts.mjs";
 import { buildScenarioHooksModule, validateHookReferences } from "./lib/scenario-hooks.mjs";
 import { normalizeRadioCues } from "./lib/radio-cues.mjs";
+import { selectedScenarioDir } from "./lib/scenario-directory.mjs";
 
 const rootDir = process.cwd();
 const engineRootDir = path.resolve(import.meta.dirname, "..");
-const configuredScenarioDir = String(process.env.XSTORYPHONE_SCENARIO_DIR ?? "scenario/demo").trim() || "scenario/demo";
-const scenarioDir = path.resolve(rootDir, configuredScenarioDir);
+const scenarioDir = selectedScenarioDir(rootDir);
 const idPattern = /^[a-z][a-z0-9_-]*$/u;
 const engineAppIds = new Set(APP_REGISTRY.map((app) => app.id));
 const projectAppById = new Map(projectApps.map((app) => [app.id, app]));
@@ -327,6 +327,8 @@ function validateCondition(label, value, stateVariableDefinitions, errors) {
 }
 
 function validateProject(project, playerMode, errors) {
+  if (!["real", "scenario"].includes(project?.talkClock)) errors.push("project.talkClock はreal/scenarioにしてください。");
+  if (typeof project?.repairParentApp !== "boolean") errors.push("project.repairParentApp はbooleanにしてください。");
   const requiredStrings = ["id", "name", "osName", "assistantName", "accentColor", "date", "timeLabel", "signalLabel", "wallpaperUrl"];
   for (const key of requiredStrings) {
     if (typeof project?.[key] !== "string" || !project[key].trim()) {
@@ -534,7 +536,7 @@ export function loadAndValidateScenario(overrides = {}) {
   }
   validateObjectKeys("project", source.project, [
     "id", "name", "osName", "assistantName", "accentColor", "lockScreen", "date", "timeLabel",
-    "batteryLevel", "signalLabel", "wallpaperUrl"
+    "batteryLevel", "signalLabel", "wallpaperUrl", "talkClock", "repairParentApp"
   ], errors);
   const seenProjectAppIds = new Set();
   for (const app of projectApps) {
@@ -1528,7 +1530,7 @@ export function loadAndValidateScenario(overrides = {}) {
       talk: publicIds.talk,
       attachment: publicIds.attachment
     },
-    runtime: sourceSnapshot(["src/worker/talkEventsRuntime.ts", "src/worker/scenarioRuntime.ts", "src/worker/talkMessageClock.ts"])
+    runtime: sourceSnapshot(["src/worker/talkEventsRuntime.ts", "src/worker/scenarioRuntime.ts", "src/worker/talkMessageClock.ts", "src/worker/talkDisplayClock.ts"])
   });
   const clientRevision = clientRevisionFor({
     packageVersion,

@@ -50,7 +50,7 @@ npm run dev
 9. `index.html`、`public/manifest.webmanifest`、`public/icons/` のPWA名とアイコンを作品に合わせます。
 10. `public/privacy-policy.html` を実際の運用内容へ書き換えます。
 
-作品用シナリオを選ぶコマンドでは、環境変数を明示します。省略時だけ `scenario/demo` を使います。
+作品用シナリオの既定値は、`package.json` の `"xstoryphone": { "scenarioDir": "scenario/my-story" }` で指定できます。一時的に別のシナリオを選ぶ場合は、環境変数で上書きします。選択順は環境変数 → package.json → `scenario/demo` です。
 
 ```sh
 XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev

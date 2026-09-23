@@ -48,6 +48,46 @@ test("選択先の実TSV定数から作品名とpublic/private境界を生成す
   });
 }));
 
+test("会話の表示時計は任意設定で、未知の値を制作時に拒否する", () => withAuthoring(({ edit, invoke }) => {
+  edit("project_constants", rows => rows.push({ key: "talk.clock", value: "scenario", exposure: "private" }));
+  const accepted = invoke('console.log(result.worker.project.talkClock);');
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(accepted.stdout.trim(), "scenario");
+  edit("project_constants", rows => { rows.find(row => row.key === "talk.clock").value = "scenerio"; });
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /talk.clock.*real\/scenario/u);
+}));
+
+test("初期UIの追加設定は公開指定を要求し、作品定数として生成する", () => withAuthoring(({ edit, invoke }) => {
+  const keys = ["search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices"];
+  edit("project_constants", rows => keys.forEach(key => rows.push({ key, value: key.endsWith("notices") ? "**注意**\n追加の告知" : "/custom/image.png", exposure: "public" })));
+  const accepted = invoke(`console.log(JSON.stringify(${JSON.stringify(keys)}.map(key => result.projectConstants[key])));`);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.deepEqual(JSON.parse(accepted.stdout), ["/custom/image.png", "/custom/image.png", "/custom/image.png", "**注意**\n追加の告知"]);
+  for (const key of keys) {
+    edit("project_constants", rows => { rows.find(row => row.key === key).exposure = "private"; });
+    const rejected = invoke();
+    assert.notEqual(rejected.status, 0);
+    assert.ok(rejected.stderr.includes(key));
+    edit("project_constants", rows => { rows.find(row => row.key === key).exposure = "public"; });
+  }
+}));
+
+test("親アプリ修復の定数は新しい列なしでboolean設定へ変換され、誤記を拒否する", () => withAuthoring(({ edit, invoke }) => {
+  const defaults = invoke('console.log(JSON.stringify([result.worker.project.repairParentApp, result.worker.project.talkClock]));');
+  assert.equal(defaults.status, 0, defaults.stderr);
+  assert.deepEqual(JSON.parse(defaults.stdout), [false, "real"]);
+  edit("project_constants", rows => rows.push({ key: "content.repair_parent_app", value: "true", exposure: "private" }));
+  const accepted = invoke('console.log(JSON.stringify(result.worker.project.repairParentApp));');
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(accepted.stdout), true);
+  edit("project_constants", rows => { rows.find(row => row.key === "content.repair_parent_app").value = "yes"; });
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /content.repair_parent_app.*true\/false/u);
+}));
+
 test("元TSVの素材typeと予定dateの空欄継承を生成まで保持する", () => withAuthoring(({ edit, invoke }) => {
   edit("attachments", (rows) => rows.push(
     { id: "fixture_image_one", type: "image", asset: "/fixture/one.webp" },

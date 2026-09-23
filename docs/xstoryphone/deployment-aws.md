@@ -76,7 +76,13 @@ ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 
 環境名、スタック名、同時実行上限、ログ保持日数は `scripts/deploy-aws.mjs` で管理します。`infra/aws/samconfig.toml` はリージョン、変更確認、CloudFormation用S3の解決など、SAM CLIの設定を持ちます。秘密値はどちらのファイルにも記録しません。
 
-プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser専用で、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
+作品ごとにAWS資源を分ける場合は、配備時に`XSTORYPHONE_PROJECT_NAME=my-story`を指定します。未指定は`xstoryphone`で、標準名を維持します。英小文字で始まる小文字英数字・ハイフンの1〜24文字とし、S3の予約prefixは使えません。24文字上限は、S3名へ環境・account・regionを付ける余裕を残すためです。stack名は`my-story-dev`等になります。名前変更は別stackへの配備であり、旧資源やデータを移行・削除しません。
+
+既存のCloudFront用WAFv2 WebACLを関連付ける場合だけ、`WEB_ACL_ARN`へus-east-1の`global/webacl/...` ARNを渡します。WebACLやルールは自動作成しません。未指定では既存parameterを維持し、新規stackでは関連付けなしです。`WEB_ACL_ARN=''`を明示して再配備すると解除します。SAMの省略parameterは更新時に以前の値を使うため、空文字と未指定を区別してください。
+
+このWAF設定が保護するのはCloudFront経由だけです。公開される`ApiEndpoint`（execute-api）への直接アクセスは保護しません。アクセスコードの総当たりや外部生成費用の上限を、この関連付けだけで保証するものではありません。
+
+プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser/staticで利用でき、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
 実プレイ入力を分岐監修へ保存する場合だけ、デプロイ時に `PLAYER_INPUT_LOGGING=true` を設定してください。未設定または `false` の場合は保存しません。入力本文をCloudWatch Logsへ出力する処理はありません。
 

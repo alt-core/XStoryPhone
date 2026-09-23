@@ -1,12 +1,15 @@
 <script lang="ts">
   import { Check, CircleHelp, Fullscreen, Hash, ShieldCheck, Smartphone } from "@lucide/svelte";
   import { staticUrl } from "./resourceUrls";
+  import { noticeTextSegments } from "./noticeText";
 
   export let variant: "confirmation" | "hold" = "confirmation";
   export let onConfirm: () => void | Promise<{ ok: boolean; error?: string }> = () => {};
   export let browserMode = false;
   export let staticMode = false;
   export let memoryMode = false;
+  export let notices = "";
+  $: noticeLines = notices.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
 
   let busy = false;
   let errorMessage = "";
@@ -57,6 +60,13 @@
           <p>パスコードはプレイデータに紐づきます。公開・共有や、配信画面への映り込みにご注意ください。</p>
         </section>
       {/if}
+
+      {#each noticeLines as notice}
+        <section class="confirmation-block">
+          <CircleHelp size={20} strokeWidth={2.1} aria-hidden="true" />
+          <p>{#each noticeTextSegments(notice) as segment}{#if segment.strong}<strong>{segment.text}</strong>{:else}{segment.text}{/if}{/each}</p>
+        </section>
+      {/each}
 
       <section class="confirmation-block">
         <Fullscreen size={20} strokeWidth={2.1} aria-hidden="true" />

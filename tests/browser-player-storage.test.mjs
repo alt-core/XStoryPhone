@@ -168,6 +168,26 @@ async function replaceCurrentToken(projectId, token) {
 }
 
 test("browser player storage", async (suite) => {
+  await suite.test("作中の発話表示時刻は進行tokenとともに保存され、再読込と時計変更で変わらない", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    installBrowserStorage();
+    const options = { enabled: true, projectId: "display-clock", clientRevision: "client-current" };
+    const first = await freshStorageModule();
+    await first.initializeBrowserPlayerStorage(options);
+    const message = { ...smsMessage(2), displayTime: "12/31 23:59" };
+    await first.commitBrowserPlayerResponse(null, playerState({
+      token: "token-1", talkLastSeq: 2,
+      deltas: [{ kind: "sms", talkId: "guide", transcriptKey: "talk-key", messages: [message] }]
+    }), { replaceStreams: true });
+    const second = await freshStorageModule();
+    await second.initializeBrowserPlayerStorage(options);
+    assert.deepEqual(second.loadCachedBrowserPlayerState().smsMessages, [message]);
+    const next = playerState({ token: "token-2", talkLastSeq: 2 });
+    next.scenarioTime = { date: "2028-02-03", timeLabel: "10:00" };
+    await second.commitBrowserPlayerResponse("token-1", next);
+    assert.deepEqual(second.loadCachedBrowserPlayerState().smsMessages, [message]);
+  });
+
   for (const mode of ["persistent", "memory"]) {
     await suite.test(`${mode}: 検証・履歴merge・rollback・条件付きclearの共通契約`, async () => {
       globalThis.indexedDB = new IDBFactory();

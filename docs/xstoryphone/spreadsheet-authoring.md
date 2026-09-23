@@ -21,7 +21,7 @@ Google Sheets → pull → authoring/*.tsv → 検証・生成 → 実行・監�
 
 ## 作品とSheetの指定
 
-デモのディレクトリを作品用へ複製し、`XSTORYPHONE_SCENARIO_DIR`で選択します。
+デモのディレクトリを作品用へ複製し、`XSTORYPHONE_SCENARIO_DIR`で選択します。リポジトリの既定は `package.json` の `"xstoryphone": { "scenarioDir": "scenario/my-story" }` でも指定できます。環境変数を優先し、両方未設定ならdemoを使います。pull・compare・putもビルドと同じ既定値を使います。
 
 ```sh
 XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run scenario:build

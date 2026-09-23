@@ -1,4 +1,4 @@
-// Sheetsの新列から内部表現を一度だけ作る。旧headerを受理する互換処理ではない。
+// Sheetsのtype・text・extractから、場面説明と会話分岐の内部表現を一度だけ作る。
 export function talkFlowRows(rows, fail = message => { throw new Error(message); }) {
   rows = rows.map(row => ({ ...row, type: String(row.type ?? "").trim() }));
   const contexts = new Map();
