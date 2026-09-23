@@ -146,7 +146,18 @@ export type PlayerRecord = {
   state: StoredPlayerState;
   stateVersion: number;
   transcriptDeltas?: TranscriptAppend[];
+  accessCodeId?: string;
 };
+
+export type AccessCodeRecord = {
+  counter: string;
+  disabled: boolean;
+  successCount: number;
+  failedCount: number;
+  lockedUntil: string | null;
+  updatedAt: string;
+};
+export type AccessCodePage = { items: AccessCodeRecord[]; nextCursor: string | null };
 
 // 認証先の行があっても、初期化を確定するまでは実行可能な進行を持たない。
 export type SessionPlayerRecord = Omit<PlayerRecord, "state"> & {
@@ -341,8 +352,10 @@ export interface AppStore {
   }>;
   playerForSession(sessionToken: string, purpose?: "play" | "reset"): Promise<SessionPlayerRecord | null>;
   resetPlayerProgress(player: SessionPlayerRecord): Promise<boolean>;
-  isAccessCodeLocked(counter: string, at: string): Promise<boolean>;
-  recordAccessCodeAttempt(counter: string, success: boolean, at: string): Promise<void>;
+  recordAccessCodeAttempt(counter: string, success: boolean, at: string): Promise<boolean>;
+  accessCode(counter: string): Promise<AccessCodeRecord | null>;
+  accessCodes(after: string, limit: number): Promise<AccessCodePage>;
+  setAccessCodeDisabled(counter: string, disabled: boolean, at: string): Promise<void>;
   loadTranscript(playerId: string, streamId: string, transcriptKey: string): Promise<StoredTranscript>;
   savePlayer(player: PlayerRecord, nextState: StoredPlayerState, transcripts?: TranscriptAppend[], effects?: PlayerCommitEffects): Promise<boolean>;
   loadHookLlmResult?(playerId: string, cacheKey: string, at: string): Promise<HookLlmCacheRecord | null>;

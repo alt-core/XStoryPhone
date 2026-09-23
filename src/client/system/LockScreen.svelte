@@ -47,6 +47,8 @@
     if (error === "rate_limited") {
       return "少し待ってから入力してください";
     }
+    if (error === "access_code_disabled") return "このコードは無効になっています";
+    if (error === "access_code_secret_missing") return "認証設定エラー（AP-ACCESS-CONFIG）";
 
     return unlockMethod === "fixed-pin" ? "暗証番号を確認してください" : "パスコードを確認してください";
   }

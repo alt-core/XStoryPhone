@@ -279,10 +279,12 @@ export function compileScenarioAuthoring(workbook) {
   const talkClock = value("talk.clock", "real");
   if (!["real", "scenario"].includes(talkClock)) throw new Error("project_constants.talk.clock はreal/scenarioにしてください。");
   const repairParentApp = booleanCell(value("content.repair_parent_app"), "project_constants.content.repair_parent_app", false);
+  const accessCode = value("player.access_code", "none");
+  if (!["none", "required"].includes(accessCode)) throw new Error("project_constants.player.access_code はnone/requiredにしてください。");
   const source = {
     schemaVersion: 1, playerMode: value("player.mode", "server"), features: { llm: booleanCell(value("features.llm"), "features.llm", false) },
     project: { id: value("project.id"), name: value("project.name"), osName: value("device.os_name"), assistantName: value("search_agent.name"),
-      talkClock, repairParentApp,
+      talkClock, repairParentApp, accessCode,
       accentColor: value("device.accent_color", "#8fd2ff"), date: value("device.date"), timeLabel: value("device.time_label"),
       batteryLevel: Number(value("device.battery_level", "72")), signalLabel: value("device.signal_label", "4G"), wallpaperUrl: value("device.wallpaper_url"),
       lockScreen: { method, ...(method === "fixed-pin" ? { pin: value("device.lock_pin"), loadParts: splitList(value("device.unlock_load_part")) } : {}) } },

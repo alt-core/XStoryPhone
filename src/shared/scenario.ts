@@ -23,6 +23,7 @@ export type ProjectSettings = {
   lockScreen: DeviceLockSettings;
   talkClock: "real" | "scenario";
   repairParentApp: boolean;
+  accessCode: "none" | "required";
   date: string;
   timeLabel: string;
   batteryLevel: number;

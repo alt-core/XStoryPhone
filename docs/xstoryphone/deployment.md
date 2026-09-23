@@ -40,6 +40,8 @@ npm run db:migrate:remote:prod
 
 browserモードで外部生成音声を使う場合は、`0009_generated_audio_browser.sql`も必要です。既存jobを保持したまま、player行を必要としない補助保存へ変更します。適用前に対象DBを確認してバックアップしてください。
 
+アクセスコードを使うserver/browser環境には`0010_access_code_management.sql`も適用します。既存の失敗記録へ無効化・受理回数の列を加えます。browserで`player.access_code=required`を使う場合、対象環境へ`ACCESS_CODE_SECRET`を登録してください。デプロイスクリプトも登録を確認します。
+
 ## 3. secretと任意設定を登録する
 
 レビュー画面のsecretを環境ごとに登録します。prodの例は次のとおりです。

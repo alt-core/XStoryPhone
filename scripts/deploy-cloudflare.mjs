@@ -9,7 +9,8 @@ if (!new Set(["dev", "stg", "prod"]).has(environment)) {
   process.exit(1);
 }
 
-if (loadAndValidateScenario().worker.playerMode === "static") {
+const selectedScenario = loadAndValidateScenario().worker;
+if (selectedScenario.playerMode === "static") {
   console.error("staticモードは npm run build:static で作り、dist/staticを静的ホストへ配置してください。APIはデプロイしません。");
   process.exit(1);
 }
@@ -44,7 +45,8 @@ try {
 const configuredSecrets = new Set(secretList.map((secret) => secret.name));
 const requiredSecrets = [
   "ADMIN_REVIEW_SECRET",
-  ...(loadAndValidateScenario().worker.playerMode === "browser" ? ["BROWSER_STATE_SECRET"] : [])
+  ...(selectedScenario.playerMode === "browser" ? ["BROWSER_STATE_SECRET"] : []),
+  ...(selectedScenario.playerMode === "browser" && selectedScenario.project.accessCode === "required" ? ["ACCESS_CODE_SECRET"] : [])
 ];
 const missingSecrets = requiredSecrets.filter((name) => !configuredSecrets.has(name));
 if (missingSecrets.length) {

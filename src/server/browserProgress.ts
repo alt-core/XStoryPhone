@@ -15,6 +15,7 @@ type BrowserProgressPayload = {
   playerId: string;
   stateVersion: number;
   state: StoredPlayerState;
+  accessCodeId?: string;
 };
 
 function base64UrlEncode(bytes: Uint8Array) {
@@ -77,7 +78,8 @@ function validPayload(value: unknown): value is BrowserProgressPayload {
     && typeof payload.stateVersion === "number"
     && Number.isInteger(payload.stateVersion)
     && payload.stateVersion >= 0
-    && Boolean(payload.state && typeof payload.state === "object" && !Array.isArray(payload.state));
+    && Boolean(payload.state && typeof payload.state === "object" && !Array.isArray(payload.state))
+    && (payload.accessCodeId === undefined || (typeof payload.accessCodeId === "string" && /^\d{4}$/u.test(payload.accessCodeId)));
 }
 
 export async function encodeBrowserProgress(secret: string, projectId: string, player: PlayerRecord) {
@@ -86,7 +88,8 @@ export async function encodeBrowserProgress(secret: string, projectId: string, p
     projectId,
     playerId: player.id,
     stateVersion: player.stateVersion,
-    state: player.state
+    state: player.state,
+    ...(player.accessCodeId ? { accessCodeId: player.accessCodeId } : {})
   };
   const body = base64UrlEncode(await gzip(new TextEncoder().encode(JSON.stringify(payload))));
   const token = `${body}.${base64UrlEncode(await signature(secret, body))}`;
@@ -110,7 +113,8 @@ export async function decodeBrowserProgress(secret: string, projectId: string, t
     return {
       id: parsed.playerId,
       stateVersion: parsed.stateVersion,
-      state: normalizeStoredState(parsed.state)
+      state: normalizeStoredState(parsed.state),
+      ...(parsed.accessCodeId ? { accessCodeId: parsed.accessCodeId } : {})
     };
   } catch {
     return null;

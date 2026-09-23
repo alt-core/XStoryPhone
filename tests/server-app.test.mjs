@@ -51,13 +51,23 @@ class MemoryStore {
     })));
     return { playerId: this.player.id, sessionToken: "memory-token", created: true };
   }
-  async isAccessCodeLocked(counter, at) {
-    const attempt = this.accessCodeAttempts.get(counter);
-    return Boolean(attempt?.lockedUntil && Date.parse(attempt.lockedUntil) > Date.parse(at));
+  async accessCode(counter) {
+    const row = this.accessCodeAttempts.get(counter);
+    return row ? { counter, disabled: false, successCount: 0, failedCount: 0, lockedUntil: null, ...structuredClone(row) } : null;
+  }
+  async setAccessCodeDisabled(counter, disabled, at) {
+    this.accessCodeAttempts.set(counter, { ...await this.accessCode(counter), counter, disabled, updatedAt: at });
+  }
+  async accessCodes(after, limit) {
+    const items = await Promise.all([...this.accessCodeAttempts.keys()].filter(key => key > after).sort().map(key => this.accessCode(key)));
+    return { items: items.slice(0, limit), nextCursor: items.length > limit ? items[limit - 1].counter : null };
   }
   async recordAccessCodeAttempt(counter, success, at) {
-    if (success) this.accessCodeAttempts.delete(counter);
-    else this.accessCodeAttempts.set(counter, { failedCount: (this.accessCodeAttempts.get(counter)?.failedCount ?? 0) + 1, updatedAt: at });
+    const current = await this.accessCode(counter);
+    if (success && (current?.disabled || current?.lockedUntil > at)) return false;
+    this.accessCodeAttempts.set(counter, { ...current, counter, failedCount: success ? 0 : (current?.failedCount ?? 0) + 1,
+      successCount: (current?.successCount ?? 0) + Number(success), lockedUntil: success ? null : current?.lockedUntil ?? null, updatedAt: at });
+    return true;
   }
   async playerForSession(token) {
     this.playerCalls += 1;
@@ -587,7 +597,8 @@ test("設定時だけアクセスコードのHMACチェック桁を検証する"
   });
   assert.equal(accepted.status, 200);
   assert.equal(store.lastAccessCode, counter);
-  assert.equal(store.accessCodeAttempts.has(counter), false);
+  assert.equal(store.accessCodeAttempts.get(counter).failedCount, 0);
+  assert.equal(store.accessCodeAttempts.get(counter).successCount, 1);
 });
 
 test("テストプレイ用進行リセットはdevとstgだけで公開ホストから利用できる", async () => {
@@ -647,6 +658,63 @@ test("テストプレイ用進行リセットはdevとstgだけで公開ホス�
   assert.equal(recovered.status, 200, "dev/stgのリセットは壊れた予定イベントを実行せず初期化する");
 });
 
+test("browserの入場認証はPIN前に確認し、開始とtoken受理でも迂回を防ぐ", async () => {
+  const original = structuredClone(workerScenario);
+  const store = new MemoryStore();
+  const config = { appEnv: "production", accessCodeSecret: "access-secret", browserStateSecret: "browser-secret", adminReviewSecret: "admin", playerInputLogging: true, llm: {} };
+  let starts = 0;
+  try {
+    workerScenario.playerMode = "browser";
+    workerScenario.project.accessCode = "required";
+    workerScenario.project.lockScreen = { method: "fixed-pin", pin: "0042" };
+    workerScenario.hooks = [{ event: "session_started", target: "", handler: "entry_probe", cond: "", llm: false }];
+    scenarioHookHandlers.entry_probe = () => { starts += 1; };
+    const app = createApp({ store, config });
+    const post = (route, body = {}) => app.request(`https://game.example/api/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const code = (await accessCodeCheckDigits("0042", config.accessCodeSecret)) + "0042";
+    const invalid = `${code.startsWith("0") ? "1" : "0"}${code.slice(1)}`;
+    assert.equal((await post("access-code/verify", { serialCode: invalid })).status, 400);
+    assert.equal((await post("access-code/verify", { serialCode: code })).status, 200);
+    assert.equal(starts, 0);
+    assert.equal(store.createCalls, 0);
+    assert.equal(store.accessCodeAttempts.get("0042").successCount, 0, "事前確認で開始回数を増やさない");
+    assert.equal((await post("session/start", { pin: "0042", accessCodeId: "0042" })).status, 400, "client申告では認証できない");
+    assert.equal((await post("session/start", { serialCode: code, pin: "9999" })).status, 400);
+    assert.equal(starts, 0);
+    await store.setAccessCodeDisabled("0042", true, new Date().toISOString());
+    assert.equal((await post("session/start", { serialCode: code, pin: "0042" })).status, 403, "事前確認後の無効化も開始時に確認する");
+    await store.setAccessCodeDisabled("0042", false, new Date().toISOString());
+    const started = await (await post("session/start", { serialCode: code, pin: "0042" })).json();
+    assert.equal(started.ok, true);
+    assert.equal(starts, 1);
+    assert.equal(store.accessCodeAttempts.get("0042").successCount, 1);
+    const token = started.playerState.progressToken;
+    const player = await decodeBrowserProgress(config.browserStateSecret, workerScenario.project.id, token);
+    assert.equal(player.accessCodeId, "0042");
+    const refresh = await (await post("player-state", { progressToken: token })).json();
+    assert.equal((await decodeBrowserProgress(config.browserStateSecret, workerScenario.project.id, refresh.playerState.progressToken)).accessCodeId, "0042");
+    const noAuth = await encodeBrowserProgress(config.browserStateSecret, workerScenario.project.id, { ...player, accessCodeId: undefined });
+    assert.equal((await post("player-state", { progressToken: noAuth })).status, 401);
+    assert.equal((await post("talk/send", { progressToken: noAuth })).status, 401);
+    const talk = started.playerState.talks.find(item => item.kind === "search_agent");
+    const sent = await (await post("talk/send", { progressToken: token, talkId: talk.talkId, turnKey: talk.turnKey, message: "ヘルプ" })).json();
+    assert.equal(sent.ok, true);
+    assert.equal(store.recordedInputEvents.at(-1).responseSnapshot.accessCodeId, "0042");
+    await store.setAccessCodeDisabled("0042", true, new Date().toISOString());
+    assert.equal((await post("player-state", { progressToken: sent.playerState.progressToken })).status, 200, "認証済みtokenは継続できる");
+    assert.equal((await post("access-code/verify", { serialCode: code })).status, 403);
+    config.accessCodeSecret = "";
+    assert.equal((await post("session/start", { serialCode: code, pin: "0042" })).status, 503);
+    assert.equal((await app.request("https://game.example/api/admin/access-codes")).status, 401);
+    const listing = await (await app.request("https://game.example/api/admin/access-codes", { headers: { authorization: "Bearer admin" } })).json();
+    assert.equal(listing.items[0].counter, "0042");
+    assert.equal(JSON.stringify(listing).includes(code), false);
+  } finally {
+    Object.assign(workerScenario, original);
+    delete scenarioHookHandlers.entry_probe;
+  }
+});
+
 test("browserの任意生成音声は補助jobだけ保存し、同じtokenで手動復旧を反映する", async () => {
   const original = structuredClone(workerScenario);
   const store = new MemoryStore();
@@ -660,6 +728,7 @@ test("browserの任意生成音声は補助jobだけ保存し、同じtokenで�
     const radio = workerScenario.contents.find(item => item.id === "sample_radio");
     delete radio.record.audioAttachmentId;
     radio.record.playbackCond = "image_color_reported";
+    radio.record.transcript = [{ atMs: 0, text: "再生前の字幕fixture9841" }];
     workerScenario.hooks = [{ event: "session_started", target: "", handler: "audio_probe", cond: "", llm: false }];
     scenarioHookHandlers.audio_probe = context => context.genAudio.prepare("demo_voice", { inputText: "未公開の台本fixture928471" });
     const app = createApp({ store, config: { appEnv: "production", adminReviewSecret: "admin", browserStateSecret: "browser-secret", llm: {} } });
@@ -684,6 +753,7 @@ test("browserの任意生成音声は補助jobだけ保存し、同じtokenで�
     const refresh = () => app.request("https://game.example/api/player-state", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ progressToken: token }) }).then(response => response.json());
     const hidden = await refresh();
     assert.equal(JSON.stringify(hidden).includes("/regenerated-private.wav"), false);
+    assert.equal(JSON.stringify(hidden).includes("再生前の字幕fixture9841"), false);
     assert.equal(JSON.stringify(hidden).includes("未公開の台本fixture928471"), false);
     radio.record.playbackCond = "";
     const restored = await refresh();

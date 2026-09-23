@@ -58,6 +58,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `device.os_name` / `search_agent.name` | `StoryOS` / `ナビ` | 画面上の名称 |
 | `device.date` / `device.time_label` | `2026-08-12` / `20:14` | 作中の日時 |
 | `talk.clock` | `scenario` | 発話の表示時計。`real`（既定）/ `scenario`。exposureはprivate |
+| `player.access_code` | `required` | browserの任意入場制限。`none`（既定）/ `required`。APIの`ACCESS_CODE_SECRET`も必要 |
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
 | `device.lock_pin` | `0420` | fixed-pin時だけ指定し、exposureはprivate |

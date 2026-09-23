@@ -2,9 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "902fc6d07867e51d",
-  "clientRevision": "client_1641225dc78de01c",
-  "transcriptRevision": "transcript_7272ca0cce8e2fc9",
+  "revision": "5f9d0ecd6ea86718",
+  "clientRevision": "client_75a18927a80273d2",
+  "transcriptRevision": "transcript_fdf2c5b5dd192fc9",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -13,6 +13,7 @@ export const workerScenario: WorkerScenario = {
     "assistantName": "ナビ",
     "talkClock": "real",
     "repairParentApp": false,
+    "accessCode": "none",
     "accentColor": "#8fd2ff",
     "date": "2026-08-12",
     "timeLabel": "20:14",

@@ -557,6 +557,12 @@ export async function verifyDevicePin(pin: string, sessionToken = "") {
   return playerMode === "browser" ? queueBrowserPlayerOperation(() => runBrowserPlayerOperation(execute)) : runBrowserPlayerOperation(execute);
 }
 
+export async function verifyAccessCode(serialCode: string) {
+  return readJson<{ ok: true }>(await fetchPlayerApi("/api/access-code/verify", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ serialCode })
+  }));
+}
+
 export async function loadPlayerState(sessionToken: string) {
   return playerRequest<{ ok: true; playerState: PlayerState }>("/api/player-state", sessionToken, { method: "POST" });
 }

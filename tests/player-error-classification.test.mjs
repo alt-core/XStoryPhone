@@ -17,7 +17,7 @@ function classificationHarness(overrides = {}) {
   const context = componentFunctionHarness(appUrl, [
     "isUnauthorizedFailure", "requiresPlayerEntry", "isBrowserProgressSizeFailure", "showBrowserProgressSizeError",
     "applyErrorPlayerState", "clearUnauthorizedPlayerUi", "applyPlayerState", "showGlobalError",
-    "refreshPlayerState", "entryError", "openBrowserSession", "startPlayerPasscodeSession",
+    "refreshPlayerState", "entryError", "entryFailure", "openBrowserSession", "startPlayerPasscodeSession",
     "unlockDevice", "applyStartedSession"
   ], {
     playerMode: "browser", deviceLockMethod: "none", initialDeviceLocked: true,
@@ -31,7 +31,7 @@ function classificationHarness(overrides = {}) {
     safeSessionStorage: { removeItem() {} },
     isBrowserPlayerStorageError, localPlayerMemoryKey, playerSessionChanged,
     globalErrorVisible: false, globalErrorSupportCode: "AP-CLIENT", globalErrorMessage: "",
-    lastPlayerStateRefreshRequestedAt: 0, pendingPlayerPasscode: "", pendingNotificationOpen: null,
+    lastPlayerStateRefreshRequestedAt: 0, pendingPlayerPasscode: "", accessCodeEntryError: "", pendingNotificationOpen: null,
     displayedTalkTarget: null, locallySuppressedNotificationIds: [],
     cachePlayerState(state) { cached.push(state); },
     clearPlayerStateCache() { effects.push("clear-cache"); },

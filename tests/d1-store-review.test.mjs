@@ -50,6 +50,7 @@ class LocalD1 {
     this.database.exec(readFileSync(new URL("../migrations/0007_generated_audio_intent.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0008_player_session_generation.sql", import.meta.url), "utf8"));
     if (audioMigration) this.database.exec(readFileSync(new URL("../migrations/0009_generated_audio_browser.sql", import.meta.url), "utf8"));
+    this.database.exec(readFileSync(new URL("../migrations/0010_access_code_management.sql", import.meta.url), "utf8"));
   }
 
   prepare(sql) {
@@ -344,14 +345,26 @@ reviewTest("D1版talk履歴はNPC本文を展開せずblock参照のcompact even
   assert.equal(local.database.prepare("SELECT COUNT(*) AS count FROM talk_events").get().count, 0);
 });
 
-reviewTest("D1版のアクセスコード失敗記録は20回で15分ロックし、成功時に削除する", async () => {
+reviewTest("D1版のコード記録は20回で15分ロックし、期限後の成功で失敗回数だけを解除する", async () => {
   const store = new D1Store(new LocalD1());
   const at = "2026-08-17T00:00:00.000Z";
   for (let index = 0; index < 20; index += 1) await store.recordAccessCodeAttempt("0042", false, at);
-  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), true);
-  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:16:00.000Z"), false);
-  await store.recordAccessCodeAttempt("0042", true, at);
-  assert.equal(await store.isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), false);
+  assert.equal((await store.accessCode("0042")).lockedUntil, "2026-08-17T00:15:00.000Z");
+  assert.equal(await store.recordAccessCodeAttempt("0042", true, at), false);
+  assert.equal(await store.recordAccessCodeAttempt("0042", true, "2026-08-17T00:16:00.000Z"), true);
+  assert.equal((await store.accessCode("0042")).lockedUntil, null);
+  assert.equal((await store.accessCode("0042")).successCount, 1);
+  await store.setAccessCodeDisabled("0042", true, "2026-08-17T00:17:00.000Z");
+  assert.equal(await store.recordAccessCodeAttempt("0042", true, "2026-08-17T00:18:00.000Z"), false);
+  await store.recordAccessCodeAttempt("0042", false, "2026-08-17T00:18:00.000Z");
+  assert.equal((await store.accessCode("0042")).disabled, true);
+  await store.setAccessCodeDisabled("0001", false, at);
+  const first = await store.accessCodes("", 1);
+  assert.equal(first.items[0].counter, "0001");
+  assert.equal(first.nextCursor, "0001");
+  assert.equal((await store.accessCodes(first.nextCursor, 1)).items[0].counter, "0042");
+  await Promise.all(Array.from({ length: 20 }, () => store.recordAccessCodeAttempt("0001", true, at)));
+  assert.equal((await store.accessCode("0001")).successCount, 20);
 });
 
 reviewTest("D1版の入力ログ確認は会話入力の本文で絞り込む", async () => {

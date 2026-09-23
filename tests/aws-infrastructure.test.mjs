@@ -205,7 +205,7 @@ test("AWSの実プレイ入力一覧は全件Scanせず疎なGSI2を使う", () 
 test("AWSのbrowser署名鍵は非表示parameterからLambdaだけへ渡す", () => {
   assert.match(template, /BrowserStateSecret:\s+[\s\S]*?NoEcho: true/u);
   assert.match(template, /BROWSER_STATE_SECRET: !Ref BrowserStateSecret/u);
-  assert.match(deployAws, /worker\.playerMode === "browser" && !browserStateSecret/u);
+  assert.match(deployAws, /selectedScenario\.playerMode === "browser" && !browserStateSecret/u);
   assert.match(deployAws, /`BrowserStateSecret=\$\{browserStateSecret\}`/u);
 });
 

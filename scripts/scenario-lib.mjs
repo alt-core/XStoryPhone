@@ -329,6 +329,8 @@ function validateCondition(label, value, stateVariableDefinitions, errors) {
 function validateProject(project, playerMode, errors) {
   if (!["real", "scenario"].includes(project?.talkClock)) errors.push("project.talkClock はreal/scenarioにしてください。");
   if (typeof project?.repairParentApp !== "boolean") errors.push("project.repairParentApp はbooleanにしてください。");
+  if (!["none", "required"].includes(project?.accessCode)) errors.push("project.accessCode はnone/requiredにしてください。");
+  if (project?.accessCode === "required" && playerMode !== "browser") errors.push("player.access_code=required はbrowserモード専用です。serverはACCESS_CODE_SECRETを使い、staticでは入場認証を提供しません。");
   const requiredStrings = ["id", "name", "osName", "assistantName", "accentColor", "date", "timeLabel", "signalLabel", "wallpaperUrl"];
   for (const key of requiredStrings) {
     if (typeof project?.[key] !== "string" || !project[key].trim()) {
@@ -536,7 +538,7 @@ export function loadAndValidateScenario(overrides = {}) {
   }
   validateObjectKeys("project", source.project, [
     "id", "name", "osName", "assistantName", "accentColor", "lockScreen", "date", "timeLabel",
-    "batteryLevel", "signalLabel", "wallpaperUrl", "talkClock", "repairParentApp"
+    "batteryLevel", "signalLabel", "wallpaperUrl", "talkClock", "repairParentApp", "accessCode"
   ], errors);
   const seenProjectAppIds = new Set();
   for (const app of projectApps) {
@@ -1517,6 +1519,7 @@ export function loadAndValidateScenario(overrides = {}) {
     "device.wallpaper_url": source.project.wallpaperUrl,
     "search_agent.name": source.project.assistantName,
     "player.mode": playerMode,
+    "player.access_code": source.project.accessCode,
     "searchAgent.broken_link_tutorial_body": source.projectConstants?.["search_agent.broken_link_tutorial_body"] ?? "",
     "searchAgent.broken_link_body": source.projectConstants?.["search_agent.broken_link_body"] ?? ""
   };

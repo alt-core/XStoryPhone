@@ -254,20 +254,24 @@ test("DynamoDB版もアクセスコード失敗回数を同じテーブルの有
     : {});
   const store = new DynamoStore(fake.transport, "table");
   await store.recordAccessCodeAttempt("0042", false, at);
-  const put = fake.calls.find((call) => call.operation === "PutItem");
-  const saved = dynamoDocument.valueFromItem(put.input.Item);
-  assert.equal(saved.PK, "ACCESS_ATTEMPT#0042");
-  assert.equal(saved.failedCount, 20);
-  assert.equal(saved.lockedUntil, "2026-08-17T00:15:00.000Z");
+  const update = fake.calls.find((call) => call.operation === "UpdateItem");
+  const saved = dynamoDocument.valueFromItem(update.input.ExpressionAttributeValues);
+  assert.equal(dynamoDocument.valueFromItem(update.input.Key).PK, "ACCESS_ATTEMPT#0042");
+  assert.equal(saved[":count"], 20);
+  assert.equal(saved[":locked"], "2026-08-17T00:15:00.000Z");
+  assert.match(update.input.ConditionExpression, /failedCount = :previous/u);
+  assert.doesNotMatch(update.input.UpdateExpression, /disabled|successCount/u);
 
   const locked = fakeTransport(async (operation) => operation === "GetItem"
     ? { Item: dynamoDocument.item({ lockedUntil: "2026-08-17T00:15:00.000Z" }) }
     : {});
-  assert.equal(await new DynamoStore(locked.transport, "table").isAccessCodeLocked("0042", "2026-08-17T00:01:00.000Z"), true);
+  assert.equal((await new DynamoStore(locked.transport, "table").accessCode("0042")).lockedUntil, "2026-08-17T00:15:00.000Z");
 
   const cleared = fakeTransport();
   await new DynamoStore(cleared.transport, "table").recordAccessCodeAttempt("0042", true, at);
-  assert.equal(cleared.calls[0].operation, "DeleteItem");
+  assert.equal(cleared.calls[0].operation, "UpdateItem");
+  assert.match(cleared.calls[0].input.UpdateExpression, /ADD successCount :one/u);
+  assert.match(cleared.calls[0].input.ConditionExpression, /disabled = :no/u);
 });
 
 test("DynamoDB版search agent履歴もtalk単位itemで直近200表示eventへ制限する", async () => {

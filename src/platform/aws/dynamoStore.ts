@@ -23,6 +23,7 @@ import type {
   TranscriptAppend
 } from "../../server/store.ts";
 import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
+import type { AccessCodeRecord } from "../../server/store.ts";
 import {
   decodeReviewCursor,
   encodeReviewCursor,
@@ -311,37 +312,66 @@ export class DynamoStore implements AppStore {
     return { playerId, sessionToken, created };
   }
 
-  async isAccessCodeLocked(counter: string, at: string) {
-    const current = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
-    const lockedUntil = stringValue(current?.lockedUntil);
-    return Boolean(lockedUntil && Date.parse(lockedUntil) > Date.parse(at));
+  private accessCodeRecord(row: Record<string, unknown>): AccessCodeRecord {
+    return { counter: stringValue(row.counter), disabled: row.disabled === true, successCount: Number(row.successCount ?? 0),
+      failedCount: Number(row.failedCount ?? 0), lockedUntil: nullableString(row.lockedUntil), updatedAt: stringValue(row.updatedAt) };
+  }
+  async accessCode(counter: string) {
+    const row = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
+    return row ? this.accessCodeRecord({ ...row, counter }) : null;
+  }
+  async accessCodes(after: string, limit: number) {
+    const result = await this.transport.execute("Query", {
+      TableName: this.tableName, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk AND GSI1SK > :after",
+      ExpressionAttributeValues: item({ ":pk": "ACCESS_CODES", ":after": after }), Limit: limit, ScanIndexForward: true
+    });
+    const items = (result.Items ?? []).map(row => this.accessCodeRecord(valueFromItem(row)));
+    return { items, nextCursor: result.LastEvaluatedKey && items.length ? items[items.length - 1].counter : null };
+  }
+  async setAccessCodeDisabled(counter: string, disabled: boolean, at: string) {
+    await this.transport.execute("UpdateItem", {
+      TableName: this.tableName, Key: item({ PK: `ACCESS_ATTEMPT#${counter}`, SK: "META" }),
+      UpdateExpression: "SET disabled = :disabled, updatedAt = :at, #counter = :counter, GSI1PK = :pk, GSI1SK = :counter",
+      ExpressionAttributeNames: { "#counter": "counter" },
+      ExpressionAttributeValues: item({ ":disabled": disabled, ":at": at, ":counter": counter, ":pk": "ACCESS_CODES" })
+    });
   }
 
   async recordAccessCodeAttempt(counter: string, success: boolean, at: string) {
     const key = item({ PK: `ACCESS_ATTEMPT#${counter}`, SK: "META" });
     if (success) {
-      await this.transport.execute("DeleteItem", { TableName: this.tableName, Key: key });
-      return;
+      try {
+        await this.transport.execute("UpdateItem", {
+          TableName: this.tableName, Key: key,
+          UpdateExpression: "SET failedCount = :zero, lockedUntil = :null, updatedAt = :at, #counter = :counter, GSI1PK = :pk, GSI1SK = :counter ADD successCount :one",
+          ConditionExpression: "(attribute_not_exists(disabled) OR disabled = :no) AND (attribute_not_exists(lockedUntil) OR lockedUntil = :null OR lockedUntil <= :at)",
+          ExpressionAttributeNames: { "#counter": "counter" },
+          ExpressionAttributeValues: item({ ":zero": 0, ":one": 1, ":null": null, ":at": at, ":counter": counter, ":pk": "ACCESS_CODES", ":no": false })
+        });
+        return true;
+      } catch (error) { if (conditionalFailure(error)) return false; throw error; }
     }
-    const current = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
-    const atMs = Date.parse(at);
-    const updatedAt = stringValue(current?.updatedAt);
-    const withinWindow = updatedAt && atMs - Date.parse(updatedAt) < ACCESS_CODE_ATTEMPT_WINDOW_MS;
-    const failedCount = withinWindow ? Number(current?.failedCount ?? 0) + 1 : 1;
-    const lockedUntil = failedCount >= ACCESS_CODE_MAX_FAILED_ATTEMPTS
-      ? new Date(atMs + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString()
-      : null;
-    await this.transport.execute("PutItem", {
-      TableName: this.tableName,
-      Item: item({
-        PK: `ACCESS_ATTEMPT#${counter}`,
-        SK: "META",
-        entityType: "ACCESS_ATTEMPT",
-        failedCount,
-        lockedUntil,
-        updatedAt: at
-      })
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await this.get(`ACCESS_ATTEMPT#${counter}`, "META");
+      const atMs = Date.parse(at);
+      const updatedAt = stringValue(current?.updatedAt);
+      const withinWindow = updatedAt && atMs - Date.parse(updatedAt) < ACCESS_CODE_ATTEMPT_WINDOW_MS;
+      const failedCount = withinWindow ? Number(current?.failedCount ?? 0) + 1 : 1;
+      const lockedUntil = failedCount >= ACCESS_CODE_MAX_FAILED_ATTEMPTS
+        ? new Date(atMs + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString() : null;
+      try {
+        await this.transport.execute("UpdateItem", {
+          TableName: this.tableName, Key: key,
+          UpdateExpression: "SET failedCount = :count, lockedUntil = :locked, updatedAt = :at, #counter = :counter, GSI1PK = :pk, GSI1SK = :counter",
+          ConditionExpression: current?.failedCount === undefined ? "attribute_not_exists(failedCount)" : "failedCount = :previous AND updatedAt = :previousAt",
+          ExpressionAttributeNames: { "#counter": "counter" },
+          ExpressionAttributeValues: item({ ":count": failedCount, ":locked": lockedUntil, ":at": at, ":counter": counter, ":pk": "ACCESS_CODES",
+            ...(current?.failedCount === undefined ? {} : { ":previous": current.failedCount, ":previousAt": current.updatedAt }) })
+        });
+        return true;
+      } catch (error) { if (!conditionalFailure(error)) throw error; }
+    }
+    throw new Error("access_code_attempt_conflict");
   }
 
   private async prunePlayerSessions(playerId: string, currentTokenHash: string) {

@@ -80,13 +80,15 @@ ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 
 既存のCloudFront用WAFv2 WebACLを関連付ける場合だけ、`WEB_ACL_ARN`へus-east-1の`global/webacl/...` ARNを渡します。WebACLやルールは自動作成しません。未指定では既存parameterを維持し、新規stackでは関連付けなしです。`WEB_ACL_ARN=''`を明示して再配備すると解除します。SAMの省略parameterは更新時に以前の値を使うため、空文字と未指定を区別してください。
 
+コンソール等で直接設定した関連付けを自動で取り込む機能ではありません。本設定へ移す最初の配備では既存のARNを明示してください。
+
 このWAF設定が保護するのはCloudFront経由だけです。公開される`ApiEndpoint`（execute-api）への直接アクセスは保護しません。アクセスコードの総当たりや外部生成費用の上限を、この関連付けだけで保証するものではありません。
 
 プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser/staticで利用でき、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
 実プレイ入力を分岐監修へ保存する場合だけ、デプロイ時に `PLAYER_INPUT_LOGGING=true` を設定してください。未設定または `false` の場合は保存しません。入力本文をCloudWatch Logsへ出力する処理はありません。
 
-browserモードでは、入力ログと外部生成音声を使わなければ通常プレイによるDynamoDB書込みはありません。外部生成音声を準備する作品では、非公開の元台本を含む補助jobを保存します。DynamoDB自体は運営レビュー画面の試行入力と監修指示にも使います。
+browserモードでは、入力ログ・外部生成音声・アクセスコード管理を使わなければ通常プレイによるDynamoDB書込みはありません。外部生成音声を準備する作品では、非公開の元台本を含む補助jobを保存します。アクセスコードを必須にする場合は`ACCESS_CODE_SECRET`も渡してください。未設定ならデプロイ前に停止します。DynamoDB自体は運営レビュー画面の試行入力と監修指示にも使います。
 
 ```sh
 export PLAYER_INPUT_LOGGING=true

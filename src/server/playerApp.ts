@@ -412,7 +412,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     }
     if (clientProgressMode()) {
       const next = {
-        id: player.id, state: reconciled.state, stateVersion: player.stateVersion + 1, transcriptDeltas: responseAppends
+        ...player, state: reconciled.state, stateVersion: player.stateVersion + 1, transcriptDeltas: responseAppends
       };
       // browserで返せない候補は確定候補へ採らず、直前に確定した予約等を維持する。
       const token = localProgress ? undefined : await encodeBrowserProgress(browserStateSecret(c), runtime.workerScenario.project.id, next);
@@ -445,7 +445,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     return {
       ok: true as const,
       player: {
-        id: player.id,
+        ...player,
         state: reconciled.state,
         stateVersion: player.stateVersion + 1,
         transcriptDeltas: responseAppends
@@ -464,6 +464,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         : await decodeBrowserProgress(browserStateSecret(c), runtime.workerScenario.project.id, await browserProgressToken(c));
       if (!player)
         return null;
+      if (!localProgress && runtime.workerScenario.project.accessCode === "required" && !player.accessCodeId) return null;
       await parts?.restore(player.state);
       const committed = await commitPlayer(c, player, { state: player.state });
       if (!committed.ok)
@@ -513,7 +514,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         ...await projection.publicPlayerState(state, version, generatedAudio, wakeAt, player.transcriptDeltas ?? []),
         progressToken: c.committedPlayer === player && state === player.state && version === player.stateVersion && c.committedProgressToken
           ? c.committedProgressToken : await encodeBrowserProgress(browserStateSecret(c), runtime.workerScenario.project.id, {
-            id: player.id,
+            ...player,
             state,
             stateVersion: version
           })
@@ -809,13 +810,46 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const presentation = publicPresentation(result);
     return operationResult({ ok: true, playerState: await stateJson(c, committed.player), ...(presentation ? { presentation } : {}) });
   };
+  async function verifyEntryCode(c: PlayerOperationContext, value: unknown) {
+    const browser = runtime.workerScenario.playerMode === "browser";
+    if (browser && runtime.workerScenario.project.accessCode !== "required") return { ok: true as const, playerAccessCode: "", accessCodeId: undefined };
+    const serialCode = typeof value === "string" ? value.replace(/\D/gu, "") : "";
+    const local = !isProductionEnvironment(dependencies(c).config.appEnv) && ["localhost", "127.0.0.1", "::1"].includes(c.hostname);
+    const secret = dependencies(c).config.accessCodeSecret?.trim() ?? "";
+    const issued = browser || (!local && Boolean(secret));
+    if (browser && !secret) return { ok: false as const, error: "access_code_secret_missing", status: 503 };
+    if (!(local && !browser ? /^\d{4}(?:\d{4})?$/u : /^\d{8}$/u).test(serialCode))
+      return { ok: false as const, error: "invalid_access_code", status: 400 };
+    if (!issued) return { ok: true as const, playerAccessCode: serialCode, accessCodeId: undefined };
+    const counter = serialCode.slice(4);
+    const at = new Date().toISOString();
+    const record = await storeFor(c).accessCode(counter);
+    if (record?.disabled) return { ok: false as const, error: "access_code_disabled", status: 403 };
+    if (record?.lockedUntil && record.lockedUntil > at) return { ok: false as const, error: "rate_limited", status: 429 };
+    if (serialCode.slice(0, 4) !== await accessCodeCheckDigits(counter, secret)) {
+      await storeFor(c).recordAccessCodeAttempt(counter, false, at);
+      return { ok: false as const, error: "invalid_access_code", status: 400 };
+    }
+    return { ok: true as const, playerAccessCode: counter, accessCodeId: counter };
+  }
+  operations["POST /api/access-code/verify"] = async c => {
+    if (runtime.workerScenario.playerMode === "static") return operationResult({ ok: false, error: "not_available" }, 400);
+    const result = await verifyEntryCode(c, c.body?.serialCode);
+    return result.ok ? operationResult({ ok: true }) : operationResult({ ok: false, error: result.error }, result.status);
+  };
   operations["POST /api/session/start"] = async (c) => {
-    await cleanupHookLlmCache(c);
     const body = c.body;
+    const entry = localProgress ? { ok: true as const, playerAccessCode: "", accessCodeId: undefined } : await verifyEntryCode(c, body?.serialCode);
+    if (!entry.ok) return operationResult({ ok: false, error: entry.error }, entry.status);
     const startupParts = runtime.workerScenario.project.lockScreen.method === "fixed-pin"
       ? await verifiedPinParts(typeof body?.pin === "string" ? body.pin : "") : [];
     if (!startupParts)
       return operationResult({ ok: false, error: "invalid" }, 400);
+    if (entry.accessCodeId && !await storeFor(c).recordAccessCodeAttempt(entry.accessCodeId, true, new Date().toISOString())) {
+      const record = await storeFor(c).accessCode(entry.accessCodeId);
+      return operationResult({ ok: false, error: record?.disabled ? "access_code_disabled" : "rate_limited" }, record?.disabled ? 403 : 429);
+    }
+    await cleanupHookLlmCache(c);
     // 初回とreset後は同じ順序で初期履歴・予約を準備し、hookと一緒に確定する。
     const start = async (player: PlayerRecord, starting: boolean, sessionToken: string) => {
       await parts?.restore(player.state);
@@ -849,34 +883,9 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     if (clientProgressMode()) {
       if (!localProgress && !browserStateSecret(c))
         return operationResult({ ok: false, error: "browser_state_secret_missing" }, 500);
-      return start({ id: crypto.randomUUID(), state: createInitialPlayerState(), stateVersion: 0 }, true, "");
+      return start({ id: crypto.randomUUID(), state: createInitialPlayerState(), stateVersion: 0, ...(entry.accessCodeId ? { accessCodeId: entry.accessCodeId } : {}) }, true, "");
     }
-    const serialCode = typeof body?.serialCode === "string" ? body.serialCode.replace(/\D/gu, "") : "";
-    const hostname = c.hostname;
-    const localDevelopment = !isProductionEnvironment(dependencies(c).config.appEnv)
-      && (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1");
-    const validCode = localDevelopment ? /^\d{4}(?:\d{4})?$/u.test(serialCode) : /^\d{8}$/u.test(serialCode);
-    if (!validCode) {
-      return operationResult({ ok: false, error: "invalid" }, 400);
-    }
-    const accessCodeSecret = dependencies(c).config.accessCodeSecret?.trim() ?? "";
-    let playerAccessCode = serialCode;
-    if (!localDevelopment && accessCodeSecret) {
-      const checkDigits = serialCode.slice(0, 4);
-      const counter = serialCode.slice(4);
-      const attemptedAt = new Date().toISOString();
-      if (await storeFor(c).isAccessCodeLocked(counter, attemptedAt)) {
-        return operationResult({ ok: false, error: "rate_limited" }, 429);
-      }
-      const expected = await accessCodeCheckDigits(counter, accessCodeSecret);
-      if (checkDigits !== expected) {
-        await storeFor(c).recordAccessCodeAttempt(counter, false, attemptedAt);
-        return operationResult({ ok: false, error: "invalid" }, 400);
-      }
-      await storeFor(c).recordAccessCodeAttempt(counter, true, attemptedAt);
-      playerAccessCode = counter;
-    }
-    const created = await storeFor(c).createPasscodeSession(playerAccessCode, null, []);
+    const created = await storeFor(c).createPasscodeSession(entry.playerAccessCode, null, []);
     let identity = await storeFor(c).playerForSession(created.sessionToken);
     if (!identity)
       return operationResult({ ok: false, error: "session_create_failed" }, 500);
@@ -1433,6 +1442,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
           ruleId: selection.rule.id,
           nextFromId: nextFrom,
           responseSnapshot: {
+            ...(player.accessCodeId ? { accessCodeId: player.accessCodeId } : {}),
             source: selection.source,
             loadedParts: player.state.loadedPartIds,
             acquiredParts: committed.player.state.loadedPartIds,
@@ -1542,6 +1552,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
           ruleId: selection.rule.id,
           nextFromId: nextFrom,
           responseSnapshot: {
+            ...(player.accessCodeId ? { accessCodeId: player.accessCodeId } : {}),
             source: selection.source,
             loadedParts: player.state.loadedPartIds,
             acquiredParts: committed.player.state.loadedPartIds,
@@ -1621,6 +1632,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         ruleId: selection.rule.id,
         nextFromId: nextFrom,
         responseSnapshot: {
+          ...(player.accessCodeId ? { accessCodeId: player.accessCodeId } : {}),
           source: selection.source,
           loadedParts: player.state.loadedPartIds,
           acquiredParts: committed.player.state.loadedPartIds,

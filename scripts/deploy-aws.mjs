@@ -34,7 +34,8 @@ if (webAclArn !== undefined && webAclArn !== "" && !/^arn:aws(?:-[a-z]+)*:wafv2:
 }
 const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS).join(",");
 
-if (loadAndValidateScenario().worker.playerMode === "static") {
+const selectedScenario = loadAndValidateScenario().worker;
+if (selectedScenario.playerMode === "static") {
   console.error("staticモードは npm run build:static で作り、dist/staticを静的ホストへ配置してください。APIはデプロイしません。");
   process.exit(1);
 }
@@ -47,8 +48,12 @@ if (!adminReviewSecret) {
 const playerInputLogging = process.env.PLAYER_INPUT_LOGGING === "true" ? "true" : "false";
 const browserStateSecret = process.env.BROWSER_STATE_SECRET?.trim();
 const accessCodeSecret = process.env.ACCESS_CODE_SECRET?.trim();
-if (loadAndValidateScenario().worker.playerMode === "browser" && !browserStateSecret) {
+if (selectedScenario.playerMode === "browser" && !browserStateSecret) {
   console.error("browserモードではBROWSER_STATE_SECRETを環境変数へ設定してください。");
+  process.exit(1);
+}
+if (selectedScenario.playerMode === "browser" && selectedScenario.project?.accessCode === "required" && !accessCodeSecret) {
+  console.error("アクセスコード必須のbrowserモードではACCESS_CODE_SECRETを設定してください。");
   process.exit(1);
 }
 const llmParameterOverrides = [

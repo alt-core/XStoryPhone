@@ -31,7 +31,7 @@ async function deployment(arguments_, options = {}) {
         status: options.failCommand?.(command, args) ? 1 : 0,
         stdout: JSON.stringify(Object.entries(outputs).map(([OutputKey, OutputValue]) => ({ OutputKey, OutputValue })))
       };
-    }, fileURLToPath, () => ({ worker: { playerMode: options.playerMode ?? "server" } }), parseAllowedOrigins, {
+    }, fileURLToPath, () => ({ worker: { playerMode: options.playerMode ?? "server", project: { accessCode: options.accessCode ?? "none" } } }), parseAllowedOrigins, {
       argv: ["node", fileURLToPath(scriptUrl), ...arguments_],
       env: { ADMIN_REVIEW_SECRET: "mock-admin-secret", ...options.env },
       exit(code) { throw new Exit(code); }
@@ -95,6 +95,15 @@ test("WAFは未指定ならparameterを省き、空文字では明示解除す�
   const invalid = await deployment(["dev"], { env: { WEB_ACL_ARN: arn.replace("us-east-1", "ap-northeast-1") } });
   assert.equal(invalid.exitCode, 1);
   assert.equal(invalid.calls.length, 0);
+});
+
+test("browserのコード必須設定では署名鍵に加えてコード秘密値も配備前に要求する", async () => {
+  const missing = await deployment(["dev", "--api-only"], { playerMode: "browser", accessCode: "required", env: { BROWSER_STATE_SECRET: "fixture" } });
+  assert.equal(missing.exitCode, 1);
+  assert.equal(missing.calls.length, 0);
+  assert.ok(missing.logs.some(line => line.includes("ACCESS_CODE_SECRET")));
+  const accepted = await deployment(["dev", "--api-only"], { playerMode: "browser", accessCode: "required", env: { BROWSER_STATE_SECRET: "fixture", ACCESS_CODE_SECRET: "fixture-code" } });
+  assert.equal(accepted.exitCode, 0);
 });
 
 test("既存AWS公開はclient build・監査・S3同期・invalidation・SiteUrl healthを維持する", async () => {

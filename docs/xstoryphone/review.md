@@ -4,6 +4,8 @@
 
 `/api/admin/talk-branch-review` を開きます。localhost上のdevelopment・stagingでは、トークンを空欄のまま読み込めます。公開したdev・stg・prodでは `ADMIN_REVIEW_SECRET` が必要です。`APP_ENV` はデプロイスクリプトが対象に合わせて設定します。
 
+`ADMIN_REVIEW_SECRET`は、アクセスコードの無効化と生成音声の再試行APIも保護します。外部生成費用が発生し得る操作を含む運営用の権限なので、読み取り専用の共有鍵として配布しないでください。
+
 ## 画面でできること
 
 - talk/fromごとの台本と分岐条件の確認

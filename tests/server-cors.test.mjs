@@ -176,7 +176,7 @@ test("外部OriginをlocalhostにしてもAPIホストの認証例外は有効�
     });
     assert.equal(response.status, 400);
     assertAllowed(response, "http://localhost:4173");
-    assert.equal((await response.json()).error, "invalid");
+    assert.equal((await response.json()).error, "invalid_access_code");
   } finally {
     workerScenario.playerMode = originalMode;
   }

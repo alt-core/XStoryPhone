@@ -90,6 +90,16 @@ test("生成音声fallbackは音声添付IDだけを受理し、素材URLを定�
   assert.match(rejected.stderr, /fallback.*audio attachment/u);
 }));
 
+test("browser入場コードの設定は既定noneで、requiredをstaticへ持ち込めない", () => withAuthoring(({ edit, invoke }) => {
+  assert.equal(invoke('console.log(result.worker.project.accessCode);').stdout.trim(), "none");
+  edit("project_constants", rows => rows.push({ key: "player.access_code", value: "required", exposure: "private" }));
+  const enabled = invoke('console.log(result.projectConstants["player.access_code"]);');
+  assert.equal(enabled.status, 0, enabled.stderr);
+  assert.equal(enabled.stdout.trim(), "required");
+  edit("project_constants", rows => { rows.find(row => row.key === "player.mode").value = "static"; });
+  assert.match(invoke().stderr, /入場認証/u);
+}));
+
 test("親アプリ修復の定数は新しい列なしでboolean設定へ変換され、誤記を拒否する", () => withAuthoring(({ edit, invoke }) => {
   const defaults = invoke('console.log(JSON.stringify([result.worker.project.repairParentApp, result.worker.project.talkClock]));');
   assert.equal(defaults.status, 0, defaults.stderr);

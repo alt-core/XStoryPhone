@@ -189,6 +189,21 @@ test("browser player storage", async (suite) => {
   });
 
   for (const mode of ["persistent", "memory"]) {
+    await suite.test(`${mode}: 同じ進行tokenの音声復旧も公開snapshotへ反映する`, async () => {
+      globalThis.indexedDB = new IDBFactory();
+      installBrowserStorage();
+      const storage = await freshStorageModule();
+      await storage.initializeBrowserPlayerStorage({ enabled: true, projectId: `audio-${mode}`, clientRevision: "client-current", storage: { mode, prefix: "" } });
+      const first = playerState({ token: "token-1" });
+      first.visibleDeviceState.radioItems = [{ id: "voice", programTitle: "音声", generatedAudio: { status: "running" } }];
+      await storage.commitBrowserPlayerResponse(null, first, { replaceStreams: true });
+      const ready = structuredClone(first);
+      ready.visibleDeviceState.radioItems[0] = { id: "voice", programTitle: "音声", audioUrl: "/recovered.wav", generatedAudio: { status: "ready" } };
+      const applied = await storage.commitBrowserPlayerResponse("token-1", ready);
+      assert.equal(applied.visibleDeviceState.radioItems[0].audioUrl, "/recovered.wav");
+      assert.equal(storage.loadCachedBrowserPlayerState().visibleDeviceState.radioItems[0].generatedAudio.status, "ready");
+      assert.equal(await storage.prepareBrowserPlayerRequest(), "token-1");
+    });
     await suite.test(`${mode}: 検証・履歴merge・rollback・条件付きclearの共通契約`, async () => {
       globalThis.indexedDB = new IDBFactory();
       installBrowserStorage();

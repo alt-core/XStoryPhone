@@ -37,6 +37,7 @@ import {
   sha256
 } from "../../server/store.ts";
 import { ACCESS_CODE_ATTEMPT_WINDOW_MS, ACCESS_CODE_MAX_FAILED_ATTEMPTS } from "../../server/accessCode.ts";
+import type { AccessCodeRecord } from "../../server/store.ts";
 import { SEARCH_AGENT_STREAM_ID } from "../../shared/searchAgent.ts";
 
 function stringArray(value: string) {
@@ -153,35 +154,41 @@ export class D1Store implements AppStore {
     return { playerId: player.id, sessionToken, created };
   }
 
-  async isAccessCodeLocked(counter: string, at: string) {
-    const row = await this.db.prepare("SELECT locked_until FROM access_code_attempts WHERE counter_text = ?")
-      .bind(counter)
-      .first<{ locked_until: string | null }>();
-    return Boolean(row?.locked_until && Date.parse(row.locked_until) > Date.parse(at));
+  private accessCodeSelect() {
+    return "SELECT counter_text AS counter, disabled, success_count AS successCount, failed_count AS failedCount, locked_until AS lockedUntil, updated_at AS updatedAt FROM access_code_attempts";
+  }
+  async accessCode(counter: string) {
+    const row = await this.db.prepare(`${this.accessCodeSelect()} WHERE counter_text = ?`).bind(counter).first<AccessCodeRecord>();
+    return row ? { ...row, disabled: Boolean(row.disabled) } : null;
+  }
+  async accessCodes(after: string, limit: number) {
+    const rows = await this.db.prepare(`${this.accessCodeSelect()} WHERE counter_text > ? ORDER BY counter_text LIMIT ?`)
+      .bind(after, limit + 1).all<AccessCodeRecord>();
+    const items = rows.results.slice(0, limit).map(row => ({ ...row, disabled: Boolean(row.disabled) }));
+    return { items, nextCursor: rows.results.length > limit ? items[items.length - 1].counter : null };
+  }
+  async setAccessCodeDisabled(counter: string, disabled: boolean, at: string) {
+    await this.db.prepare(`INSERT INTO access_code_attempts (counter_text, failed_count, locked_until, updated_at, disabled, success_count)
+      VALUES (?, 0, NULL, ?, ?, 0) ON CONFLICT(counter_text) DO UPDATE SET disabled = excluded.disabled, updated_at = excluded.updated_at`)
+      .bind(counter, at, Number(disabled)).run();
   }
 
   async recordAccessCodeAttempt(counter: string, success: boolean, at: string) {
     if (success) {
-      await this.db.prepare("DELETE FROM access_code_attempts WHERE counter_text = ?").bind(counter).run();
-      return;
+      const result = await this.db.prepare(`INSERT INTO access_code_attempts (counter_text, failed_count, locked_until, updated_at, disabled, success_count)
+        VALUES (?, 0, NULL, ?, 0, 1) ON CONFLICT(counter_text) DO UPDATE SET
+          failed_count = 0, locked_until = NULL, updated_at = excluded.updated_at, success_count = access_code_attempts.success_count + 1
+        WHERE access_code_attempts.disabled = 0 AND (access_code_attempts.locked_until IS NULL OR access_code_attempts.locked_until <= excluded.updated_at)`)
+        .bind(counter, at).run();
+      return (result.meta.changes ?? 0) > 0;
     }
-    const current = await this.db.prepare("SELECT failed_count, updated_at FROM access_code_attempts WHERE counter_text = ?")
-      .bind(counter)
-      .first<{ failed_count: number; updated_at: string }>();
-    const atMs = Date.parse(at);
-    const withinWindow = current && atMs - Date.parse(current.updated_at) < ACCESS_CODE_ATTEMPT_WINDOW_MS;
-    const failedCount = withinWindow ? current.failed_count + 1 : 1;
-    const lockedUntil = failedCount >= ACCESS_CODE_MAX_FAILED_ATTEMPTS
-      ? new Date(atMs + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString()
-      : null;
-    await this.db.prepare(
-      `INSERT INTO access_code_attempts (counter_text, failed_count, locked_until, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(counter_text) DO UPDATE SET
-         failed_count = excluded.failed_count,
-         locked_until = excluded.locked_until,
-         updated_at = excluded.updated_at`
-    ).bind(counter, failedCount, lockedUntil, at).run();
+    const cutoff = new Date(Date.parse(at) - ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString();
+    const count = "CASE WHEN access_code_attempts.updated_at > ? THEN access_code_attempts.failed_count + 1 ELSE 1 END";
+    await this.db.prepare(`INSERT INTO access_code_attempts (counter_text, failed_count, locked_until, updated_at)
+      VALUES (?, 1, NULL, ?) ON CONFLICT(counter_text) DO UPDATE SET
+        failed_count = ${count}, locked_until = CASE WHEN (${count}) >= ? THEN ? ELSE NULL END, updated_at = excluded.updated_at`)
+      .bind(counter, at, cutoff, cutoff, ACCESS_CODE_MAX_FAILED_ATTEMPTS, new Date(Date.parse(at) + ACCESS_CODE_ATTEMPT_WINDOW_MS).toISOString()).run();
+    return true;
   }
 
   async prunePlayerSessions(playerId: string, currentTokenHash: string) {

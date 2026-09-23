@@ -1110,7 +1110,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       }
       const playbackCond = typeof content.record.playbackCond === "string" ? content.record.playbackCond : "";
       if (playbackCond && !conditionMet(playbackCond, state)) {
-        const { audioUrl: _audioUrl, audioSegments: _audioSegments, genAudioId: _genAudioId, generatedAudio: _generatedAudio, ...blocked } = record;
+        const { audioUrl: _audioUrl, audioSegments: _audioSegments, genAudioId: _genAudioId, generatedAudio: _generatedAudio, transcript: _transcript, ...blocked } = record;
         const label = typeof content.record.playbackDisabledLabel === "string" && content.record.playbackDisabledLabel.trim()
           ? content.record.playbackDisabledLabel.trim()
           : "現在は再生できません";

@@ -96,6 +96,7 @@
     startSession,
     unlockContent,
     verifyDevicePin,
+    verifyAccessCode,
     openMessageLink,
     playerMode,
     type AllClearPayload,
@@ -139,6 +140,7 @@
   const qaRadioFormDisabled = queryParams.get("form") === "disabled";
   type DeviceLockMethod = "player-passcode" | "fixed-pin" | "none";
   const publicProjectSettings: Readonly<Record<string, unknown>> = projectConstants;
+  const browserAccessCodeRequired = playerMode === "browser" && publicProjectSettings["player.access_code"] === "required";
   const configuredDeviceLockMethod = String(projectConstants["device.lock_method"] ?? "none") as DeviceLockMethod;
   const deviceLockMethod: DeviceLockMethod = qaMode && qaView === "lock" && configuredDeviceLockMethod === "none"
     ? "fixed-pin"
@@ -306,6 +308,7 @@
   let contentNavigationRequestId = 0;
   // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
   let pendingPlayerPasscode = "";
+  let accessCodeEntryError = "";
   const storedStartConfirmationDone = hasStartConfirmation();
   let startConfirmationDone = localQaMode || (
     storedStartConfirmationDone
@@ -322,8 +325,7 @@
     !localQaMode
     && !holdScreenRequired
     && !startConfirmationRequired
-    && playerMode === "server"
-    && deviceLockMethod !== "player-passcode"
+    && ((playerMode === "server" && deviceLockMethod !== "player-passcode") || browserAccessCodeRequired)
     && !uiState.sessionToken
     && !pendingPlayerPasscode
   );
@@ -1694,6 +1696,7 @@
     radioAutoplayRequestId = 0;
     pendingShareDraft = null;
     pendingPlayerPasscode = "";
+    accessCodeEntryError = "";
     window.clearTimeout(notificationToastTimer);
     window.clearTimeout(gameOverOverlayTimer);
     window.clearTimeout(allClearOverlayTimer);
@@ -1770,7 +1773,7 @@
   }
 
   async function confirmStart() {
-    if (playerMode !== "server" && deviceLockMethod === "none" && !uiState.sessionToken) {
+    if (playerMode !== "server" && !browserAccessCodeRequired && deviceLockMethod === "none" && !uiState.sessionToken) {
       const opened = await openBrowserSession();
       if (!opened.ok) return opened;
     }
@@ -1948,10 +1951,23 @@
 
   function entryError(result: { error: string; status?: number }) {
     if (isBrowserProgressSizeFailure(result)) return result.error;
-    return ["invalid", "rate_limited"].includes(result.error) ? result.error : "server_unavailable";
+    if ((result.status === 400 && result.error === "invalid_access_code")
+      || (result.status === 403 && result.error === "access_code_disabled")
+      || (result.status === 503 && result.error === "access_code_secret_missing")) return result.error;
+    if (result.error === "rate_limited" && result.status === 429) return result.error;
+    return result.error === "invalid" && (result.status === 400 || result.status === 403 || result.status === undefined) ? result.error : "server_unavailable";
   }
 
-  async function openBrowserSession() {
+  function entryFailure(result: { error: string; status?: number }) {
+    const error = entryError(result);
+    if (pendingPlayerPasscode && ["invalid_access_code", "access_code_disabled", "access_code_secret_missing", "rate_limited"].includes(error)) {
+      pendingPlayerPasscode = "";
+      accessCodeEntryError = error;
+    }
+    return { ok: false as const, error };
+  }
+
+  async function openBrowserSession(serialCode = pendingPlayerPasscode) {
     try {
       const existingBrowserMarker = loadBrowserPlayerMarker();
       const loaded = existingBrowserMarker ? await loadPlayerState(existingBrowserMarker) : null;
@@ -1959,16 +1975,18 @@
         ? { ...loaded, sessionToken: existingBrowserMarker ?? "" }
         : loaded && !requiresPlayerEntry(loaded)
           ? loaded
-          : await startSession("");
+          : await startSession(serialCode);
 
       if (!result.ok) {
         applyErrorPlayerState(result);
-        return { ok: false, error: entryError(result) };
+        return entryFailure(result);
       }
       applyStartedSession(result, {
         locked: false,
         resumedBrowserProgress: Boolean(existingBrowserMarker && loaded?.ok)
       });
+      pendingPlayerPasscode = "";
+      accessCodeEntryError = "";
       trackEvent({ name: "unlock_device" });
       return { ok: true };
     } catch {
@@ -1981,7 +1999,7 @@
       const result = await startSession(serialCode);
       if (!result.ok) {
         applyErrorPlayerState(result);
-        return { ok: false, error: entryError(result) };
+        return entryFailure(result);
       }
       applyStartedSession(result, { locked: false });
       trackEvent({ name: "unlock_device" });
@@ -1993,11 +2011,16 @@
 
   async function authenticatePlayerPasscode(serialCode: string) {
     if (deviceLockMethod === "fixed-pin") {
+      let verified: Awaited<ReturnType<typeof verifyAccessCode>>;
+      try { verified = await verifyAccessCode(serialCode); }
+      catch { return { ok: false, error: "server_unavailable" }; }
+      if (!verified.ok) return entryFailure(verified);
+      accessCodeEntryError = "";
       pendingPlayerPasscode = serialCode;
       if (!uiState.locked) persist({ locked: true });
       return { ok: true };
     }
-    return startPlayerPasscodeSession(serialCode);
+    return playerMode === "browser" ? openBrowserSession(serialCode) : startPlayerPasscodeSession(serialCode);
   }
 
   async function unlockDevice(code: string) {
@@ -3682,7 +3705,7 @@
     </div>
   {:else if playerPasscodeEntryRequired}
     <div class="out-game-dialog">
-      <PlayerPasscodeScreen passcodeLength={pinLength} onSubmit={authenticatePlayerPasscode} />
+      <PlayerPasscodeScreen passcodeLength={browserAccessCodeRequired ? 8 : pinLength} browserMode={browserAccessCodeRequired} initialError={accessCodeEntryError} onSubmit={authenticatePlayerPasscode} />
     </div>
   {:else}
     {#snippet phone(presentation: PhonePresentation)}
