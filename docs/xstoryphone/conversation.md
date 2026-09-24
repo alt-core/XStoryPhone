@@ -204,6 +204,8 @@ LLM_REASONING_EFFORT=low
 
 `LLM_REASONING_EFFORT` は利用する互換providerが対応している場合だけ明示設定します。未設定時は、Gemini 2.5系またはFlash-Lite系の非Proへ`none`、その他のGemini 3系へ`minimal`を安全な既定値として送り、それ以外のmodelには送りません。明示値はこの既定より優先されます。
 
+`LLM_REASONING_EFFORT=omit`は、`reasoning_effort`をリクエストへ含めない指定です。modelの既定動作を使い、思考処理を無効化する指定ではありません。`none`はその値をAPIへ送ります。hookのprofileでも各`LLM_PROFILE_*_REASONING_EFFORT=omit`を指定でき、super/ultraの既定の`medium`を省略できます。
+
 providerの必須処理は `completeJson` だけです。会話エンジンは、その上に「type=aiの判定」と「extractのAI抽出」を載せています。任意の `observeResult` は検証後の採否を記録するための口で、別providerでは省略できます。別providerへ切り替える場合は `src/worker/providers/structuredOutput.ts` の生成部分だけを差し替えます。ただし「type=aiの判定」だけは、JSONを生成しない判定型のproviderも選べます([rule選択にJevを使う](#rule選択にjevを使う))。
 
 AI判定には、現在のfrom blockの末尾2件と、表示履歴の直近2件を重複除去して渡します。stayの会話が続いても現在の問いを保持し、短い肯定・否定や指示語の文脈を補います。confidenceが0.65未満ならdefaultへ倒し、`game_over` は誤判定を避けるため0.9以上を必要とします。0〜1の範囲外や候補にないrule IDは、不正応答としてエラーにします。providerの一時的な通信失敗は1回だけ再試行し、長い再試行で送信画面を止め続けない設計です。
@@ -215,6 +217,32 @@ hookの`llm.match`は`fast / super / ultra` profileと`stable / once`を選べ�
 `LLM_ANALYTICS_ENABLED=true`では本文を含まないtoken usage・試行回数・hashを構造化logへ出します。`LLM_DEBUG_LOGS=true`では入力・prompt・schema・応答も出るため、調査中だけ有効にし、公開環境では調査後にfalseへ戻してください。API keyやAuthorization headerはdebugにも出しません。
 
 通常logには、provider応答の取得結果に加えて検証後の採否・confidence・理由・標本番号を記録します。hookの保存結果とlogは同じ論理入力・指示・schemaのhashで照合でき、監修試行には選択結果とhashを保存します。生のHTTP payloadや長いprompt全体を監修DBへ複製するわけではありません。debugを無効にしていた期間の生応答は後から復元できません。
+
+### Amazon Bedrockを使う
+
+BedrockのChat Completions APIは、既存のOpenAI互換providerから呼び出せます。長期APIキーを`LLM_API_KEY`へ設定し、接続先とmodelを切り替えます。AWS SDKや短期tokenの自動更新は使用しません。配備先がCloudflareでも、同じHTTP接続を使います。
+
+```dotenv
+LLM_TALK_SELECTOR=openai-compatible
+LLM_API_KEY=<Bedrockの長期APIキー>
+LLM_BASE_URL=https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1
+LLM_MODEL=zai.glm-4.7-flash
+LLM_REASONING_EFFORT=omit
+```
+
+2026-09-25に、上記の接続先で次のmodel IDを使い、短いJSON判定、会話分岐、文字列抽出、hookのmatchを確認しています。
+
+| モデル | LLM_MODEL |
+| --- | --- |
+| Kimi K3 | `global.moonshotai.kimi-k3` |
+| GLM 4.7 Flash | `zai.glm-4.7-flash` |
+| Qwen3 Next 80B A3B | `qwen.qwen3-next-80b-a3b` |
+
+Kimi K3はこの例ではGlobal推論プロファイルを使います。提供リージョンやモデルの利用権限はAWS側の設定に従います。[AWSのChat Completions仕様](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html)を参照してください。
+
+この経路では既存の`response_format.json_schema`と`max_completion_tokens`を使います。上記3モデルへの確認では、数値範囲・文字列長を含む現在のSchemaが受理されたため、Bedrock向けに制約を削除する変換は加えていません。返答の確信度・分岐ID・抽出値は、既存のアプリ側の検査も通します。短い疎通確認であり、任意のSchemaや長い入力、判定品質を保証するものではありません。
+
+GeminiとBedrockの比較は、同じ会話caseと[選択だけの評価](authoring-tests.md#分岐の選択だけを評価する)を使い、接続先・キー・modelの環境変数セットを切り替えて行います。接続先とキーは実行環境内で共通です。`LLM_MODEL`を変更しても明示したprofile modelは変わらないため、hookも比較するときは`LLM_PROFILE_FAST_MODEL`等を含めて切り替えてください。profileの推論強度も、APIへ送る値または`omit`を明示すると条件を揃えられます。
 
 ### rule選択にJevを使う
 
@@ -233,7 +261,7 @@ TYPESAFE_GAME_OVER_MIN_CONFIDENCE=0.9  # 任意。既定値
 - keyがない、`LLM_TALK_SELECTOR`が未知の値、閾値が0〜1の数値でない、game over用の閾値が通常の閾値より小さい場合は、通信せず`llm_unavailable`にします。既存のLLMへ黙って戻しません。
 - 閾値はJevの`confidence`へ適用し、判定規則は既存のLLM経路と同じです。通常の閾値未満ならdefaultへ戻し、`game_over`のruleはgame over用の閾値以上の時だけ選びます。
 - `jev-latest`のような別名は新版へ自動で移り、調整した閾値の前提が変わります。閾値を調整したら`TYPESAFE_MODEL`を版IDで固定してください。
-- Jevの主な学習言語は英語で、日本語の精度は下がると公開されています。作品のexampleと会話caseを実APIで確認してから使ってください。
+- Jevの主な学習言語は英語で、日本語の精度は下がると公開されています。作品のexampleと会話caseを実APIで確認してから使ってください。[分岐の選択だけを評価する](authoring-tests.md#分岐の選択だけを評価する)手順では、`--selection-only`で抽出用LLMを呼ばずに同じ入力を比較できます。テンプレートのある地点はcaseの`stateValues`で実際の場面を再現してください。
 - LLMに判断させるまでもない事前条件(特定の添付IDが必要、など)は、criteriaではなく`cond`に書きます。`cond`は`player_input`を参照でき、通らないruleは候補になりません。
 - プレイヤー入力と直近の会話はTypeSafeへ送られます。公開時は、実際の送信先に合わせてプライバシーポリシーを更新してください。
 

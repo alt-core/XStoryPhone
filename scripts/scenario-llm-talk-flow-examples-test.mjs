@@ -3,17 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
 import {
-  buildTalkFlowLlmChatCompletionBody,
   buildTalkFlowLlmMessages,
   selectTalkFlowRuleFromLlmDecision,
-  talkFlowLlmResponseSchema
+  talkFlowLlmResponseSchema,
+  talkFlowLlmRuleSelectionMaxTokens
 } from "../src/worker/product/talkFlowLlmSelection.ts";
 import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../src/worker/product/talkFlowTypesafeSelection.ts";
 import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../src/worker/providers/typesafe.ts";
 import { evaluateConditionExpression } from "../src/shared/conditionExpression.ts";
 import { renderTalkRuleCriteria, talkRuleSelectorKind } from "../src/worker/services/talkResolver.ts";
 import { talkTestContext } from "./lib/talk-test-context.mjs";
+import { sameRuleOutcome } from "./lib/talk-rule-outcome.mjs";
 import { selectDeterministicRule } from "../src/shared/talkCriteria.ts";
+import { buildStructuredOutputBody, createStructuredOutputProvider, resolveStructuredOutputConfig } from "../src/worker/providers/structuredOutput.ts";
+import { semanticRuleSelector } from "../src/worker/services/conversationLlm.ts";
+import { talkCaseEvaluationConfig } from "./lib/talk-case-runner.mjs";
 
 const loadedScenario = loadAndValidateScenario().worker;
 const scenario = {
@@ -30,56 +34,7 @@ const scenario = {
   })
 };
 
-const productionLlmRetryDelaysMs = [250];
-
-function tokenUsageFromPayload(payload) {
-  const usage = payload && typeof payload === "object" ? payload.usage : null;
-  if (!usage || typeof usage !== "object") return null;
-  return {
-    promptTokens: Number(usage.prompt_tokens ?? 0),
-    completionTokens: Number(usage.completion_tokens ?? 0),
-    totalTokens: Number(usage.total_tokens ?? 0),
-    cachedTokens: Number(usage.prompt_tokens_details?.cached_tokens ?? 0)
-  };
-}
-
-async function fetchLlmJsonPayloadAttempt(url, init, timeoutMs) {
-  try {
-    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      return {
-        ok: false,
-        retriable: response.status === 408 || response.status === 429 || response.status >= 500,
-        failure: { reason: "http_error", errorCode: "provider_error", httpStatus: response.status },
-        httpStatus: response.status,
-        payload
-      };
-    }
-    return { ok: true, value: { response, payload }, httpStatus: response.status, payload };
-  } catch (error) {
-    return {
-      ok: false,
-      retriable: true,
-      failure: { reason: "network_error", errorCode: "provider_error", errorName: error?.name, errorMessage: error?.message }
-    };
-  }
-}
-
-async function runLlmWithRetry(runAttempt, options = {}) {
-  const delays = options.retryDelaysMs ?? [];
-  let attempts = 0;
-  let result;
-  while (attempts <= delays.length) {
-    attempts += 1;
-    result = await runAttempt();
-    if (result.ok || !result.retriable || attempts > delays.length) break;
-    const waitMs = delays[attempts - 1];
-    options.onRetry?.({ retry: attempts, waitMs, ...result.failure });
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-  return { result, attempts, retries: Math.max(0, attempts - 1) };
-}
+const productionLlmRetryCount = 1;
 
 const rootDir = process.cwd();
 const args = new Map();
@@ -96,10 +51,10 @@ for (const arg of process.argv.slice(2)) {
 const live = flags.has("live");
 const paidApiConfirmationFlag = "i-understand-this-test-calls-a-paid-llm-api-and-requires-user-confirmation";
 const limit = Number(args.get("limit") ?? 0);
-const retryCountArg = Number(args.get("retries") ?? productionLlmRetryDelaysMs.length);
+const retryCountArg = Number(args.get("retries") ?? productionLlmRetryCount);
 const retries = Number.isFinite(retryCountArg)
-  ? Math.max(0, Math.min(productionLlmRetryDelaysMs.length, Math.trunc(retryCountArg)))
-  : productionLlmRetryDelaysMs.length;
+  ? Math.max(0, Math.min(productionLlmRetryCount, Math.trunc(retryCountArg)))
+  : productionLlmRetryCount;
 const onlyCase = args.get("case") ?? "";
 const onlyTalk = args.get("talk") ?? "";
 const onlyFrom = args.get("from") ?? "";
@@ -178,18 +133,6 @@ async function callLiveTypesafe(input, testCase) {
   };
 }
 
-function usageFromPayload(payload) {
-  const usage = tokenUsageFromPayload(payload);
-  return usage
-    ? {
-        inputTokens: usage.promptTokens,
-        outputTokens: usage.completionTokens,
-        totalTokens: usage.totalTokens,
-        cachedTokens: usage.cachedTokens
-      }
-    : null;
-}
-
 function average(values) {
   const numbers = values.filter((value) => typeof value === "number");
   if (numbers.length === 0) {
@@ -244,25 +187,6 @@ function summarizeRun(planned, results, failures) {
     failed: failures.length,
     ...summarizeResults(results)
   };
-}
-
-function liveTimeoutMs() {
-  const value = Number(process.env.LLM_TIMEOUT_MS ?? 5000);
-  return Number.isFinite(value) && value > 0 ? Math.round(value) : 5000;
-}
-
-function liveRetryDelaysMs() {
-  return productionLlmRetryDelaysMs.slice(0, retries);
-}
-
-function llmFailureMessage(failure) {
-  return [
-    failure.reason,
-    failure.httpStatus ? `http=${failure.httpStatus}` : "",
-    failure.errorCode ? `code=${failure.errorCode}` : "",
-    failure.errorName ? `name=${failure.errorName}` : "",
-    failure.errorMessage ? `message=${failure.errorMessage}` : ""
-  ].filter(Boolean).join(" ");
 }
 
 function shouldAbortRun(error) {
@@ -327,7 +251,8 @@ function fullFailureRow(testCase, error) {
             afterGuardRuleId: error.afterGuardRuleId ?? null,
             afterGuardLabel: error.afterGuardLabel ?? null,
             decision: error.rawDecision ?? null,
-            ...(error.probabilities ? { model: error.model, probabilities: error.probabilities } : {})
+            ...(error.model ? { model: error.model } : {}),
+            ...(error.probabilities ? { probabilities: error.probabilities } : {})
           }
         : null,
     error: failureMessage(error),
@@ -343,6 +268,7 @@ function writeReportFile({ status, selectedCases, results, failures, detailedFai
     status,
     generatedAt: new Date().toISOString(),
     mode: dryRun ? "dry-run" : live ? "live" : "mock",
+    configuration: live ? talkCaseEvaluationConfig({ live: true, env: process.env }) : undefined,
     filters: {
       case: onlyCase || null,
       talk: onlyTalk || null,
@@ -739,21 +665,6 @@ function assertCondStatePatternLimit(talk, node) {
   );
 }
 
-function comparableRuleOutcome(rule) {
-  if (!rule) {
-    return null;
-  }
-  return {
-    mode: rule.mode || "advance",
-    outputSteps: Array.isArray(rule.outputSteps) ? rule.outputSteps : [],
-    set: Array.isArray(rule.set) ? rule.set : []
-  };
-}
-
-function sameRuleOutcome(left, right) {
-  return JSON.stringify(comparableRuleOutcome(left)) === JSON.stringify(comparableRuleOutcome(right));
-}
-
 assert.equal(
   sameRuleOutcome(
     { mode: "stay", outputSteps: [{ kind: "input", action: "hide" }], set: [] },
@@ -936,89 +847,29 @@ function mockDecisionFor(testCase) {
 
 async function callLiveLlm(input, testCase) {
   if (typesafeSelected()) return callLiveTypesafe(input, testCase);
-  const apiKey = process.env.LLM_API_KEY;
-  const baseUrl = (process.env.LLM_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
-  const model = process.env.LLM_MODEL ?? "gemini-3.1-flash-lite";
-  assert.ok(apiKey, "LLM_API_KEY がありません。.dev.vars または環境変数に設定してください。");
-
-  const endpoint = `${baseUrl}/chat/completions`;
-  const requestInit = {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify(buildTalkFlowLlmChatCompletionBody(model, input))
-  };
-
-  const llmResult = await runLlmWithRetry(
-    async () => {
-      const fetched = await fetchLlmJsonPayloadAttempt(endpoint, requestInit, liveTimeoutMs());
-      if (!fetched.ok) {
-        return fetched;
-      }
-
-      const payload = fetched.value.payload;
-      const content =
-        payload && typeof payload === "object"
-          ? payload.choices?.[0]?.message?.content
-          : undefined;
-      if (typeof content !== "string") {
-        return {
-          ok: false,
-          retriable: true,
-          failure: {
-            reason: "invalid_provider_response",
-            errorCode: "invalid_provider_response",
-            httpStatus: fetched.httpStatus
-          },
-          httpStatus: fetched.httpStatus,
-          payload
-        };
-      }
-
-      let decision;
-      try {
-        decision = JSON.parse(content);
-      } catch {
-        return {
-          ok: false,
-          retriable: true,
-          failure: {
-            reason: "invalid_json",
-            errorCode: "invalid_json",
-            httpStatus: fetched.httpStatus
-          },
-          httpStatus: fetched.httpStatus,
-          payload
-        };
-      }
-
-      return {
-        ok: true,
-        value: {
-          decision,
-          usage: usageFromPayload(payload)
-        },
-        httpStatus: fetched.httpStatus,
-        payload
-      };
-    },
-    {
-      retryDelaysMs: liveRetryDelaysMs(),
-      onRetry: (event) => {
-        const message = event.errorMessage ?? event.errorCode ?? event.reason;
-        console.warn(`${testCase.id}: transient LLM error, retry ${event.retry}/${retries} after ${event.waitMs}ms: ${message}`);
-      }
+  const provider = createStructuredOutputProvider(process.env, { retries });
+  assert.ok(provider, "LLM_API_KEYとLLM_MODELを設定してください。");
+  let completion;
+  const selected = await semanticRuleSelector({
+    ...provider,
+    async completeJson(request) {
+      completion = await provider.completeJson(request);
+      return completion;
     }
-  );
-
-  const result = llmResult.result;
-  if (!result.ok) {
-    throw new Error(`${testCase.id}: LLM API error after ${llmResult.attempts} attempt(s): ${llmFailureMessage(result.failure)}`);
+  }, { talkId: input.talkId, kind: input.kind, fromId: input.fromId })(input);
+  if (!selected.ok) {
+    const status = completion?.httpStatus ? ` http=${completion.httpStatus}` : "";
+    throw new Error(`${testCase.id}: LLM API error: ${selected.error}${status}`);
   }
-
-  return result.value;
+  const usage = completion?.usage;
+  return {
+    decision: selected.reviewSelection.decision,
+    model: completion?.model,
+    usage: usage ? {
+      inputTokens: usage.promptTokens, outputTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens, cachedTokens: usage.cachedTokens
+    } : null
+  };
 }
 
 async function runCase(testCase) {
@@ -1043,10 +894,15 @@ async function runCase(testCase) {
   assert.equal(schema.additionalProperties, false);
 
   if (showPrompt) {
+    const messages = buildTalkFlowLlmMessages(input);
     console.log(`\n--- ${testCase.id} prompt ---`);
     console.log(JSON.stringify(typesafeSelected()
       ? buildTypesafeTalkRuleRequest(input, "<model>")
-      : buildTalkFlowLlmChatCompletionBody("<model>", input), null, 2));
+      : buildStructuredOutputBody({
+          taskId: "talk_rule_selection", temperature: 0, maxTokens: talkFlowLlmRuleSelectionMaxTokens,
+          instructions: messages[0].content,
+          input: JSON.parse(messages[1].content), schema
+        }, resolveStructuredOutputConfig({ ...process.env, LLM_MODEL: process.env.LLM_MODEL || "<model>" })), null, 2));
   }
 
   const expectedRule = input.rules.find((rule) => rule.id === testCase.expectedRuleId);
@@ -1103,7 +959,8 @@ async function runCase(testCase) {
     expected: testCase.expectedLabel,
     mode: selectedRule.mode || "advance",
     confidence: rawDecision.confidence,
-    ...(liveResult?.probabilities ? { model: liveResult.model, probabilities: liveResult.probabilities } : {}),
+    ...(liveResult?.model ? { model: liveResult.model } : {}),
+    ...(liveResult?.probabilities ? { probabilities: liveResult.probabilities } : {}),
     ...(liveResult?.usage
       ? {
           inputTokens: liveResult.usage.inputTokens,

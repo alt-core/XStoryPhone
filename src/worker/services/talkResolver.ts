@@ -37,7 +37,7 @@ export function renderTalkRuleCriteria<T extends { criteria: string; type?: stri
   });
 }
 
-export async function resolveScenarioTalkRule(input: {
+type ScenarioTalkRuleInput = {
   env: LlmProviderEnv;
   llmEnabled: boolean;
   talk: ScenarioTalk;
@@ -49,8 +49,15 @@ export async function resolveScenarioTalkRule(input: {
   provider?: StructuredOutputProvider | null;
   semanticSelector?: SemanticRuleSelector;
   secretSelector?: (rule: TalkRule, input: string) => Promise<TalkRule | null>;
-}) {
+};
+
+// 閾値適用後・抽出前の選択。本番と選択だけの評価で同じ処理を呼ぶ。
+export async function resolveScenarioTalkSelection(input: ScenarioTalkRuleInput) {
   const provider = input.llmEnabled ? (input.provider ?? createStructuredOutputProvider(input.env)) : null;
+  return selectScenarioTalkRule(input, provider);
+}
+
+async function selectScenarioTalkRule(input: ScenarioTalkRuleInput, provider: StructuredOutputProvider | null) {
   const talk = {
     ...input.talk,
     rules: renderTalkRuleCriteria(input.talk.rules.filter(rule => rule.from === "*" || rule.from === input.from), input.stateValues)
@@ -70,6 +77,17 @@ export async function resolveScenarioTalkRule(input: {
   const reviewSelection: TalkReviewSelection = {
     selectedRuleId: selection.rule.id, ...selection.reviewSelection, finalRuleId: selection.rule.id
   };
+  return { ...selection, reviewSelection };
+}
+
+export async function resolveScenarioTalkRule(input: ScenarioTalkRuleInput & {
+  onSelection?: (selection: Awaited<ReturnType<typeof resolveScenarioTalkSelection>>) => void;
+}) {
+  const provider = input.llmEnabled ? (input.provider ?? createStructuredOutputProvider(input.env)) : null;
+  const selection = await selectScenarioTalkRule(input, provider);
+  input.onSelection?.(selection);
+  if (!selection.ok) return selection;
+  const reviewSelection = { ...selection.reviewSelection };
   if (!selection.rule.match.trim()) return { ...selection, reviewSelection, matchGroups: {} };
   const extraction = parseTalkExtraction(selection.rule.match);
   if (extraction.kind === "regex") {
@@ -83,7 +101,7 @@ export async function resolveScenarioTalkRule(input: {
     return { ok: false as const, error: "provider_unavailable" as const };
   }
   const extracted = await extractTalkRuleMatch(provider, selection.rule, input.playerInput, input.recentMessages, {
-    talkId: talk.id,
+    talkId: input.talk.id,
     fromId: input.from,
     onResult(result) { reviewSelection.extraction = result; }
   });

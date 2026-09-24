@@ -196,7 +196,7 @@ test("LLM providerは入力不備に相当するHTTP 4xxを再試行しない", 
       input: {},
       schema: { type: "object", properties: {}, additionalProperties: false }
     });
-    assert.deepEqual(result, { ok: false, error: "provider_error" });
+    assert.deepEqual(result, { ok: false, error: "provider_error", httpStatus: 400 });
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = originalFetch;

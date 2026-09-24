@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runTalkCase } from "../scripts/lib/talk-case-runner.mjs";
+import { runTalkCase, runTalkCases } from "../scripts/lib/talk-case-runner.mjs";
 import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../src/worker/product/talkFlowTypesafeSelection.ts";
 import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../src/worker/providers/typesafe.ts";
 import { typesafeRuleSelector } from "../src/worker/services/conversationLlm.ts";
@@ -127,7 +127,7 @@ test("Jevの通信は一時的な失敗だけ1回再試行し、認証や入力�
     await withFetch([first, answer("agree", 0.9)], async (requests) => {
       const selected = await typesafeRuleSelector(env)(selectorInput);
       assert.equal(requests.length, calls);
-      assert.deepEqual(calls === 2 ? selected.ok : selected, calls === 2 ? true : { ok: false, error: "provider_error" });
+      assert.deepEqual(calls === 2 ? selected.ok : selected, calls === 2 ? true : { ok: false, error: "provider_error", httpStatus: first.status });
     });
   }
   await withFetch([new Response("unauthorized", { status: 401 })], async () => {
@@ -263,4 +263,56 @@ test("会話caseのlive実行はtypesafeならLLM providerなしで動き、選�
     assert.equal(result.selectionCalls, 1);
     assert.equal(requests.length, 0);
   });
+});
+
+test("選択だけのlive評価は抽出ruleでもJev以外を呼ばず、不一致時にモデルと分布を残す", async () => {
+  const scenario = {
+    features: { llm: true }, stateVariables: {}, talkPeople: [], talkBlocks: [],
+    talks: [{ id: "guide", kind: "sms", rules: rules.map((rule) => ({
+      ...rule, from: "guide::start", match: rule.id === "agree" ? '{"name":"名乗った名前"}' : "",
+      outputSteps: [], nextFromId: "guide::start"
+    })) }]
+  };
+  const fixture = { id: "agree", talkId: "guide", from: "start", input: "いいよ", expectedIntent: "同意" };
+  await withFetch([answer("agree", 0.9)], async (requests) => {
+    const result = await runTalkCase(scenario, fixture, { live: true, selectionOnly: true, env });
+    assert.equal(result.actual.ruleId, "agree");
+    assert.equal(result.extractionCalls, 0);
+    assert.equal(result.reviewSelection.model, "jev-1.13.0");
+    assert.equal(requests.length, 1);
+  });
+  await withFetch([answer("agree", 0.5)], async (requests) => {
+    const result = await runTalkCases(scenario, [fixture], { live: true, selectionOnly: true, env });
+    const failure = result.failures[0];
+    assert.equal(failure.actual.ruleId, "default");
+    assert.equal(failure.reviewSelection.selectedRuleId, "agree");
+    assert.equal(failure.reviewSelection.fallbackReason, "low_confidence");
+    assert.equal(failure.reviewSelection.model, "jev-1.13.0");
+    assert.equal(failure.reviewSelection.probabilities.agree, 0.5);
+    assert.equal(requests.length, 1);
+  });
+});
+
+test("Jevのcase評価は401/403で後続caseを止め、ほかのHTTP失敗とは区別する", async () => {
+  const scenario = {
+    features: { llm: true }, stateVariables: {}, talkPeople: [], talkBlocks: [],
+    talks: [{ id: "guide", kind: "sms", rules: rules.map(rule => ({ ...rule, from: "guide::start" })) }]
+  };
+  const cases = [1, 2].map(id => ({ id: String(id), talkId: "guide", from: "start", input: "いいよ", expectedRuleId: "agree" }));
+  for (const selectionOnly of [false, true]) {
+    for (const status of [401, 403, 422]) {
+      await withFetch([new Response("denied", { status })], async requests => {
+        const result = await runTalkCases(scenario, cases, { live: true, selectionOnly, env });
+        const attempted = status === 422 ? 2 : 1;
+        assert.equal(requests.length, attempted);
+        assert.equal(result.summary.planned, 2);
+        assert.equal(result.summary.attempted, attempted);
+        assert.equal(result.results.length, 0);
+        assert.equal(result.failures.length, attempted);
+        assert.equal(result.failures[0].httpStatus, status);
+        assert.equal(result.failures[0].errorCode, "provider_error");
+        assert.equal(result.failures[0].failureStage, "selection");
+      });
+    }
+  }
 });

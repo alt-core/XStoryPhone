@@ -58,3 +58,37 @@ test("一入力case CLIはSheet由来の分岐IDを参照し、選択結果を�
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+test("選択だけのCLIは意図と禁止modeを評価し、失敗詳細と別集計をreportに保存する", () => {
+  const scenario = loadAndValidateScenario().worker;
+  const talk = scenario.talks.find((item) => item.kind === "sms");
+  const fallback = talk.rules.find((rule) => rule.from === talk.initialFrom && rule.isDefault);
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "xstoryphone-selector-cli-"));
+  try {
+    const fixture = path.join(temporary, "cases.mjs");
+    const report = path.join(temporary, "report.json");
+    const base = { talkId: talk.id, from: talk.initialFrom, input: "fixture-unknown-input" };
+    fs.writeFileSync(fixture, `export const cases = ${JSON.stringify([
+      { ...base, id: "default", expectedIntent: "default", expectedMatch: { ignored: "抽出を検査しない" } },
+      { ...base, id: "forbidden", forbiddenMode: fallback.mode || "advance",
+        mockSelection: { rule_id: fallback.id, confidence: 0.99, reason_code: "default_unclear" } }
+    ])};\n`);
+    const result = spawnSync(process.execPath, [
+      "scripts/scenario-talk-flow-cases-test.mjs", `--fixture=${fixture}`, "--selection-only", `--report=${report}`
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stdout, /forbidden/u);
+    const data = JSON.parse(fs.readFileSync(report, "utf8"));
+    assert.equal(data.mode, "mock");
+    assert.equal(data.scope, "selection");
+    assert.equal(data.scenarioRevision, scenario.revision);
+    assert.equal(data.configuration.selector, "mock");
+    assert.equal(data.results[0].extractionCalls, 0);
+    assert.equal(data.results[0].match, undefined);
+    assert.equal(data.failures[0].actual.ruleId, fallback.id);
+    assert.equal(data.summary.selection.evaluated, 1);
+    assert.deepEqual(data.summary.forbiddenMode, { evaluated: 1, passed: 0, failed: 1 });
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});

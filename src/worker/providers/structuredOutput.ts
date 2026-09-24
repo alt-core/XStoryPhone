@@ -1,4 +1,4 @@
-import { defaultGeminiOpenAiReasoningEffort } from "../product/llmProfiles.ts";
+import { defaultGeminiOpenAiReasoningEffort, parseReasoningEffort, type OpenAiCompatibleReasoningEffort } from "../product/llmProfiles.ts";
 
 export type StructuredOutputRequest = {
   taskId: string;
@@ -8,7 +8,7 @@ export type StructuredOutputRequest = {
   schema: Record<string, unknown>;
   maxTokens?: number;
   temperature?: number;
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: OpenAiCompatibleReasoningEffort;
   model?: string;
   timeoutMs?: number;
   observation?: LlmObservation;
@@ -34,9 +34,11 @@ export type LlmResultObservation = LlmObservation & {
   sampleCount?: number;
 };
 
+export type LlmTokenUsage = { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number };
+
 export type StructuredOutputResult =
-  | { ok: true; value: Record<string, unknown>; raw: string }
-  | { ok: false; error: "provider_error" | "invalid_response" };
+  | { ok: true; value: Record<string, unknown>; raw: string; model?: string; usage?: LlmTokenUsage }
+  | { ok: false; error: "provider_error" | "invalid_response"; httpStatus?: number };
 
 export type StructuredOutputProvider = {
   id: string;
@@ -88,7 +90,7 @@ function retryableStatus(status: number) {
 
 function completionTokenBudget(request: StructuredOutputRequest, reasoningEffort: StructuredOutputRequest["reasoningEffort"]) {
   const base = request.maxTokens ?? 512;
-  if (!reasoningEffort || reasoningEffort === "none") return base;
+  if (!reasoningEffort || reasoningEffort === "none" || reasoningEffort === "omit") return base;
   const extraction = request.operation === "match_extraction";
   const minimum = reasoningEffort === "high" ? (extraction ? 8_192 : 4_096)
     : reasoningEffort === "medium" ? (extraction ? 4_096 : 2_048)
@@ -152,8 +154,7 @@ export async function llmRequestHashes(input: string, prompt: string, schema: un
 export function resolveStructuredOutputConfig(env: LlmProviderEnv, request: Pick<StructuredOutputRequest, "model" | "reasoningEffort" | "timeoutMs"> = {}) {
   const model = cleanText(request.model) || cleanText(env.LLM_MODEL)
     || cleanText(env.LLM_PROFILE_FAST_MODEL) || cleanText(env.LLM_PROFILE_SUPER_MODEL) || cleanText(env.LLM_PROFILE_ULTRA_MODEL);
-  const configuredReasoning = new Set(["none", "minimal", "low", "medium", "high"]).has(cleanText(env.LLM_REASONING_EFFORT))
-    ? cleanText(env.LLM_REASONING_EFFORT) as StructuredOutputRequest["reasoningEffort"] : undefined;
+  const configuredReasoning = parseReasoningEffort(env.LLM_REASONING_EFFORT);
   return {
     available: Boolean(cleanText(env.LLM_API_KEY) && model),
     model,
@@ -184,11 +185,34 @@ function usageFromPayload(payload: unknown) {
   };
 }
 
-export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredOutputProvider | null {
+// 本番と制作試験で、Schema・出力上限・推論設定を同じ形で送る。
+export function buildStructuredOutputBody(request: StructuredOutputRequest, config: ReturnType<typeof resolveStructuredOutputConfig>) {
+  return {
+    model: config.model,
+    messages: [
+      { role: "system", content: request.instructions },
+      { role: "user", content: JSON.stringify(request.input) }
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: request.taskId.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60),
+        strict: true,
+        schema: request.schema
+      }
+    },
+    ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
+    ...(config.reasoningEffort && config.reasoningEffort !== "omit" ? { reasoning_effort: config.reasoningEffort } : {}),
+    max_completion_tokens: completionTokenBudget(request, config.reasoningEffort)
+  };
+}
+
+export function createStructuredOutputProvider(env: LlmProviderEnv, options: { retries?: 0 | 1 } = {}): StructuredOutputProvider | null {
   const apiKey = cleanText(env.LLM_API_KEY);
   if (!resolveStructuredOutputConfig(env).available) {
     return null;
   }
+  const maxAttempts = options.retries === 0 ? 1 : 2;
 
   return {
     id: "openai-compatible",
@@ -199,7 +223,8 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
     },
     async completeJson(request) {
       const config = resolveStructuredOutputConfig(env, request);
-      const { model: requestModel, reasoningEffort, baseUrl, timeoutMs: timeoutForRequest } = config;
+      const { model: requestModel, baseUrl, timeoutMs: timeoutForRequest } = config;
+      const body = JSON.stringify(buildStructuredOutputBody(request, config));
       const startedAt = Date.now();
       const attempts: Array<{ attempt: number; httpStatus?: number; error?: string; durationMs: number; usage?: ReturnType<typeof usageFromPayload> }> = [];
       const hashes = await llmRequestHashes(JSON.stringify(request.input), request.instructions, request.schema);
@@ -232,9 +257,13 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
             parsedOutput: result.ok ? result.value : null
           }));
         }
-        return result;
+        return result.ok ? {
+          ...result,
+          model: cleanText(payload && typeof payload === "object" ? (payload as { model?: unknown }).model : undefined) || requestModel,
+          usage: summary.usage
+        } : result;
       };
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const attemptStartedAt = Date.now();
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutForRequest);
@@ -246,30 +275,13 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
               authorization: `Bearer ${apiKey}`,
               "content-type": "application/json"
             },
-            body: JSON.stringify({
-              model: requestModel,
-              messages: [
-                { role: "system", content: request.instructions },
-                { role: "user", content: JSON.stringify(request.input) }
-              ],
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: request.taskId.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60),
-                  strict: true,
-                  schema: request.schema
-                }
-              },
-              ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
-              ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-              max_completion_tokens: completionTokenBudget(request, reasoningEffort)
-            }),
+            body,
             signal: controller.signal
           });
         } catch {
           clearTimeout(timeoutId);
           attempts.push({ attempt: attempt + 1, error: "network_error", durationMs: Date.now() - attemptStartedAt });
-          if (attempt === 0) {
+          if (attempt + 1 < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
@@ -278,11 +290,11 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
         if (!response.ok) {
           clearTimeout(timeoutId);
           attempts.push({ attempt: attempt + 1, httpStatus: response.status, error: "http_error", durationMs: Date.now() - attemptStartedAt });
-          if (attempt === 0 && retryableStatus(response.status)) {
+          if (attempt + 1 < maxAttempts && retryableStatus(response.status)) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
-          return finish({ ok: false, error: "provider_error" });
+          return finish({ ok: false, error: "provider_error", httpStatus: response.status });
         }
         let payload: unknown;
         try {
@@ -290,7 +302,7 @@ export function createStructuredOutputProvider(env: LlmProviderEnv): StructuredO
         } catch (error) {
           clearTimeout(timeoutId);
           attempts.push({ attempt: attempt + 1, httpStatus: response.status, error: error instanceof SyntaxError ? "invalid_json" : "response_error", durationMs: Date.now() - attemptStartedAt });
-          if (!(error instanceof SyntaxError) && attempt === 0) {
+          if (!(error instanceof SyntaxError) && attempt + 1 < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }

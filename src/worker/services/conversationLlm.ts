@@ -106,7 +106,7 @@ export function typesafeRuleSelector(
       inputHash: hashes.inputHash.slice(0, 12), promptHash: hashes.promptHash.slice(0, 12), schemaHash: hashes.schemaHash.slice(0, 12)
     };
     const response = await requestTypesafeSystemOne(config, request, observation);
-    if (!response.ok) return { ok: false, error: response.error };
+    if (!response.ok) return response;
     const answer = typesafeTalkRuleDecision(response.payload, promptInput);
     if (!answer) {
       if (config.analytics) console.log(JSON.stringify({ event: "llm_result", provider: "typesafe", ...observation, status: "invalid_response" }));

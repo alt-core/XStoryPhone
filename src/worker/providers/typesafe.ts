@@ -1,4 +1,5 @@
 import type { LlmHashes, LlmProviderEnv } from "./structuredOutput.ts";
+import { talkFlowLlmDefaultThresholds } from "../product/talkFlowLlmSelection.ts";
 
 // TypeSafeのSystem One modelは生成せず、型付きの質問へ確率付きで答える。会話rule選択だけで使う。
 const typesafeDefaultModel = "jev-1.13.0";
@@ -34,9 +35,9 @@ function threshold(value: unknown, fallback: number) {
 export function resolveTypesafeConfig(env: LlmProviderEnv): TypesafeConfigResult {
   const apiKey = cleanText(env.TYPESAFE_API_KEY);
   if (!apiKey) return { ok: false, reason: "TYPESAFE_API_KEYが未設定です。" };
-  const minConfidence = threshold(env.TYPESAFE_MIN_CONFIDENCE, 0.65);
+  const minConfidence = threshold(env.TYPESAFE_MIN_CONFIDENCE, talkFlowLlmDefaultThresholds.minConfidence);
   if (minConfidence === null) return { ok: false, reason: "TYPESAFE_MIN_CONFIDENCEは0〜1の数値にしてください。" };
-  const minGameOverConfidence = threshold(env.TYPESAFE_GAME_OVER_MIN_CONFIDENCE, 0.9);
+  const minGameOverConfidence = threshold(env.TYPESAFE_GAME_OVER_MIN_CONFIDENCE, talkFlowLlmDefaultThresholds.minGameOverConfidence);
   if (minGameOverConfidence === null) return { ok: false, reason: "TYPESAFE_GAME_OVER_MIN_CONFIDENCEは0〜1の数値にしてください。" };
   if (minGameOverConfidence < minConfidence) {
     return { ok: false, reason: "TYPESAFE_GAME_OVER_MIN_CONFIDENCEはTYPESAFE_MIN_CONFIDENCE以上にしてください。" };

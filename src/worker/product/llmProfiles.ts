@@ -1,4 +1,4 @@
-export type OpenAiCompatibleReasoningEffort = "none" | "minimal" | "low" | "medium" | "high";
+export type OpenAiCompatibleReasoningEffort = "omit" | "none" | "minimal" | "low" | "medium" | "high";
 export type HookLlmProfile = "fast" | "super" | "ultra";
 export type LlmProfileConfig = {
   profile: HookLlmProfile;
@@ -21,7 +21,7 @@ export type LlmProfileEnv = {
 };
 
 export const hookLlmProfiles: readonly HookLlmProfile[] = ["fast", "super", "ultra"];
-const reasoningEfforts = new Set<OpenAiCompatibleReasoningEffort>(["none", "minimal", "low", "medium", "high"]);
+const reasoningEfforts = new Set<OpenAiCompatibleReasoningEffort>(["omit", "none", "minimal", "low", "medium", "high"]);
 
 export function defaultGeminiOpenAiReasoningEffort(model: string): OpenAiCompatibleReasoningEffort | undefined {
   const normalized = model.toLowerCase();
@@ -34,7 +34,7 @@ function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function parseReasoningEffort(value: unknown) {
+export function parseReasoningEffort(value: unknown) {
   const normalized = cleanText(value).toLowerCase();
   return reasoningEfforts.has(normalized as OpenAiCompatibleReasoningEffort)
     ? normalized as OpenAiCompatibleReasoningEffort

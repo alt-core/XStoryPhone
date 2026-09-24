@@ -364,6 +364,11 @@ export function parseTalkFlowLlmDecision(raw: unknown): TalkFlowLlmDecision | nu
   };
 }
 
+export const talkFlowLlmDefaultThresholds = {
+  minConfidence: 0.65,
+  minGameOverConfidence: 0.9
+} as const;
+
 export function selectTalkFlowRuleFromLlmDecision(
   rawDecision: unknown,
   input: TalkFlowLlmPromptInput,
@@ -372,8 +377,8 @@ export function selectTalkFlowRuleFromLlmDecision(
     minGameOverConfidence?: number;
   } = {}
 ): TalkFlowLlmSelectionResult {
-  const minConfidence = options.minConfidence ?? 0.65;
-  const minGameOverConfidence = options.minGameOverConfidence ?? 0.9;
+  const minConfidence = options.minConfidence ?? talkFlowLlmDefaultThresholds.minConfidence;
+  const minGameOverConfidence = options.minGameOverConfidence ?? talkFlowLlmDefaultThresholds.minGameOverConfidence;
   const decision = parseTalkFlowLlmDecision(rawDecision);
   if (!decision) {
     return { ruleId: input.defaultRuleId, accepted: false, fallbackReason: "invalid_shape" };

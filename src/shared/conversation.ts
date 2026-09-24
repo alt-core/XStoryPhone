@@ -31,7 +31,7 @@ export type SemanticRuleSelector = (input: {
   recentMessages: readonly { speaker: string; body: string }[];
 }) => Promise<
   | { ok: true; ruleId: string; reviewSelection?: TalkReviewSelection }
-  | { ok: false; error: "provider_unavailable" | "provider_error" | "provider_invalid" }
+  | { ok: false; error: "provider_unavailable" | "provider_error" | "provider_invalid"; httpStatus?: number }
 >;
 
 export type TalkRuleResolution =
@@ -39,11 +39,28 @@ export type TalkRuleResolution =
   | {
       ok: false;
       error: "missing_default" | "invalid_regex" | "provider_unavailable" | "provider_error" | "provider_invalid";
+      httpStatus?: number;
     };
 
 export function parseRegexCriteria(criteria: string): RegexCriteria {
   const parsed = parseTalkFlowRegexCriteria(criteria);
   return parsed.kind === "ready" ? { kind: "ready", regex: parsed.regex } : parsed;
+}
+
+// 本番の選択と制作試験の期待値解決で、入力の正規化・候補の順序・条件評価をそろえる。
+export function activeTalkRules(input: {
+  rules: readonly TalkRule[];
+  from: string;
+  playerInput: string;
+  stateValues: Record<string, unknown>;
+}) {
+  const conditionState = definedConditionState({
+    ...input.stateValues, player_input: input.playerInput.normalize("NFC").trim()
+  });
+  return orderedTalkFlowRules(
+    input.rules.filter((rule) => rule.from === "*"),
+    input.rules.filter((rule) => rule.from === input.from)
+  ).filter((rule) => evaluateCondition(rule.cond, conditionState));
 }
 
 export async function resolveTalkRule(input: {
@@ -57,11 +74,7 @@ export async function resolveTalkRule(input: {
   secretSelector?: (rule: TalkRule, input: string) => Promise<TalkRule | null>;
 }): Promise<TalkRuleResolution> {
   const normalizedInput = input.playerInput.normalize("NFC").trim();
-  const activeRules = orderedTalkFlowRules(
-    input.rules.filter((rule) => rule.from === "*"),
-    input.rules.filter((rule) => rule.from === input.from)
-  )
-    .filter((rule) => evaluateCondition(rule.cond, definedConditionState({ ...input.stateValues, player_input: normalizedInput })));
+  const activeRules = activeTalkRules(input);
   const defaultRule = activeRules.find((rule) => rule.from === input.from && rule.isDefault);
   if (!defaultRule) {
     return { ok: false, error: "missing_default" };
