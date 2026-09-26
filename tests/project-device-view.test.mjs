@@ -145,6 +145,25 @@ test("初回の破損リンク案内は背景タップで消えず、会話を�
   assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "通常案内の背景タップは従来どおり");
 });
 
+test("stickyの案内は会話を閉じても背景をタップしても表示し続ける", () => {
+  const harness = searchAgentHarness({
+    peeking: true, surfaceKey: "home",
+    surfaceMessage: { id: "urgent", surface: "home", body: "今すぐ検索", sticky: true }
+  });
+  harness.evaluate("openExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "会話を開いている間は吹き出しを出さない");
+  harness.evaluate("closeExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  assert.equal(harness.evaluate("agentPeeking"), false);
+  harness.evaluate("handleScreenPointerDown({ target: null })");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.update({ surfaceMessage: undefined });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "condを満たさなくなれば消える");
+});
+
 test("吹き出しから会話を開いて閉じると引っ込み、画面へ戻ったときだけ案内を再表示する", () => {
   const harness = searchAgentHarness({
     peeking: true, surfaceKey: "home",

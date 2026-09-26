@@ -1,12 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import ts from "typescript";
 import { answerCandidates } from "../../src/shared/talkCriteria.ts";
 import { createAnswerDeriver, STATIC_ANSWER_ITERATIONS, STATIC_ANSWER_PREFIX_LENGTH } from "../../src/shared/staticAnswer.ts";
 import { scenarioForParts, partOf, partCollectionKeys } from "../../src/worker/scenarioParts.ts";
 import { resolveMediaRecord } from "../../src/shared/scenarioMedia.ts";
-import { buildScenarioHooksModule } from "./scenario-hooks.mjs";
+import { compileScenarioHooks } from "./scenario-hooks.mjs";
 import { staticAudioSample } from "../../src/shared/staticAudio.ts";
 
 export function staticPartLocators(root, projectId, partIds, initialize = false) {
@@ -42,12 +41,6 @@ function stripAuthoring(value) {
   return Object.fromEntries(Object.entries(value)
     .filter(([key]) => !metadata.includes(key))
     .map(([key, item]) => [key, stripAuthoring(item)]));
-}
-
-export function compileStaticHooks(scripts) {
-  return ts.transpileModule(buildScenarioHooksModule(scripts), { compilerOptions: {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022, removeComments: true, sourceMap: false
-  } }).outputText;
 }
 
 export async function buildStaticScenario({ root, outputDir, scenario, releaseId = randomBytes(12).toString("hex") }) {
@@ -142,7 +135,7 @@ export async function buildStaticScenario({ root, outputDir, scenario, releaseId
     const handlers = [...new Set(definition.hooks.map(hook => hook.handler))];
     if (definition.hooks.some(hook => hook.llm)) throw new Error(`staticではAIを使うhookは使用できません: ${partId}`);
     if (handlers.length) {
-      fs.writeFileSync(path.join(directory, "hooks.js"), compileStaticHooks(Object.fromEntries(handlers.map(id => [id, scenario.hookScripts[id]]))));
+      fs.writeFileSync(path.join(directory, "hooks.js"), compileScenarioHooks(Object.fromEntries(handlers.map(id => [id, scenario.hookScripts[id]]))));
     }
     writeJson(path.join(directory, "part.json"), {
       projectId: worker.project.id, releaseId, id: partId, definition: stripAuthoring(definition), rules: stripAuthoring(rules),

@@ -206,6 +206,7 @@ export type ScenarioAssistantMessage = PartOwned & {
   body: string;
   weight: number;
   agentAction?: "idle" | "hi";
+  sticky?: boolean;
   cond: string;
 };
 

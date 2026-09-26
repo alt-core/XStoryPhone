@@ -44,6 +44,7 @@
     "scenario:sheets:put": "node scripts/scenario-sheets-put.mjs",
     "scenario:talk-flow:criteria:audit": "node scripts/scenario-talk-flow-criteria-audit.mjs",
     "scenario:talk-flow:cases:test": "node scripts/scenario-talk-flow-cases-test.mjs",
+    "scenario:hooks:cases:test": "node scripts/scenario-hook-cases-test.mjs",
     "scenario:talk-flow:path-dump": "node scripts/scenario-talk-flow-path-dump.mjs",
     "scenario:talk-flow:writer-review": "node scripts/scenario-talk-flow-writer-review-dump.mjs",
     "scenario:talk-flow:writer-review:test": "node scripts/scenario-talk-flow-writer-review-dump-test.mjs",

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { selectedScenarioDir } from "./lib/scenario-directory.mjs";
-import { accessToken, maxColumns, readJson, readSheetsAuthoring, sheetValues, validateSheetsArguments } from "./lib/google-sheets.mjs";
+import { accessToken, maxColumns, readJson, readSheetsAuthoring, selectedTables, sheetValues, validateSheetsArguments } from "./lib/google-sheets.mjs";
 
 const rootDir = process.cwd();
 const defaultScenarioPath = path.join(selectedScenarioDir(), "scenario.source.json");
@@ -11,27 +11,6 @@ const defaultCredentialsPath = "";
 function argValue(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : "";
-}
-
-function listArg(name) {
-  return String(argValue(name) || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-
-function selectedTables(tables, selectedTableIds) {
-  if (!selectedTableIds.length) {
-    return Object.entries(tables);
-  }
-
-  const tableIdSet = new Set(selectedTableIds);
-  const entries = Object.entries(tables).filter(([tableId]) => tableIdSet.has(tableId));
-  const missing = selectedTableIds.filter((tableId) => !Object.hasOwn(tables, tableId));
-  if (missing.length) {
-    throw new Error(`未定義の table ID です: ${missing.join(", ")}`);
-  }
-  return entries;
 }
 
 function stringifyTsvCell(value) {
@@ -61,7 +40,6 @@ async function main() {
     argValue("--spreadsheet-id") ||
     process.env.XSTORYPHONE_SCENARIO_SPREADSHEET_ID ||
     authoring?.spreadsheetId;
-  const selectedTableIds = listArg("--tables");
 
   if (!spreadsheetId) {
     throw new Error("--spreadsheet-id、XSTORYPHONE_SCENARIO_SPREADSHEET_ID、または scenarioAuthoring.spreadsheetId が必要です。");
@@ -70,7 +48,7 @@ async function main() {
     throw new Error(`Google service account credential がありません: ${credentialsPath}`);
   }
 
-  const tableEntries = selectedTables(authoring.tables, selectedTableIds);
+  const tableEntries = selectedTables(authoring.tables, argValue("--tables"));
   const credentials = readJson(credentialsPath);
   const token = await accessToken(credentials);
   const exportDir = path.resolve(rootDir, authoring.exportDir);

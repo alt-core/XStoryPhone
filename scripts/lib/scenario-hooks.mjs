@@ -43,6 +43,13 @@ export function buildScenarioHooksModule(scripts) {
   return source;
 }
 
+// 静的配布と制作試験で、同じ生成handlerをJavaScriptにする。
+export function compileScenarioHooks(scripts) {
+  return ts.transpileModule(buildScenarioHooksModule(scripts), { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022, removeComments: true, sourceMap: false
+  } }).outputText;
+}
+
 // 静的なID指定はbuild前に検査する。計算される値は生成型・runtimeの検査に委ねる。
 export function validateHookReferences(scripts, source, blocks) {
   const stateIds = new Set([...Object.keys(source.stateVariables ?? {}), "os_date", "os_time_label"]);

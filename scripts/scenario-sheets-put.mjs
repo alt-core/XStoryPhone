@@ -5,14 +5,14 @@ import { selectedScenarioDir } from "./lib/scenario-directory.mjs";
 import {
   accessToken,
   maxColumns,
-  quoteSheetName,
   readJson,
   readSheetsAuthoring,
+  selectedTables,
   sheetsRequest,
   spreadsheetMetadata,
   validateSheetsArguments
 } from "./lib/google-sheets.mjs";
-import { parseTsv, validateTsvSyntax } from "./lib/tsv-utils.mjs";
+import { existingSheetNames, loadLocalSheets, printSheetDiff, readSheetCells } from "./lib/sheets-sync.mjs";
 
 const rootDir = process.cwd();
 const defaultScenarioPath = path.join(selectedScenarioDir(), "scenario.source.json");
@@ -26,45 +26,6 @@ function argValue(name) {
 
 function hasArg(name) {
   return process.argv.includes(name);
-}
-
-async function ensureSheets(spreadsheetId, token, sheetNames) {
-  const metadata = await spreadsheetMetadata(spreadsheetId, token);
-  const existing = new Set(metadata.sheets.map((sheet) => sheet.properties.title));
-  const requests = sheetNames
-    .filter((sheetName) => !existing.has(sheetName))
-    .map((sheetName) => ({ addSheet: { properties: { title: sheetName } } }));
-
-  if (requests.length) {
-    await sheetsRequest(spreadsheetId, token, ":batchUpdate", {
-      method: "POST",
-      body: JSON.stringify({ requests })
-    });
-  }
-
-  return spreadsheetMetadata(spreadsheetId, token);
-}
-
-async function resizeSheets(spreadsheetId, token, metadata, sheets) {
-  const sheetIdByTitle = new Map(metadata.sheets.map((sheet) => [sheet.properties.title, sheet.properties.sheetId]));
-  const requests = sheets.map(({ sheetName, rows }) => ({
-    updateSheetProperties: {
-      properties: {
-        sheetId: sheetIdByTitle.get(sheetName),
-        gridProperties: {
-          rowCount: Math.max(rows.length ? 2 : 1, rows.length),
-          columnCount: maxColumns(rows),
-          frozenRowCount: rows.length ? 1 : 0
-        }
-      },
-      fields: "gridProperties(rowCount,columnCount,frozenRowCount)"
-    }
-  }));
-
-  await sheetsRequest(spreadsheetId, token, ":batchUpdate", {
-    method: "POST",
-    body: JSON.stringify({ requests })
-  });
 }
 
 function textVisualLength(value) {
@@ -128,91 +89,59 @@ function estimateColumnWidthPx(header, values) {
   return clamp(maxLength * 7 + 28, 88, 300);
 }
 
-function columnWidthRequests(metadata, sheets) {
-  const sheetIdByTitle = new Map(metadata.sheets.map((sheet) => [sheet.properties.title, sheet.properties.sheetId]));
-  return sheets.flatMap(({ sheetName, rows }) => {
-    const headers = rows[0] ?? [];
-    const sheetId = sheetIdByTitle.get(sheetName);
-    return headers.map((header, columnIndex) => ({
-      updateDimensionProperties: {
-        range: {
-          sheetId,
-          dimension: "COLUMNS",
-          startIndex: columnIndex,
-          endIndex: columnIndex + 1
-        },
-        properties: {
-          pixelSize: estimateColumnWidthPx(
-            header,
-            rows.slice(1).map((row) => row[columnIndex] ?? "")
-          )
-        },
-        fields: "pixelSize"
-      }
-    }));
-  });
+function columnWidthRequests(sheetId, rows) {
+  return (rows[0] ?? []).map((header, columnIndex) => ({
+    updateDimensionProperties: {
+      range: {
+        sheetId,
+        dimension: "COLUMNS",
+        startIndex: columnIndex,
+        endIndex: columnIndex + 1
+      },
+      properties: {
+        pixelSize: estimateColumnWidthPx(
+          header,
+          rows.slice(1).map((row) => row[columnIndex] ?? "")
+        )
+      },
+      fields: "pixelSize"
+    }
+  }));
 }
 
-async function updateColumnWidths(spreadsheetId, token, metadata, sheets) {
-  const requests = columnWidthRequests(metadata, sheets);
-  if (!requests.length) {
-    return;
+function putRequests(metadata, sheets) {
+  const propertiesByTitle = new Map(metadata.sheets.map(sheet => [sheet.properties.title, sheet.properties]));
+  const usedIds = new Set(metadata.sheets.map(sheet => sheet.properties.sheetId));
+  let nextId = 0;
+  const requests = [];
+  for (const { sheetName, rows } of sheets) {
+    const existing = propertiesByTitle.get(sheetName);
+    while (usedIds.has(nextId)) nextId += 1;
+    const sheetId = existing?.sheetId ?? nextId;
+    usedIds.add(sheetId);
+    const gridProperties = { rowCount: Math.max(rows.length ? 2 : 1, rows.length), columnCount: maxColumns(rows), frozenRowCount: rows.length ? 1 : 0 };
+    const previous = existing?.gridProperties;
+    console.log(`${sheetName}: ${existing ? "更新" : "作成"} ${previous ? `${previous.rowCount} rows x ${previous.columnCount} cols → ` : ""}${gridProperties.rowCount} rows x ${gridProperties.columnCount} cols、先頭行固定=${gridProperties.frozenRowCount}、列幅を調整`);
+    requests.push(existing ? {
+      updateSheetProperties: { properties: { sheetId, gridProperties }, fields: "gridProperties(rowCount,columnCount,frozenRowCount)" }
+    } : { addSheet: { properties: { sheetId, title: sheetName, gridProperties } } });
+    // 空欄を含む全範囲の値を置換する。消去だけが先に確定する通信を作らない。
+    requests.push({ updateCells: {
+      range: { sheetId, startRowIndex: 0, startColumnIndex: 0, endRowIndex: gridProperties.rowCount, endColumnIndex: gridProperties.columnCount },
+      rows: rows.map(row => ({ values: row.map(value => ({ userEnteredValue: { stringValue: value } })) })),
+      fields: "userEnteredValue"
+    } }, ...columnWidthRequests(sheetId, rows));
   }
-
-  await sheetsRequest(spreadsheetId, token, ":batchUpdate", {
-    method: "POST",
-    body: JSON.stringify({ requests })
-  });
-}
-
-async function clearAndWriteSheet(spreadsheetId, token, sheetName, rows) {
-  const quoted = quoteSheetName(sheetName);
-  await sheetsRequest(spreadsheetId, token, `/values/${encodeURIComponent(`${quoted}!A:ZZZ`)}:clear`, {
-    method: "POST",
-    body: JSON.stringify({})
-  });
-
-  await sheetsRequest(
-    spreadsheetId,
-    token,
-    `/values/${encodeURIComponent(`${quoted}!A1`)}?valueInputOption=RAW`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        range: `${quoted}!A1`,
-        majorDimension: "ROWS",
-        values: rows
-      })
-    }
-  );
-}
-
-function loadSheets(authoring) {
-  const exportDir = path.resolve(rootDir, authoring.exportDir);
-  return Object.entries(authoring.tables).map(([tableId, sheetName]) => {
-    const filePath = path.join(exportDir, `${sheetName}.tsv`);
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`${tableId}: TSV がありません: ${path.relative(rootDir, filePath)}`);
-    }
-
-    const source = fs.readFileSync(filePath, "utf8");
-    const errors = validateTsvSyntax(source);
-    if (errors.length) throw new Error(`${tableId}: ${errors.join(" ")}`);
-    return {
-      tableId,
-      sheetName,
-      rows: parseTsv(source)
-    };
-  });
+  return requests;
 }
 
 async function main() {
-  if (!hasArg(requiredConfirmFlag)) {
+  validateSheetsArguments(process.argv.slice(2), { tables: true, overwrite: true });
+  if (!hasArg("--dry-run") && !hasArg(requiredConfirmFlag)) {
     throw new Error(
       `Google Spreadsheet をローカル TSV で上書きする危険な操作です。実行する場合は ${requiredConfirmFlag} を明示してください。`
     );
   }
-  validateSheetsArguments(process.argv.slice(2), { overwrite: true });
 
   const scenarioPath = argValue("--scenario") || defaultScenarioPath;
   const credentialsPath =
@@ -232,22 +161,31 @@ async function main() {
     throw new Error(`Google service account credential がありません: ${credentialsPath}`);
   }
 
-  const sheets = loadSheets(authoring);
+  const sheets = loadLocalSheets(authoring, selectedTables(authoring.tables, argValue("--tables")));
   const credentials = readJson(credentialsPath);
   const token = await accessToken(credentials);
-  const metadata = await ensureSheets(spreadsheetId, token, sheets.map((sheet) => sheet.sheetName));
-  await resizeSheets(spreadsheetId, token, metadata, sheets);
-
-  for (const sheet of sheets) {
-    await clearAndWriteSheet(spreadsheetId, token, sheet.sheetName, sheet.rows);
-    console.log(`${sheet.sheetName}: ${sheet.rows.length} rows x ${maxColumns(sheet.rows)} cols`);
+  const metadata = await spreadsheetMetadata(spreadsheetId, token);
+  const remote = await readSheetCells(spreadsheetId, token, existingSheetNames(metadata, sheets));
+  console.log(`投入先: ${spreadsheetId} / 対象: ${sheets.map(sheet => `${sheet.tableId} (${sheet.sheetName})`).join(", ")}`);
+  for (const sheet of sheets) printSheetDiff(sheet, remote.get(sheet.sheetName));
+  const requests = putRequests(metadata, sheets);
+  if (hasArg("--dry-run")) {
+    console.log("dry-run: Google Sheetsへ書き込んでいません。");
+    return;
   }
-
-  await updateColumnWidths(spreadsheetId, token, metadata, sheets);
+  await sheetsRequest(spreadsheetId, token, ":batchUpdate", { method: "POST", body: JSON.stringify({ requests }) });
   console.log(`Google Spreadsheet へ TSV を投入しました: ${spreadsheetId}`);
+  if (hasArg("--verify")) {
+    const verified = await readSheetCells(spreadsheetId, token, sheets.map(sheet => sheet.sheetName));
+    console.log("投入後の再比較:");
+    let mismatches = 0;
+    for (const sheet of sheets) if (printSheetDiff(sheet, verified.get(sheet.sheetName))) mismatches += 1;
+    if (mismatches) throw new Error(`投入後の${mismatches}表がローカルTSVと一致しません。自動で再上書きはしません。`);
+    console.log("verify: 対象の全表がローカルTSVと一致しました。");
+  }
 }
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+  process.exitCode = 1;
 });

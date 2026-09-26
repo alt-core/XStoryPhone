@@ -31,15 +31,26 @@ export function readSheetsAuthoring(manifestFile) {
 
 export function validateSheetsArguments(args, { tables = false, overwrite = false } = {}) {
   const valued = new Set(["--scenario", "--credentials", "--spreadsheet-id", ...(tables ? ["--tables"] : [])]);
+  const flags = new Set(overwrite ? ["--yes-overwrite-google-sheets-with-local-tsv", "--dry-run", "--verify"] : []);
   const seen = new Set();
   for (let index = 0; index < args.length; index += 1) {
     const name = args[index];
-    if (overwrite && name === "--yes-overwrite-google-sheets-with-local-tsv") continue;
-    if (!valued.has(name) || seen.has(name)) throw new Error(`未対応または重複した引数です: ${name}`);
+    if ((!valued.has(name) && !flags.has(name)) || seen.has(name)) throw new Error(`未対応または重複した引数です: ${name}`);
     seen.add(name);
+    if (flags.has(name)) continue;
     const value = args[++index];
     if (!value || value.startsWith("--")) throw new Error(`引数の値がありません: ${name}`);
   }
+  if (seen.has("--dry-run") && seen.has("--verify")) throw new Error("--dry-runと--verifyは同時に指定できません。");
+}
+
+export function selectedTables(tables, value = "") {
+  if (!value) return Object.entries(tables);
+  const ids = value.split(",").map(id => id.trim());
+  if (ids.some(id => !id) || new Set(ids).size !== ids.length) throw new Error("--tablesには空欄・重複なしでtable IDをカンマ区切りにしてください。");
+  const missing = ids.filter(id => !Object.hasOwn(tables, id));
+  if (missing.length) throw new Error(`未定義の table ID です: ${missing.join(", ")}`);
+  return Object.entries(tables).filter(([id]) => ids.includes(id));
 }
 
 function base64Url(value) {
@@ -113,7 +124,7 @@ export function maxColumns(rows) {
 }
 
 export async function spreadsheetMetadata(spreadsheetId, token) {
-  return sheetsRequest(spreadsheetId, token, "?fields=sheets(properties(sheetId,title))");
+  return sheetsRequest(spreadsheetId, token, "?fields=sheets(properties(sheetId,title,gridProperties))");
 }
 
 export async function sheetValues(spreadsheetId, token, sheetName) {

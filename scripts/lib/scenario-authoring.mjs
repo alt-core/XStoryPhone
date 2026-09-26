@@ -29,7 +29,7 @@ export const AUTHORING_COLUMNS = {
   talk_people: ["comment", "id", "name", "role", "avatar", "notes"],
   talk_flow: ["comment", "talk", "from", "cond", "intent", "type", "text", "example", "extract", "next", "mode", "set", "notes"],
   talk_blocks: ["comment", "sender", "body", "attachment", "time", "delay_ms", "notes", "updated_at", "source", "quick_replies"],
-  assistant_messages: ["comment", "id", "surface", "body", "weight", "cond", "agent_action", "notes"],
+  assistant_messages: ["comment", "id", "surface", "body", "weight", "cond", "agent_action", "sticky", "notes"],
   attachments: ["comment", "id", "type", "asset", "content", "lock", "title", "body", "search", "search_app", "notes", "poster", "cond"],
   mail_items: [...common, "from", "to", "cc", "subject", "date", "body"],
   browser_items: [...common, "title", "url", "allowed_urls"],
@@ -293,7 +293,11 @@ export function compileScenarioAuthoring(workbook) {
     todos: rows("todo_items").map((row) => ({ id: text(row, "id"), text: row.text ?? "", cond: text(row, "cond") })),
     notifications: rows("notifications").map((row) => ({ id: text(row, "id"), appId: text(row, "app"), title: row.title ?? "", body: row.body ?? "", cond: text(row, "cond"),
       ...(talks.some((talk) => talk.id === text(row, "target")) ? { targetTalkId: text(row, "target") } : { targetContentId: text(row, "target") }) })),
-    assistantMessages: rows("assistant_messages").map((row) => ({ id: text(row, "id"), surface: text(row, "surface"), body: row.body ?? "", weight: text(row, "weight") ? Number(row.weight) : 1, cond: text(row, "cond"), ...optional(row, { agent_action: "agentAction" }) })),
+    assistantMessages: rows("assistant_messages").map((row) => ({
+      id: text(row, "id"), surface: text(row, "surface"), body: row.body ?? "", weight: text(row, "weight") ? Number(row.weight) : 1, cond: text(row, "cond"),
+      ...optional(row, { agent_action: "agentAction" }),
+      ...(booleanCell(row.sticky, `assistant_messages!${row.__rowNumber}: sticky`, false) ? { sticky: true } : {})
+    })),
     generatedAudio: rows("gen_audio").map((row) => ({ id: text(row, "id"), title: row.title ?? "", provider: text(row, "provider"), ...optional(row, { fallback: "fallbackAttachmentId" }) })),
     incomingCalls: rows("incoming_calls").map((row) => ({ id: text(row, "id"), name: row.name ?? "", cond: text(row, "cond"), ...(text(row, "audio") ? { audioAttachmentId: asset(text(row, "audio"), "audio") } : {}), ...(text(row, "transcript") ? { transcript: jsonCell(row, "transcript") } : {}) })),
     initialSchedules: rows("schedules").map((row) => ({ id: text(row, "id"), eventId: text(row, "event"), delayMs: integerCell(row, "delay_ms", `schedules.${row.id}`), fields: jsonCell(row, "fields", {}) })),

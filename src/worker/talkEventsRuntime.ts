@@ -4,7 +4,8 @@ import type { ScenarioMessageAttachment, ScenarioMessageSegment } from "../share
 import { SEARCH_AGENT_TALK_ID } from "../shared/searchAgent.ts";
 import type { StoredSearchAgentEvent, StoredSearchAgentMessageBlockEvent, StoredSearchAgentPlayerMessageEvent, StoredSearchAgentResultEvent, StoredSearchResult, StoredTalkEvent } from "../server/store.ts";
 import type { ScenarioTalkBlockMessage } from "../shared/scenario.ts";
-import { TALK_DISPLAY_TIME_KEY, talkDisplayTimeLabel } from "./talkDisplayClock.ts";
+import { TALK_DISPLAY_TIME_KEY } from "./talkDisplayClock.ts";
+import { talkDisplayTimeLabel } from "../shared/talkDisplayTime.ts";
 type TalkEventRow = StoredTalkEvent;
 export type ResolvedTalkMessage = {
   kind: "sms" | "chat";

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { captureTalkDisplayTime, TALK_DISPLAY_TIME_KEY, talkDisplayTimeLabel, talkEventFormatEnv } from "../src/worker/talkDisplayClock.ts";
+import { captureTalkDisplayTime, TALK_DISPLAY_TIME_KEY, talkEventFormatEnv } from "../src/worker/talkDisplayClock.ts";
+import { talkDisplayTimeLabel } from "../src/shared/talkDisplayTime.ts";
 import { createScenarioRuntime } from "../src/worker/scenarioRuntime.ts";
 import { createScenarioHooksRuntime } from "../src/worker/services/scenarioHooksRuntime.ts";
 import { workerScenario } from "../src/generated/workerScenario.generated.ts";
@@ -24,7 +25,7 @@ test("作中時計は自動で進めず、応答や次のリクエストも作�
 test("作中日時は端末の時差へ変換せず、自由な時刻ラベルも保持する", () => {
   assert.equal(talkDisplayTimeLabel({ date: "2028-02-29", time: "23:59:59" }), "2/29 23:59");
   assert.equal(talkDisplayTimeLabel({ date: "2027-05-01", time: "夕方" }), "5/1 夕方");
-  const moduleUrl = new URL("../src/worker/talkDisplayClock.ts", import.meta.url).href;
+  const moduleUrl = new URL("../src/shared/talkDisplayTime.ts", import.meta.url).href;
   for (const TZ of ["Asia/Tokyo", "America/Los_Angeles"]) {
     const result = execFileSync(process.execPath, ["--input-type=module", "-e", `import { talkDisplayTimeLabel } from ${JSON.stringify(moduleUrl)}; console.log(talkDisplayTimeLabel({date:"2027-03-14",time:"23:59:59"}));`], {
       env: { ...process.env, TZ }, encoding: "utf8"

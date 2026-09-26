@@ -49,10 +49,14 @@ test("選択先の実TSV定数から作品名とpublic/private境界を生成す
 }));
 
 test("会話の表示時計は任意設定で、未知の値を制作時に拒否する", () => withAuthoring(({ edit, invoke }) => {
-  edit("project_constants", rows => rows.push({ key: "talk.clock", value: "scenario", exposure: "private" }));
-  const accepted = invoke('console.log(result.worker.project.talkClock);');
+  assert.equal(invoke('console.log(result.projectConstants["talk.clock"]);').stdout.trim(), "real");
+  edit("project_constants", rows => {
+    rows.push({ key: "talk.clock", value: "scenario", exposure: "private" });
+    rows.push({ key: "fixture.private", value: "非公開の制作値", exposure: "private" });
+  });
+  const accepted = invoke('console.log(JSON.stringify([result.worker.project.talkClock, result.projectConstants["talk.clock"], result.projectConstants["fixture.private"] ?? null]));');
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.equal(accepted.stdout.trim(), "scenario");
+  assert.deepEqual(JSON.parse(accepted.stdout), ["scenario", "scenario", null], "表示時計のモードだけを公開し、ほかのprivate定数を混ぜない");
   edit("project_constants", rows => { rows.find(row => row.key === "talk.clock").value = "scenerio"; });
   const rejected = invoke();
   assert.notEqual(rejected.status, 0);
@@ -112,6 +116,24 @@ test("親アプリ修復の定数は新しい列なしでboolean設定へ変換�
   const rejected = invoke();
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /content.repair_parent_app.*true\/false/u);
+}));
+
+test("案内のsticky列は任意で、trueだけを定義へ出し、誤記を拒否する", () => withAuthoring(({ edit, invoke }) => {
+  const read = 'console.log(JSON.stringify(result.worker.assistantMessages.map((item) => [item.id, item.sticky ?? null])));';
+  const defaults = invoke(read);
+  assert.equal(defaults.status, 0, defaults.stderr);
+  assert.equal(JSON.parse(defaults.stdout).every(([, sticky]) => sticky === null), true, "列がない既存TSVはstickyなし");
+  edit("assistant_messages", (rows, headers) => {
+    headers.splice(headers.indexOf("notes"), 0, "sticky");
+    rows[0].sticky = "true";
+    rows[1].sticky = "false";
+  });
+  const accepted = JSON.parse(invoke(read).stdout);
+  assert.deepEqual(accepted.slice(0, 2).map(([, sticky]) => sticky), [true, null]);
+  edit("assistant_messages", rows => { rows[0].sticky = "yes"; });
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /sticky.*true\/false/u);
 }));
 
 test("元TSVの素材typeと予定dateの空欄継承を生成まで保持する", () => withAuthoring(({ edit, invoke }) => {

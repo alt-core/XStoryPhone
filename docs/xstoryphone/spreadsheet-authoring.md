@@ -63,22 +63,35 @@ Sheet IDは `--spreadsheet-id`、環境変数、manifestの順に優先します
 
 作品のリポジトリを公開する場合は、実運用のSheet IDをmanifestへ記録せず、環境変数または引数で渡すことを推奨します。Sheet ID自体は認証情報ではありませんが、共有先の公開範囲も確認してください。service accountの秘密鍵は別に管理します。
 
-必要な表だけ取得する場合、論理表名をカンマ区切りで指定できます。
+pull・compare・putは、対象の論理表名を`--tables`へカンマ区切りで指定できます。Sheetの表示名ではなくmanifestのtable IDです。省略すると設定された全表を対象にします。未定義・空欄・重複したIDは通信前に拒否します。
 
 ```sh
 npm run scenario:sheets:pull -- --tables note_items,photo_items
-npm run scenario:sheets:compare
+npm run scenario:sheets:compare -- --tables note_items,photo_items
 ```
 
-pullは選択した全Sheetの取得に成功してから、ローカルTSVを書き換えます。compareは値と余剰セルの差を報告するだけで、Sheetへ書き込みません。認証・権限エラー時は停止し、別アカウント等へ切り替えません。
+pullは選択した全Sheetの取得に成功してから、ローカルTSVを書き換えます。compareはSheet名・セル位置（Rは行、Cは列）・remote/localの値を使い、追加・変更・削除を全件表示します。TSVの範囲外に残る値も省略しません。Sheetへは書き込まず、不一致やSheetの不足があれば終了コード1、一致なら0です。差分は標準出力へ出すため、`> diff.txt`で全内容を保存できます。本文や答えを含むので、保存先を公開配信しないでください。
 
-ローカルで編集したTSVをSheetへ反映する場合だけ、次を実行します。
+Sheetsの数式は、表示値がTSVと同じでも、putで文字列に置き換わるセルとして数式とともに表示します。比較対象は表示値と数式であり、色・フォントなど全書式の差分を表示するものではありません。認証・権限エラー時は停止し、別アカウント等へ切り替えません。
+
+ローカルで編集したTSVをSheetへ反映する場合は、次のように実行します。通常putでも、書込み前に対象の内容を一度取得して全差分と作成・サイズ調整の予定を表示します。
 
 ```sh
-npm run scenario:sheets:put -- --yes-overwrite-google-sheets-with-local-tsv
+# 書き込まずに差分と更新予定だけを確認（上書き確認flagは不要）
+npm run scenario:sheets:put -- --tables note_items,photo_items --dry-run
+
+# 指定した表を反映
+npm run scenario:sheets:put -- --tables note_items,photo_items --yes-overwrite-google-sheets-with-local-tsv
+
+# 反映後に対象表だけ再取得して比較する場合
+npm run scenario:sheets:put -- --tables note_items,photo_items --yes-overwrite-google-sheets-with-local-tsv --verify
 ```
 
-**putは設定された全表をローカルTSVで上書きします。** Sheetの作成、行列サイズ・列幅の調整、既存セルのclear、RAW値の書込みを行います。セル単位の差分更新ではなく、元の数式や書式を完全に保持する同期でもありません。対象と差分を確認し、必要なバックアップを取ってください。pullの`--tables`はputには使いません。build・deployから自動でputすることはありません。
+**putは対象表をローカルTSVで上書きします。`--tables`を省略したputは、従来どおり全表の上書きです。** Sheetの作成、行列サイズ、先頭行固定、列幅の調整を維持し、これらと値の置換を一つのbatch更新で行います。先に消去だけを確定する通信は行いません。先頭ゼロや`=`で始まる文字列も、従来のRAW書込みと同じく数値・数式へ変換しません。値に差分がなくても対象表は整形します。対象外の表は更新・整形しません。
+
+セル単位の差分更新ではなく、元の数式や書式を完全に保持する同期でもありません。同時編集は行わない前提で、競合検出・自動マージ・自動バックアップは提供しません。確認flagを付けた通常putは差分表示の後に入力待ちせず実行するので、人が事前に確認したい場合は`--dry-run`を使ってください。build・deployから自動でputすることはありません。
+
+更新後の再取得は`--verify`指定時だけです。不一致なら全差分を表示して終了コード1で停止し、自動の再上書きやロールバックは行いません。`--dry-run`と`--verify`の同時指定は引数エラーです。通信失敗時にも自動で書込みを再送しません。応答を受け取れず更新結果が不明な場合は、compareで確認してください。
 
 ## セルの書き方
 

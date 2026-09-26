@@ -1079,7 +1079,8 @@ export function loadAndValidateScenario(overrides = {}) {
   const assistantItems = Array.isArray(source.assistantMessages) ? source.assistantMessages : [];
   validateUniqueItems("assistantMessage", assistantItems, errors);
   for (const message of assistantItems) {
-    validateObjectKeys(`assistantMessage ${message?.id ?? ""}`, message, ["id", "surface", "body", "weight", "agentAction", "cond"], errors);
+    validateObjectKeys(`assistantMessage ${message?.id ?? ""}`, message, ["id", "surface", "body", "weight", "agentAction", "sticky", "cond"], errors);
+    if (message?.sticky !== undefined && typeof message.sticky !== "boolean") errors.push(`${message?.id ?? "assistantMessage"}: sticky は true/false にしてください。`);
     if (typeof message?.surface !== "string" || !message.surface.trim() || typeof message?.body !== "string" || !message.body.trim()) {
       errors.push(`${message?.id ?? "assistantMessage"}: surface と body が必要です。`);
     }
@@ -1520,6 +1521,7 @@ export function loadAndValidateScenario(overrides = {}) {
     "search_agent.name": source.project.assistantName,
     "player.mode": playerMode,
     "player.access_code": source.project.accessCode,
+    "talk.clock": source.project.talkClock,
     "searchAgent.broken_link_tutorial_body": source.projectConstants?.["search_agent.broken_link_tutorial_body"] ?? "",
     "searchAgent.broken_link_body": source.projectConstants?.["search_agent.broken_link_body"] ?? ""
   };
@@ -1534,7 +1536,7 @@ export function loadAndValidateScenario(overrides = {}) {
       talk: publicIds.talk,
       attachment: publicIds.attachment
     },
-    runtime: sourceSnapshot(["src/worker/talkEventsRuntime.ts", "src/worker/scenarioRuntime.ts", "src/worker/talkMessageClock.ts", "src/worker/talkDisplayClock.ts"])
+    runtime: sourceSnapshot(["src/worker/talkEventsRuntime.ts", "src/worker/scenarioRuntime.ts", "src/worker/talkMessageClock.ts", "src/worker/talkDisplayClock.ts", "src/shared/talkDisplayTime.ts"])
   });
   const clientRevision = clientRevisionFor({
     packageVersion,

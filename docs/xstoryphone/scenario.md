@@ -57,7 +57,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `project.id` / `project.name` | `my_story` / `My Story` | 安定した作品ID／作品名 |
 | `device.os_name` / `search_agent.name` | `StoryOS` / `ナビ` | 画面上の名称 |
 | `device.date` / `device.time_label` | `2026-08-12` / `20:14` | 作中の日時 |
-| `talk.clock` | `scenario` | 発話の表示時計。`real`（既定）/ `scenario`。exposureはprivate |
+| `talk.clock` | `scenario` | 発話の表示時計。`real`（既定）/ `scenario`。exposureはprivateで記述し、解決済みのモードだけをクライアントへ自動公開 |
 | `player.access_code` | `required` | browserの任意入場制限。`none`（既定）/ `required`。APIの`ACCESS_CODE_SECRET`も必要 |
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
@@ -71,7 +71,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 
 進行中は予約状態変数`os_date`と`os_time_label`を更新できます。上の定数が初期値になるため、`state_vars`へ重ねて宣言しません。hookのscriptセルには`state.set("os_date", "2026-08-13")`、会話のsetセルには`os_time_label = "21:30"`のように書きます。日付が変わるとカレンダーはその週を表示します。
 
-`talk.clock=scenario` の場合、メッセージ・チャットの新しい発言は、追加時点の `os_date` / `os_time_label` を使って日付・時刻を表示します。プレイヤーの投稿はruleのset適用前、応答は適用後、hookの `talk.addBlock` はその記述位置までの状態を捕捉します。後から時計を進めたり戻したりしても、過去の発言日時や履歴順序・既読は変わりません。初期履歴は引き続き `talk_blocks.time` の指定を使います。
+`talk.clock=scenario` の場合、メッセージ・チャットの新しい発言は、追加時点の `os_date` / `os_time_label` を使って日付・時刻を表示します。プレイヤーの投稿はruleのset適用前、応答は適用後、hookの `talk.addBlock` はその記述位置までの状態を捕捉します。送信中の仮表示も、送信開始時点の公開済み作中日時を使います。後から時計を進めたり戻したりしても、過去の発言日時や履歴順序・既読は変わりません。初期履歴は引き続き `talk_blocks.time` の指定を使います。
 
 作中時計を変更しない間は、投稿・応答とも同じ作中日時を表示します。発話数や実際の経過時間で日付・時刻を自動的に進めません。年越しなどの演出はsetやhookで時計を明示的に変更してください。`HH:mm:ss` の数値時刻も、表示は従来どおり分までです。「夕方」などの任意の時刻ラベルは、その表記を保持します。端末のタイムゾーンによる時差は付けません。
 
@@ -264,6 +264,8 @@ project_constantsの`chat_auth.cond`を満たす間、チャットは再認証�
 ## 検索AIの吹き出し
 
 `assistant_messages` は指定surfaceとcondに応じた案内を吹き出しで表示します。吹き出しをタップすると検索AIの会話を開き、会話を閉じたら吹き出しを消してナビを端へ引っ込めます。この非表示はその画面だけの一時状態で、別アプリへ移動して戻ると条件に合う案内を再表示できます。吹き出しの文言を会話履歴へ自動追加する機能ではありません。
+
+選ばれた案内をタップ操作で消したくない場合は、そのメッセージの `sticky` 列を `true` にします。検索AIの会話を開いている間は吹き出しを隠し、会話を閉じたら再表示します。背景タップでも消しません。空欄は `false` です。優先表示の指定ではないため、既存のweightによる選択や一時案内による置き換えは変わらず、condを満たさなくなれば表示対象から外れます。
 
 通常の案内は背景タップでも引っ込みます。ただし、ホームの初回破損リンク案内は操作の手がかりを残すため、背景タップでは消しません。会話を開いて閉じれば、ほかの吹き出しと同様に引っ込みます。
 

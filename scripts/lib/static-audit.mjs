@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { partOf, scenarioForParts } from "../../src/worker/scenarioParts.ts";
-import { compileStaticHooks } from "./static-scenario.mjs";
+import { compileScenarioHooks } from "./scenario-hooks.mjs";
 import { usesStandardMedia } from "../../src/shared/scenarioMedia.ts";
 
 function leaves(value) {
@@ -108,7 +108,7 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
       const handlers = [...new Set(worker.hooks.filter(hook => partOf(hook) === part.id).map(hook => hook.handler))];
       const moduleFile = path.join(path.dirname(file), "hooks.js");
       const actual = fs.existsSync(moduleFile) ? fs.readFileSync(moduleFile, "utf8").trim() : "";
-      const expected = handlers.length ? compileStaticHooks(Object.fromEntries(handlers.map(id => [id, hookScripts[id]]))).trim() : "";
+      const expected = handlers.length ? compileScenarioHooks(Object.fromEntries(handlers.map(id => [id, hookScripts[id]]))).trim() : "";
       if (actual !== expected) failures.push(`hook moduleが所属partの原本と一致しません: ${part.id}`);
     }
     for (const rule of part.rules) {

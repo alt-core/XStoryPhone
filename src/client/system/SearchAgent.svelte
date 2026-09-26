@@ -215,6 +215,8 @@
   }
 
   function dismissSurfaceMessage() {
+    // stickyの案内は、会話を閉じても背景をタップしても、条件を満たす間は出し続ける。
+    if (surfaceMessage?.sticky) return;
     dismissedSurfaceMessageKey = surfaceMessageKey;
   }
 

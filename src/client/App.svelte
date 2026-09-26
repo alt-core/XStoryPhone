@@ -16,6 +16,7 @@
   import AlbumApp from "./apps/PhotosApp.svelte";
   import { clearTalkDelaySeenMessagesForMemoryKey } from "./apps/talkDelaySeenStorage";
   import { talkMessageDisplayTime } from "./apps/talkMessageTime.ts";
+  import { talkDisplayTimeLabel } from "../shared/talkDisplayTime.ts";
   import { demoDeviceStateGenerated as demoDeviceState } from "./generated/demoDeviceState.generated";
   import { demoProjectConstantsGenerated as projectConstants } from "./generated/demoProjectConstants.generated";
   import type {
@@ -174,6 +175,7 @@
   const BROKEN_LINK_ASSISTANT_BODY = projectConstants["searchAgent.broken_link_body"];
   const TALK_INITIAL_DATE_LABEL = formatStoryDateCompact(projectConstants["device.date"]);
   type TalkKind = "sms" | "chat";
+  type PendingTalkMessage = GameOverTalkMessage & { displayTime?: string };
   type ReplyDelayAnchor = {
     waiting: boolean;
   };
@@ -272,7 +274,7 @@
   let notificationToast: NotificationItem | null = null;
   let notificationToastTimer: number | undefined;
   let temporaryTalkMessages: GameOverTalkMessage[] = [];
-  let pendingTalkMessages: GameOverTalkMessage[] = [];
+  let pendingTalkMessages: PendingTalkMessage[] = [];
   let replyDelayAnchorsByThread: Record<string, ReplyDelayAnchor> = {};
   let pendingTalkMessageCounter = 0;
   let lastPlayerStateRefreshRequestedAt = 0;
@@ -759,7 +761,7 @@
   function mergePlayerState(
     baseState: DeviceState,
     state: PlayerState | null,
-    pendingMessages: GameOverTalkMessage[],
+    pendingMessages: PendingTalkMessage[],
     temporaryMessages: GameOverTalkMessage[],
     displayedNotificationTarget: DisplayedTalkTarget | null,
     suppressedNotificationIds: string[]
@@ -1168,7 +1170,7 @@
     state: PlayerState,
     photos: PhotoItem[],
     radioItems: RadioEpisodeItem[],
-    pendingMessages: GameOverTalkMessage[],
+    pendingMessages: PendingTalkMessage[],
     temporaryMessages: GameOverTalkMessage[]
   ) {
     const contentStates = new Map(state.contentStates.map((item) => [item.contentId, item.state]));
@@ -1262,7 +1264,7 @@
     state: PlayerState,
     photos: PhotoItem[],
     radioItems: RadioEpisodeItem[],
-    pendingMessages: GameOverTalkMessage[],
+    pendingMessages: PendingTalkMessage[],
     temporaryMessages: GameOverTalkMessage[]
   ) {
     const threads = baseThreads.map((thread) => ({
@@ -3076,7 +3078,11 @@
 
   function startPendingTalkSend(kind: TalkKind, talkId: string, message: string) {
     pendingTalkMessageCounter += 1;
-    const pendingMessage: GameOverTalkMessage = {
+    // 仮表示も送信開始時の作中時計を捕捉する。sentAtは記録順用の実時刻のままにする。
+    const displayTime = String(projectConstants["talk.clock"]) === "scenario" && playerState
+      ? talkDisplayTimeLabel({ date: playerState.scenarioTime.date, time: playerState.scenarioTime.timeLabel })
+      : undefined;
+    const pendingMessage: PendingTalkMessage = {
       kind,
       id: `${kind}_pending_${pendingTalkMessageCounter}`,
       talkId,
@@ -3084,7 +3090,8 @@
       senderName: kind === "chat" ? "あなた" : null,
       body: message,
       attachment: null,
-      sentAt: new Date().toISOString()
+      sentAt: new Date().toISOString(),
+      ...(displayTime ? { displayTime } : {})
     };
 
     pendingTalkMessages = [

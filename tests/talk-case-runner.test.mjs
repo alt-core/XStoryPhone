@@ -92,3 +92,37 @@ test("fixtureの期待値・stateの誤記を黙って無視しない", async ()
   await assert.rejects(runTalkCase(scenario, { ...baseCase, stateValues: { scnee: "誤記" } }), /未定義のstate/u);
   await assert.rejects(runTalkCase(scenario, { ...baseCase, expectedMatch: { name: null } }), /値なしの項目は省略/u);
 });
+
+test("抽出期待は文字列と正規表現を混在でき、key集合を省略せず比較する", async () => {
+  const fixture = { id: "reading", talkId: "guide", from: "start", input: "名前です", expectedRuleId: "answer" };
+  const accepted = await runTalkCase(scenario, { ...fixture, expectedMatch: { name: /^(あさ|よる)さん$/u }, mockExtractions: [{ name: "よるさん" }] });
+  assert.deepEqual(accepted.match, { name: "よるさん" });
+  assert.equal(accepted.expectedMatch.name, "/^(あさ|よる)さん$/u");
+  for (const expectedMatch of [{ name: /^別の値$/u }, {}, { name: /さん$/u, extra: /.*/u }]) {
+    await assert.rejects(runTalkCase(scenario, { ...fixture, expectedMatch, mockExtractions: [{ name: "あささん" }] }), error => error.caseResult.checks.extraction === false);
+  }
+  const twoFields = structuredClone(scenario);
+  twoFields.talks[0].rules[0].match = '{"name":"名前","label":"分類"}';
+  assert.equal((await runTalkCase(twoFields, { ...fixture, expectedMatch: { name: /さん$/u, label: "確認" }, mockExtractions: [{ name: "あささん", label: "確認" }] })).checks.extraction, true);
+});
+
+test("正規表現の期待はg/yの状態を持ち越さず、AI抽出mockが必要な時だけ実値を要求する", async () => {
+  const pattern = /田中/gy;
+  pattern.lastIndex = 2;
+  const fixture = { id: "pattern", talkId: "guide", from: "start", input: "田中です", expectedRuleId: "answer", expectedMatch: { name: pattern } };
+  for (let i = 0; i < 2; i += 1) {
+    assert.equal((await runTalkCase(scenario, { ...fixture, mockExtractions: [{ name: "田中" }] })).checks.extraction, true);
+    assert.equal(pattern.lastIndex, 2);
+  }
+  await assert.rejects(runTalkCase(scenario, fixture), error => error.caseResult.failureStage === "configuration" && /mockExtractions/u.test(error.message));
+  assert.equal((await runTalkCase(scenario, fixture, { selectionOnly: true })).checks.extraction, undefined);
+  const regex = structuredClone(scenario);
+  regex.talks[0].rules[0].type = "match";
+  regex.talks[0].rules[0].criteria = "/田中/u";
+  regex.talks[0].rules[0].match = "/(?<name>田中)/u";
+  assert.equal((await runTalkCase(regex, fixture)).checks.extraction, true);
+  const live = await runTalkCase(scenario, fixture, { live: true, provider: { id: "fake", async completeJson(request) {
+    return { ok: true, value: request.operation === "match_extraction" ? { name: "田中" } : { rule_id: "answer", confidence: 0.99, reason_code: "matched_intent" }, raw: "{}" };
+  } } });
+  assert.equal(live.checks.extraction, true);
+});

@@ -14,6 +14,7 @@ export type AssistantMessage = {
   body: string;
   weight: number;
   agentAction?: SearchAgentAction;
+  sticky?: boolean;
 };
 
 export type AppCatalogEntry = {

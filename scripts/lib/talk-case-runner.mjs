@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { isDeepStrictEqual } from "node:util";
 import { activeTalkRules } from "../../src/shared/conversation.ts";
 import { createTalkRuleSelector, resolveScenarioTalkRule, resolveScenarioTalkSelection, talkRuleSelectorKind } from "../../src/worker/services/talkResolver.ts";
 import { resolveStructuredOutputConfig } from "../../src/worker/providers/structuredOutput.ts";
@@ -7,6 +6,7 @@ import { resolveTypesafeConfig } from "../../src/worker/providers/typesafe.ts";
 import { talkFlowLlmDefaultThresholds } from "../../src/worker/product/talkFlowLlmSelection.ts";
 import { talkTestContext } from "./talk-test-context.mjs";
 import { sameRuleOutcome } from "./talk-rule-outcome.mjs";
+import { matchesExpectedValue, expectedValuesForReport } from "./case-expectations.mjs";
 
 const fields = new Set([
   "id", "talkId", "from", "input", "stateValues", "recentMessages", "semanticPlayerInput",
@@ -34,7 +34,7 @@ function prepareCase(scenario, fixture) {
     assert.ok(Object.hasOwn(scenario.stateVariables, key), `${fixture.id}: 未定義のstateです: ${key}`);
     assert.ok(["string", "number", "boolean"].includes(typeof value), `${fixture.id}: state値は文字列・数値・booleanにしてください。`);
   }
-  assert.ok(Object.values(fixture.expectedMatch ?? {}).every((value) => typeof value === "string"), "expectedMatchは文字列のobjectです。値なしの項目は省略してください。");
+  assert.ok(Object.values(fixture.expectedMatch ?? {}).every((value) => typeof value === "string" || value instanceof RegExp), "expectedMatchは文字列またはRegExpのobjectです。値なしの項目は省略してください。");
   if (fixture.recentMessages !== undefined) {
     assert.ok(Array.isArray(fixture.recentMessages) && fixture.recentMessages.every((item) => item && typeof item.speaker === "string" && typeof item.body === "string"), "recentMessagesはspeaker/bodyの配列にしてください。");
   }
@@ -110,7 +110,7 @@ export async function runTalkCase(scenario, fixture, { provider = null, live = f
   let stage = "configuration";
   try {
     const { talk, from, stateValues, recentMessages, expected } = prepareCase(scenario, fixture);
-    Object.assign(report, { talkId: talk.id, from });
+    Object.assign(report, { talkId: talk.id, from, expectedMatch: expectedValuesForReport(fixture.expectedMatch) });
     let extractionIndex = 0;
     const mock = {
       id: "case-fixture",
@@ -120,6 +120,10 @@ export async function runTalkCase(scenario, fixture, { provider = null, live = f
           if (!samples.length) {
             stage = "configuration";
             throw new Error(`${fixture.id}: mockExtractionsまたはexpectedMatchが必要です。`);
+          }
+          if (!fixture.mockExtractions && Object.values(fixture.expectedMatch).some(value => value instanceof RegExp)) {
+            stage = "configuration";
+            throw new Error(`${fixture.id}: 正規表現の期待値からmock応答は作れません。mockExtractionsを指定してください。`);
           }
           const value = samples[Math.min(extractionIndex++, samples.length - 1)];
           return { ok: true, value, raw: JSON.stringify(value) };
@@ -199,7 +203,11 @@ export async function runTalkCase(scenario, fixture, { provider = null, live = f
       report.expectationMatch = exact ? "exact" : equivalent ? "equivalent" : "mismatch";
     }
     if (fixture.forbiddenMode !== undefined) report.checks.forbiddenMode = modeOf(selected.rule) !== fixture.forbiddenMode;
-    if (!selectionOnly && fixture.expectedMatch !== undefined) report.checks.extraction = isDeepStrictEqual(selected.matchGroups, fixture.expectedMatch);
+    if (!selectionOnly && fixture.expectedMatch !== undefined) {
+      const actual = selected.matchGroups;
+      report.checks.extraction = Object.keys(actual).length === Object.keys(fixture.expectedMatch).length
+        && Object.entries(fixture.expectedMatch).every(([key, value]) => Object.hasOwn(actual, key) && matchesExpectedValue(actual[key], value));
+    }
     assert.notEqual(report.checks.forbiddenMode, false, `${fixture.id}: 禁止modeが選ばれました: ${fixture.forbiddenMode}`);
     assert.notEqual(report.checks.selection, false, `${fixture.id}: ${fixture.expectedRuleId ? "分岐IDが期待と違います。" : "意図または同等の分岐が期待と違います。"}`);
     assert.notEqual(report.checks.extraction, false, `${fixture.id}: 抽出値が期待と違います。`);
