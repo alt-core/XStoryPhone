@@ -133,7 +133,7 @@ export async function buildStaticScenario({ root, outputDir, scenario, releaseId
     if (partId !== "base") definition.publicIds = scenarioForParts(worker, [partId]).publicIds;
     const rules = worker.talks.flatMap(talk => talk.rules.filter(rule => partOf(rule) === partId).map(rule => ({ ...rule, talkId: talk.id })));
     const handlers = [...new Set(definition.hooks.map(hook => hook.handler))];
-    if (definition.hooks.some(hook => hook.llm)) throw new Error(`staticではAIを使うhookは使用できません: ${partId}`);
+    if (definition.hooks.some(hook => hook.needsAi)) throw new Error(`staticではAIが必須のhookは使用できません: ${partId}`);
     if (handlers.length) {
       fs.writeFileSync(path.join(directory, "hooks.js"), compileScenarioHooks(Object.fromEntries(handlers.map(id => [id, scenario.hookScripts[id]]))));
     }

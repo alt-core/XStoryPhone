@@ -631,7 +631,7 @@ test("talk単位のrepairableとhiddenを検索から一括修復する", async 
     });
     assert.equal(openTargetExists(repairableTalk.publicId, "messages", initial.state), true);
 
-    const repairHook = { event: "repair_talk_test", target: "", handler: "repair_talk_test", cond: "", llm: false };
+    const repairHook = { event: "repair_talk_test", target: "", handler: "repair_talk_test", cond: "", needsAi: false };
     workerScenario.hooks.push(repairHook);
     scenarioHookHandlers.repair_talk_test = (context) => context.content.setState(repairableTalk.id, "repaired");
     try {
@@ -1277,10 +1277,10 @@ test("条件付き表示と検索AI talkを公開シナリオへ生成する", (
   assert.equal(scenario.worker.assistantMessages.find((item) => item.id === "photo_hint")?.cond, "old_note_opened && !rainy_window_opened && !image_color_reported");
   assert.equal(scenario.worker.assistantMessages.find((item) => item.id === "report_hint")?.cond, "rainy_window_opened && !image_color_reported");
   const unlockAssistant = scenario.worker.assistantMessages.find((item) => item.id === "sealed_note_opened");
-  assert.equal(unlockAssistant?.surface, "messages");
+  assert.equal(unlockAssistant?.trigger, "screen:messages");
   assert.equal(unlockAssistant?.cond, "sealed_note_unlocked && !chat_auth_link_sent");
   const completedAssistant = scenario.worker.assistantMessages.find((item) => item.id === "demo_completed_nav");
-  assert.equal(completedAssistant?.surface, "chat");
+  assert.equal(completedAssistant?.trigger, "screen:chat");
   assert.equal(completedAssistant?.cond, "demo_completed");
   assert.equal(Object.hasOwn(scenario.worker, "searchResponses"), false);
   const searchTalk = scenario.worker.talks.find((talk) => talk.kind === "search_agent");
@@ -1392,7 +1392,7 @@ test("talk単位initialStateを生成し、初期block単位condは明示拒否�
       target: repairableTalk.id,
       handler: "mark_session_started",
       cond: "",
-      llm: false
+      needsAi: false
     });
     invalidBlockTalk.startBlocks = [{ block: invalidBlockTalk.startBlocks[0], cond: "old_note_opened" }];
     fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
@@ -1895,8 +1895,7 @@ test("authoring検証はTSV構造・長さ・template・JSON keyを事前に拒�
     assert.match(badLink.stderr, /メッセージリンクが不正です/u);
 
     const documentAttachment = run({ scenario(scenario) {
-      scenario.attachments.push({
-        id: "document_test",
+      Object.assign(scenario.attachments.find(item => item.id === "sealed_note_file"), {
         type: "document",
         content: "sealed_note",
         lock: "password",
@@ -2148,8 +2147,8 @@ test("検索語はNFKCで正規化し、入れ子配列だけをAND条件とし�
 test("同一イベントのhook condは各script直前に最新の状態で評価する", async () => {
   workerScenario.stateVariables.test_hook_snapshot = false;
   workerScenario.stateVariables.test_hook_cascade = false;
-  const firstHook = { event: "test_hook_snapshot", target: "", handler: "test_hook_snapshot_first", cond: "", llm: false };
-  const secondHook = { event: "test_hook_snapshot", target: "", handler: "test_hook_snapshot_second", cond: "test_hook_snapshot", llm: false };
+  const firstHook = { event: "test_hook_snapshot", target: "", handler: "test_hook_snapshot_first", cond: "", needsAi: false };
+  const secondHook = { event: "test_hook_snapshot", target: "", handler: "test_hook_snapshot_second", cond: "test_hook_snapshot", needsAi: false };
   workerScenario.hooks.push(firstHook, secondHook);
   scenarioHookHandlers.test_hook_snapshot_first = (context) => context.state.set("test_hook_snapshot", true);
   scenarioHookHandlers.test_hook_snapshot_second = (context) => context.state.set("test_hook_cascade", true);
@@ -2170,7 +2169,7 @@ test("同一イベントのhook condは各script直前に最新の状態で評�
 });
 
 test("custom hookのtargetは定義済みの優先順で解決しevent IDへfallbackしない", async () => {
-  const hook = { event: "test_custom_target", target: "", handler: "test_custom_target", cond: "", llm: false };
+  const hook = { event: "test_custom_target", target: "", handler: "test_custom_target", cond: "", needsAi: false };
   let calls = 0;
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_custom_target = () => { calls += 1; };
@@ -2207,7 +2206,7 @@ test("hookは順序付きeffectとしてaddBlock時点のenvと表示順を固�
   const originalBody = message.body;
   workerScenario.stateVariables.test_hook_value = "初期";
   workerScenario.stateVariableDefinitions.test_hook_value = { type: "string" };
-  const hook = { event: "test_hook_order", target: "", handler: "test_hook_order", cond: "", llm: false };
+  const hook = { event: "test_hook_order", target: "", handler: "test_hook_order", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   message.body = "{{test_hook_value}}";
   scenarioHookHandlers.test_hook_order = (context) => {
@@ -2247,7 +2246,7 @@ test("hookのrepeat表示は派生blockで必要なenvを呼出時点から保�
   const originalBody = repeatMessage.body;
   workerScenario.stateVariables.test_hook_repeat_value = "初期";
   workerScenario.stateVariableDefinitions.test_hook_repeat_value = { type: "string" };
-  const hook = { event: "test_hook_repeat_env", target: "", handler: "test_hook_repeat_env", cond: "", llm: false };
+  const hook = { event: "test_hook_repeat_env", target: "", handler: "test_hook_repeat_env", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   repeatMessage.body = "{{test_hook_repeat_value}}";
   scenarioHookHandlers.test_hook_repeat_env = (context) => {
@@ -2276,7 +2275,7 @@ test("hookのrepeat表示は派生blockで必要なenvを呼出時点から保�
 });
 
 test("hookのaddBlockは別talkのblockをruntimeでも拒否する", async () => {
-  const hook = { event: "test_hook_block_scope", target: "", handler: "test_hook_block_scope", cond: "", llm: false };
+  const hook = { event: "test_hook_block_scope", target: "", handler: "test_hook_block_scope", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_hook_block_scope = (context) => context.talk.addBlock("guide", "receiver_reply");
   try {
@@ -2293,7 +2292,7 @@ test("hookのaddBlockは別talkのblockをruntimeでも拒否する", async () =
 test("hookの公開拒否は先に記録した副作用も全て破棄する", async () => {
   workerScenario.stateVariables.test_hook_reject = false;
   workerScenario.stateVariableDefinitions.test_hook_reject = { type: "boolean" };
-  const hook = { event: "test_hook_reject", target: "", handler: "test_hook_reject", cond: "", llm: false };
+  const hook = { event: "test_hook_reject", target: "", handler: "test_hook_reject", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_hook_reject = (context) => {
     context.state.set("test_hook_reject", true);
@@ -2323,7 +2322,7 @@ test("前景hookはeffectを順番に返し、effectSequence以前の状態だ�
   workerScenario.stateVariables.test_effect_after = false;
   workerScenario.stateVariableDefinitions.test_effect_before = { type: "boolean" };
   workerScenario.stateVariableDefinitions.test_effect_after = { type: "boolean" };
-  const hook = { event: "test_presentation", target: "", handler: "test_presentation", cond: "", llm: false };
+  const hook = { event: "test_presentation", target: "", handler: "test_presentation", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_presentation = (context) => {
     context.state.set("test_effect_before", true);
@@ -2378,7 +2377,7 @@ test("前景hookはeffectを順番に返し、effectSequence以前の状態だ�
 });
 
 test("scheduled eventから一時演出を開始できない", async () => {
-  const hook = { event: "scheduled_event", target: "test_presentation", handler: "test_scheduled_presentation", cond: "", llm: false };
+  const hook = { event: "scheduled_event", target: "test_presentation", handler: "test_scheduled_presentation", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_scheduled_presentation = (context) => context.effect.noise();
   try {
@@ -2393,7 +2392,7 @@ test("scheduled eventから一時演出を開始できない", async () => {
 });
 
 test("flashとblackoutの旧numeric形式は黙って既定値へ変換しない", async () => {
-  const hook = { event: "test_numeric_presentation", target: "", handler: "test_numeric_presentation", cond: "", llm: false };
+  const hook = { event: "test_numeric_presentation", target: "", handler: "test_numeric_presentation", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_numeric_presentation = (context) => context.effect.flash(300);
   try {
@@ -2408,7 +2407,7 @@ test("flashとblackoutの旧numeric形式は黙って既定値へ変換しない
 });
 
 test("scheduled eventから入力用の公開拒否を返せない", async () => {
-  const hook = { event: "scheduled_event", target: "test_scheduled_rejection", handler: "test_scheduled_rejection", cond: "", llm: false };
+  const hook = { event: "scheduled_event", target: "test_scheduled_rejection", handler: "test_scheduled_rejection", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   try {
     for (const [handler, error] of [
@@ -2428,8 +2427,8 @@ test("scheduled eventから入力用の公開拒否を返せない", async () =>
 });
 
 test("同一hook dispatchで同じscheduleまたは生成音声を複数回操作できない", async () => {
-  const hook = { event: "test_duplicate_effect", target: "", handler: "test_duplicate_effect", cond: "", llm: false };
-  const secondHook = { event: "test_duplicate_effect", target: "", handler: "test_duplicate_effect_second", cond: "", llm: false };
+  const hook = { event: "test_duplicate_effect", target: "", handler: "test_duplicate_effect", cond: "", needsAi: false };
+  const secondHook = { event: "test_duplicate_effect", target: "", handler: "test_duplicate_effect_second", cond: "", needsAi: false };
   workerScenario.hooks.push(hook, secondHook);
   scenarioHookHandlers.test_duplicate_effect_second = () => {};
   try {
@@ -2482,7 +2481,7 @@ test("同一hook dispatchで同じscheduleまたは生成音声を複数回操�
 });
 
 test("hook handlerがPromiseを返す場合は拒否する", async () => {
-  const hook = { event: "test_async_hook", target: "", handler: "test_async_hook", cond: "", llm: false };
+  const hook = { event: "test_async_hook", target: "", handler: "test_async_hook", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_async_hook = async () => {};
   try {
@@ -2717,7 +2716,7 @@ test("hookがsearch agentを初期化する場合も初期リンク能力を記�
     contentId: "welcome_note",
     linkId: "search-link_hook_initial"
   }];
-  const hook = { event: "test_search_agent_initialize", target: "", handler: "test_search_agent_initialize", cond: "", llm: false };
+  const hook = { event: "test_search_agent_initialize", target: "", handler: "test_search_agent_initialize", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_search_agent_initialize = (context) => {
     context.talk.addBlock(SEARCH_AGENT_TALK_ID, "stage_photo", { mode: "stay" });
@@ -2746,7 +2745,7 @@ test("hookで繰り返し追加したsearch agent内部リンクは能力を増�
     contentId: "welcome_note",
     linkId: "search-link_hook"
   }];
-  const hook = { event: "test_search_agent_link_hook", target: "", handler: "test_search_agent_link_hook", cond: "", llm: false };
+  const hook = { event: "test_search_agent_link_hook", target: "", handler: "test_search_agent_link_hook", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_search_agent_link_hook = (context) => {
     context.talk.addBlock(SEARCH_AGENT_TALK_ID, "stage_photo", { mode: "stay" });
@@ -2768,7 +2767,7 @@ test("hookで繰り返し追加したsearch agent内部リンクは能力を増�
 test("hookのtalk.searchはsearch agentのfromを動かさず結果eventと発見能力を同じstateへ記録する", async () => {
   const initialized = await reconcileScenarioState(createInitialPlayerState(), "search-hook-player");
   const before = initialized.state.talks[SEARCH_AGENT_TALK_ID];
-  const hook = { event: "test_search_agent_hook", target: "", handler: "test_search_agent_hook", cond: "", llm: false };
+  const hook = { event: "test_search_agent_hook", target: "", handler: "test_search_agent_hook", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_search_agent_hook = (context) => context.talk.search(SEARCH_AGENT_TALK_ID, "古いメモ");
   try {

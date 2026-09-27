@@ -6,6 +6,8 @@ import { applyScenarioAuthoringSheetInheritance } from "./scenario-authoring-inh
 import { normalizeRadioCues } from "./radio-cues.mjs";
 import { answerCandidates } from "../../src/shared/talkCriteria.ts";
 import { projectApps } from "../../src/project/apps.ts";
+import { hookLlmDependencies } from "./scenario-hooks.mjs";
+import { parseTalkBlockComment } from "./talk-blocks.mjs";
 
 // Sheetsの制作表を入力とし、現在の共通実行modelへ変換する。JSONは接続設定だけ。
 const common = ["comment", "id", "cond", "initial", "search", "repair_label", "notes"];
@@ -15,21 +17,21 @@ export const AUTHORING_COLUMNS = {
   home_items: [...common, "label", "icon", "accent", "badge_cond"],
   message_items: [...common, "name", "avatar", "start", "input_visible", "input_enabled"],
   chat_items: [...common, "name", "avatar", "start", "input_visible", "input_enabled"],
-  call_items: [...common, "name", "kind", "at", "duration", "audio", "gen_audio", "transcript"],
+  call_items: [...common, "name", "kind", "at", "duration", "audio", "transcript"],
   gen_audio: ["comment", "id", "title", "provider", "fallback", "notes"],
   incoming_calls: ["comment", "id", "name", "cond", "audio", "transcript", "notes"],
   todo_items: ["comment", "id", "text", "cond", "notes"],
-  hooks: ["comment", "event", "target", "cond", "script", "notes", "id", "llm"],
+  hooks: ["comment", "event", "target", "cond", "script", "notes", "id", "needs_ai"],
   passwords: ["comment", "content", "password", "load_part", "notes"],
   calendar_items: [...common, "title", "date", "time", "place", "memo"],
   photo_items: [...common, "image", "description", "audio", "video", "title", "tags"],
   note_items: [...common, "title", "body", "tags"],
-  radio_items: [...common, "title", "audio", "gen_audio", "cues", "playback_cond", "playback_disabled_label", "form_kind", "form_id", "form_label", "form_url", "form_disabled_cond", "transcript"],
+  radio_items: [...common, "title", "audio", "cues", "playback_cond", "playback_disabled_label", "form_kind", "form_id", "form_label", "form_url", "form_disabled_cond", "transcript"],
   notifications: ["comment", "id", "app", "target", "title", "body", "cond", "notes"],
   talk_people: ["comment", "id", "name", "role", "avatar", "notes"],
   talk_flow: ["comment", "talk", "from", "cond", "intent", "type", "text", "example", "extract", "next", "mode", "set", "notes"],
   talk_blocks: ["comment", "sender", "body", "attachment", "time", "delay_ms", "notes", "updated_at", "source", "quick_replies"],
-  assistant_messages: ["comment", "id", "surface", "body", "weight", "cond", "agent_action", "sticky", "notes"],
+  assistant_messages: ["comment", "id", "trigger", "body", "weight", "cond", "agent_action", "hide", "notes"],
   attachments: ["comment", "id", "type", "asset", "content", "lock", "title", "body", "search", "search_app", "notes", "poster", "cond"],
   mail_items: [...common, "from", "to", "cc", "subject", "date", "body"],
   browser_items: [...common, "title", "url", "allowed_urls"],
@@ -48,7 +50,7 @@ const requiredColumns = {
   photo_items: ["id", "image", "description", "audio"], note_items: ["id", "title", "body"],
   radio_items: ["id", "title", "audio", "cues"], notifications: ["id", "app", "target", "title", "body"],
   talk_people: ["id", "name", "role", "avatar"], talk_flow: ["talk", "from", "cond", "intent", "type", "text", "example", "extract", "next", "mode"],
-  talk_blocks: ["sender"], assistant_messages: ["id", "surface", "body"], attachments: ["id", "type", "asset", "search", "search_app", "poster"]
+  talk_blocks: ["sender"], assistant_messages: ["id", "trigger", "body"], attachments: ["id", "type", "asset", "search", "search_app", "poster"]
 };
 const requiredCells = {
   project_constants: ["key", "exposure"], state_vars: ["id", "type"],
@@ -58,7 +60,7 @@ const requiredCells = {
   passwords: ["content", "password"], calendar_items: ["id", "title", "date", "time"],
   photo_items: ["id"], note_items: ["id", "title", "body"], radio_items: ["id", "title"],
   notifications: ["id", "app", "target", "title", "body"], talk_people: ["id", "name", "role"],
-  talk_flow: ["talk", "from", "type"], assistant_messages: ["id", "surface", "body"], attachments: ["id", "type"],
+  talk_flow: ["talk", "from", "type"], assistant_messages: ["id", "trigger", "body"], attachments: ["id", "type"],
   mail_items: ["id", "from", "to", "subject", "date", "body"], browser_items: ["id", "title", "url"],
   talk_history: ["id", "talk", "block"], schedules: ["id", "event", "delay_ms"], project_items: ["id", "app", "record"]
 };
@@ -101,6 +103,7 @@ export function loadWorkbook(authoring) {
     sheet.rows = sheet.rows.filter((row) => sheet.headers.some((header) => text(row, header)));
     workbook[tableId] = applyScenarioAuthoringSheetInheritance(tableId, sheet);
     for (const row of activeRows(workbook[tableId].rows)) for (const column of requiredCells[tableId] ?? []) {
+      if (tableId === "home_items" && column === "icon" && projectApps.some(app => app.id === text(row, "id"))) continue;
       if (!text(row, column)) throw new Error(`${tableId}!${row.__rowNumber}: ${column}は必須です。`);
     }
   }
@@ -146,23 +149,26 @@ function item(row, appId, record) {
 
 export function compileScenarioAuthoring(workbook) {
   const rows = (id) => activeRows(workbook[id]?.rows ?? []);
+  const warnings = [];
   const constants = {};
   const publicConstants = {};
   for (const row of rows("project_constants")) {
     const key = text(row, "key");
     if (!/^[a-z][a-z0-9_.-]*$/u.test(key) || Object.hasOwn(constants, key)) throw new Error(`project_constants!${row.__rowNumber}: keyが不正または重複です。`);
+    if (key === "search_agent.broken_link_tutorial_body") throw new Error("初回案内はassistant_messagesのtrigger・cond・hideで指定してください。");
+    if (key === "search_agent.broken_link_body") throw new Error("破損リンクの案内はassistant_messagesのtrigger=blocked_linkへ記述してください。");
     const exposure = text(row, "exposure");
     if (exposure !== "public" && exposure !== "private") throw new Error(`project_constants!${row.__rowNumber}: exposureはpublic/privateです。`);
     if (["client.runtime_revision", "client.public_id_revision", "device.lock_pin_length"].includes(key)) throw new Error(`${key}は自動生成される予約定数です。`);
     if (key === "device.lock_pin" && exposure === "public") throw new Error("固定PINはprivateにしてください。");
-    if (["search_agent.broken_link_tutorial_body", "search_agent.broken_link_body", "search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices"].includes(key) && exposure !== "public") {
+    if (["search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices"].includes(key) && exposure !== "public") {
       throw new Error(`${key}は初期画面で使う公開設定のため、exposureをpublicにしてください。`);
     }
     constants[key] = String(row.value ?? "");
     if (exposure === "public") publicConstants[key] = constants[key];
   }
   const value = (key, fallback = "") => constants[key] ?? fallback;
-  const required = ["project.id", "project.name", "device.os_name", "search_agent.name", "device.date", "device.time_label", "search_agent.start", "search_agent.broken_link_tutorial_body", "search_agent.broken_link_body"];
+  const required = ["project.id", "project.name", "device.os_name", "search_agent.name", "device.date", "device.time_label", "search_agent.start"];
   for (const key of required) if (!value(key)) throw new Error(`project_constants: 必須定数がありません: ${key}`);
   const stateVariables = {};
   const publicStateVariables = [];
@@ -172,6 +178,7 @@ export function compileScenarioAuthoring(workbook) {
     const initial = type === "boolean" ? booleanCell(row.initial, `state_vars.${id}.initial`)
       : type === "integer" ? integerCell(row, "initial", `state_vars.${id}`) : String(row.initial ?? "");
     stateVariables[id] = { type, initial, ...(type === "enum" ? { values: splitList(row.values) } : {}) };
+    if (type !== "enum" && text(row, "values")) warnings.push(`state_vars!${row.__rowNumber} (${id}): valuesはenum以外では使用しません。`);
     if (booleanCell(row.public, `state_vars.${id}.public`, false)) publicStateVariables.push(id);
   }
   const attachments = rows("attachments").map((row) => ({
@@ -186,8 +193,21 @@ export function compileScenarioAuthoring(workbook) {
     if (!attachment || attachment.type !== type) throw new Error(`素材参照が不正です: ${id} (${type})`);
     return id;
   }
+  function audioRecord(row, multiple = false) {
+    const ids = splitList(row.audio);
+    if (ids.includes("gen_audio:")) throw new Error(`${row.id}: gen_audio:の後ろに音声IDが必要です。`);
+    if (!multiple && ids.length > 1) throw new Error(`call_items.${row.id}: audioは一つだけ指定してください。`);
+    const parts = ids.map(id => id.startsWith("gen_audio:")
+      ? { kind: "generated", genAudioId: id.slice(10) }
+      : { kind: "audio", audioAttachmentId: asset(id, "audio") });
+    if (parts.length === 1) {
+      const { kind, ...record } = parts[0];
+      return record;
+    }
+    return parts.length ? { audioSegments: parts } : {};
+  }
   const apps = rows("home_items").map((row) => ({
-    id: text(row, "id"), label: text(row, "label"), icon: text(row, "icon"), accent: text(row, "accent"),
+    id: text(row, "id"), label: text(row, "label"), icon: text(row, "icon") || projectApps.find(app => app.id === text(row, "id"))?.icon || "", accent: text(row, "accent"),
     initialState: text(row, "initial") || "normal", cond: text(row, "cond"), search: searchTerms(row.search),
     ...optional(row, { repair_label: "repairLabel", badge_cond: "badgeCond" }),
     ...(text(row, "initial") && text(row, "initial") !== "normal" && !text(row, "repair_label") ? { repairLabel: "破損アプリ" } : {})
@@ -201,6 +221,22 @@ export function compileScenarioAuthoring(workbook) {
   talks.push({ id: "search_agent", kind: "search_agent", startSteps: splitList(value("search_agent.start")),
     inputVisible: booleanCell(value("search_agent.input_visible"), "search_agent.input_visible", true),
     inputEnabled: booleanCell(value("search_agent.input_enabled"), "search_agent.input_enabled", true) });
+  // 一覧を持たない鍵付き添付の管理先は、台本に明示された受信先から決める。
+  // 両アプリで使われても開錠資格は実際の表示履歴で確認するため、管理先は一つで足りる。
+  const attachmentAppIds = new Map();
+  const talkAppIds = new Map(talks.filter(talk => talk.kind !== "search_agent").map(talk => [talk.id, talk.appId]));
+  let currentTalkId = "";
+  for (const row of workbook.talk_blocks?.rows ?? []) {
+    const marker = parseTalkBlockComment(row);
+    if (marker.type === "part") currentTalkId = "";
+    else if (marker.type === "talk") currentTalkId = marker.value;
+    else if (marker.type === "message" && text(row, "attachment")) {
+      const appId = talkAppIds.get(currentTalkId);
+      const id = text(row, "attachment");
+      if (appId && !attachmentAppIds.has(id)) attachmentAppIds.set(id, appId);
+    }
+  }
+  const unusedAttachmentAppId = apps.find(app => app.id === "messages" || app.id === "chat")?.id;
   const contents = [];
   const photoDescriptions = {};
   const mediaLinks = [];
@@ -208,6 +244,11 @@ export function compileScenarioAuthoring(workbook) {
   for (const row of rows("photo_items")) {
     const image = text(row, "image"), audio = text(row, "audio"), video = text(row, "video");
     if (!image && !video) throw new Error(`photo_items.${row.id}: imageまたはvideoが必要です。`);
+    if (video && audio) {
+      // 再生に使わないセルでも参照誤りは隠さず、正常な残置は警告に留める。
+      asset(audio, "audio");
+      warnings.push(`photo_items!${row.__rowNumber} (${row.id}): video指定時は動画内の音声を使います。audioによる音声差替えは行いません。`);
+    }
     const record = { title: text(row, "title"), ...(image ? { imageAttachmentId: asset(image, "image") } : {}),
       ...(video ? { mediaKind: "video", videoAttachmentId: asset(video, "video") } : audio ? { mediaKind: "still_video", audioAttachmentId: asset(audio, "audio") } : {}),
       ...(text(row, "tags") ? { tags: splitList(row.tags) } : {}) };
@@ -219,16 +260,11 @@ export function compileScenarioAuthoring(workbook) {
   for (const row of rows("calendar_items")) contents.push(item(row, "calendar", Object.fromEntries(["title", "date", "time", "place", "memo"].map((key) => [key, row[key] ?? ""]))));
   for (const row of rows("call_items")) contents.push(item(row, "phone", {
     name: row.name ?? "", kind: text(row, "kind"), at: row.at ?? "", durationLabel: row.duration ?? "",
-    ...(text(row, "audio") ? { audioAttachmentId: asset(text(row, "audio"), "audio") } : {}),
-    ...optional(row, { gen_audio: "genAudioId" }), ...(text(row, "transcript") ? { transcript: jsonCell(row, "transcript") } : {})
+    ...audioRecord(row), ...(text(row, "transcript") ? { transcript: jsonCell(row, "transcript") } : {})
   }));
   for (const row of rows("radio_items")) {
-    const audio = splitList(row.audio);
-    const record = { programTitle: row.title ?? "", ...optional(row, { gen_audio: "genAudioId", playback_cond: "playbackCond", playback_disabled_label: "playbackDisabledLabel", form_disabled_cond: "formDisabledCond" }),
+    const record = { programTitle: row.title ?? "", ...audioRecord(row, true), ...optional(row, { playback_cond: "playbackCond", playback_disabled_label: "playbackDisabledLabel", form_disabled_cond: "formDisabledCond" }),
       ...(text(row, "transcript") ? { transcript: jsonCell(row, "transcript") } : {}) };
-    if (audio.length === 1 && !audio[0].startsWith("gen_audio:")) record.audioAttachmentId = asset(audio[0], "audio");
-    else if (audio.length) record.audioSegments = audio.map((id) => id.startsWith("gen_audio:")
-      ? { kind: "generated", genAudioId: id.slice(10) } : { kind: "audio", audioAttachmentId: asset(id, "audio") });
     if (text(row, "cues")) record.audioCues = normalizeRadioCues(row).map(({ id, atMs }) => ({ id, atMs }));
     if (text(row, "form_kind")) {
       if (text(row, "form_kind") !== "html") throw new Error(`radio_items.${row.id}: form_kindはhtmlです。`);
@@ -259,7 +295,10 @@ export function compileScenarioAuthoring(workbook) {
     if (!attachment && !projectContent) throw new Error(`passwords.${id}: lock=passwordの添付、またはproject_itemsの作品アプリのコンテンツが必要です。`);
     if (!content) {
       // item行を持たない添付も、非公開の開封データとして保持する。一覧には出さない。
-      content = { id, appId: attachment.searchApp || "messages", initialState: "hidden", cond: "", search: [], record: { attachment: attachment.id } };
+      // 未参照の定義は配置済みの会話アプリへ置く。検索先を所有権へ流用しない。
+      const appId = attachmentAppIds.get(attachment.id) ?? unusedAttachmentAppId;
+      if (!appId) throw new Error(`passwords.${id}: 添付の受信先となるmessages/chatアプリがありません。home_itemsに使用する会話アプリを定義してください。`);
+      content = { id, appId, initialState: "hidden", cond: "", search: [], record: { attachment: attachment.id } };
       contents.push(content);
     }
     content.record.unlockCode = password;
@@ -272,8 +311,11 @@ export function compileScenarioAuthoring(workbook) {
     const handler = text(row, "id") || `hook_${createHash("sha256").update(JSON.stringify([text(row, "event"), text(row, "target"), text(row, "cond"), script])).digest("hex").slice(0, 16)}`;
     if (Object.hasOwn(hookScripts, handler) && hookScripts[handler] !== script) throw new Error(`hooks: idに異なるscriptがあります: ${handler}`);
     hookScripts[handler] = script;
+    const dependency = hookLlmDependencies(script);
+    const needsAi = booleanCell(row.needs_ai, `hooks.${handler}.needs_ai`, dependency.required || dependency.unknown);
+    if (!needsAi && (dependency.required || dependency.unknown)) warnings.push(`hooks!${row.__rowNumber} (${handler}): needs_ai=falseの実行経路は静的に確認できません。AIなしの経路・fallbackを制作テストで確認してください。`);
     return { event: text(row, "event"), target: text(row, "target"), cond: text(row, "cond"), handler,
-      llm: booleanCell(row.llm, `hooks.${handler}.llm`, /\bllm\.(extract|screen|match)\s*\(/u.test(script)) };
+      needsAi };
   });
   const method = value("device.lock_method", "none");
   const talkClock = value("talk.clock", "real");
@@ -294,9 +336,9 @@ export function compileScenarioAuthoring(workbook) {
     notifications: rows("notifications").map((row) => ({ id: text(row, "id"), appId: text(row, "app"), title: row.title ?? "", body: row.body ?? "", cond: text(row, "cond"),
       ...(talks.some((talk) => talk.id === text(row, "target")) ? { targetTalkId: text(row, "target") } : { targetContentId: text(row, "target") }) })),
     assistantMessages: rows("assistant_messages").map((row) => ({
-      id: text(row, "id"), surface: text(row, "surface"), body: row.body ?? "", weight: text(row, "weight") ? Number(row.weight) : 1, cond: text(row, "cond"),
+      id: text(row, "id"), trigger: text(row, "trigger"), body: row.body ?? "", weight: text(row, "weight") ? Number(row.weight) : 1, cond: text(row, "cond"),
       ...optional(row, { agent_action: "agentAction" }),
-      ...(booleanCell(row.sticky, `assistant_messages!${row.__rowNumber}: sticky`, false) ? { sticky: true } : {})
+      hide: text(row, "hide") || "auto"
     })),
     generatedAudio: rows("gen_audio").map((row) => ({ id: text(row, "id"), title: row.title ?? "", provider: text(row, "provider"), ...optional(row, { fallback: "fallbackAttachmentId" }) })),
     incomingCalls: rows("incoming_calls").map((row) => ({ id: text(row, "id"), name: row.name ?? "", cond: text(row, "cond"), ...(text(row, "audio") ? { audioAttachmentId: asset(text(row, "audio"), "audio") } : {}), ...(text(row, "transcript") ? { transcript: jsonCell(row, "transcript") } : {}) })),
@@ -324,7 +366,7 @@ export function compileScenarioAuthoring(workbook) {
     }
   }
   source.partIds = [...new Set(["base", ...Object.values(workbook).flatMap(sheet => sheet.rows.map(row => row.__part ?? "base"))])];
-  return { source, hookScripts };
+  return { source, hookScripts, warnings };
 }
 
 export function loadScenarioAuthoring(scenarioDir) {

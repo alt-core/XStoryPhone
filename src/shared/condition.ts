@@ -57,8 +57,7 @@ export function validateStateAssignments(
   const errors = validateSetStatements(assignments, definitions);
   const parsed = parseSetStatements(assignments);
   for (const statement of parsed.statements) {
-    if (typeof statement.value !== "string") continue;
-    const reference = /^\$extract\.([A-Za-z_][A-Za-z0-9_]*)$/u.exec(statement.value)?.[1];
+    const reference = statement.extractId;
     if (reference && !matchIds.has(reference)) {
       errors.push(`setが未定義のmatch値を参照しています: ${reference}`);
     }

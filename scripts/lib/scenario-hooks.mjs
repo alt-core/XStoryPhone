@@ -14,6 +14,30 @@ function literalProperties(node) {
   return Object.fromEntries(entries);
 }
 
+// コメント・文字列は呼出しとみなさない。変数やspreadの中身までは推測しない。
+export function hookLlmDependencies(script) {
+  const parsed = ts.createSourceFile("hook.ts", `function hook(){${script}\n}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let required = false;
+  let unknown = false;
+  function memberPath(node) {
+    if (ts.isIdentifier(node)) return node.text;
+    if (ts.isPropertyAccessExpression(node)) return `${memberPath(node.expression)}.${node.name.text}`;
+    if (ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)) return `${memberPath(node.expression)}.${node.argumentExpression.text}`;
+    return "";
+  }
+  function visit(node) {
+    if (ts.isCallExpression(node) && /^(?:context\.)?llm\.(extract|screen|match)$/u.test(memberPath(node.expression))) {
+      const properties = literalProperties(node.arguments[1]);
+      if (!properties) unknown = true;
+      else if (!properties.fallback || (ts.isIdentifier(properties.fallback) && properties.fallback.text === "undefined")) required = true;
+      else if (!ts.isObjectLiteralExpression(properties.fallback)) unknown = true;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  return { required, unknown };
+}
+
 function validateLiteralHookSchema(api, options) {
   if (api !== "llm.extract" && api !== "llm.screen") return;
   const properties = literalProperties(options);

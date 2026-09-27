@@ -9,7 +9,7 @@ test("hookの同じsnapshot再評価は時刻が違っても同じevent IDを生
   t.mock.timers.enable({ apis: ["Date"], now: at });
   const playerId = "hook-id-snapshot";
   const state = (await reconcileScenarioState(createInitialPlayerState(), playerId)).state;
-  const hook = { event: "test_stable_hook_id", target: "", handler: "test_stable_hook_id", cond: "", llm: false };
+  const hook = { event: "test_stable_hook_id", target: "", handler: "test_stable_hook_id", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers[hook.handler] = (context) => context.talk.addBlock("guide", "message_reply", { mode: "stay" });
   try {
@@ -34,7 +34,7 @@ test("空blockの同commit追加もmessage seqに頼らず異なるevent IDを�
   const state = (await reconcileScenarioState(createInitialPlayerState(), playerId)).state;
   const block = workerScenario.talkBlocks.find((item) => item.id === "guide::message_test_ack");
   const savedMessages = block.messages;
-  const hook = { event: "test_empty_hook_id", target: "", handler: "test_empty_hook_id", cond: "", llm: false };
+  const hook = { event: "test_empty_hook_id", target: "", handler: "test_empty_hook_id", cond: "", needsAi: false };
   block.messages = [];
   workerScenario.hooks.push(hook);
   scenarioHookHandlers[hook.handler] = (context) => {

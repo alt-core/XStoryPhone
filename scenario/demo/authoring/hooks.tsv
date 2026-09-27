@@ -1,4 +1,4 @@
-comment	event	target	cond	script	notes	id	llm
+comment	event	target	cond	script	notes	id	needs_ai
 	session_started		!session_started	"context.state.set(""session_started"", true);
 context.todo.add(""find_old_note"");"		mark_session_started	
 	content_repaired	old_note	!old_note_opened	"context.state.set(""old_note_opened"", true);

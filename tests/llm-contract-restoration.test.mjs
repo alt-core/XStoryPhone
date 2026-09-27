@@ -141,7 +141,7 @@ test("regex採択後のAI抽出も観測と監修へ同じhashを返す", async 
 
 test("hookの5要求を完走でき、6要求目は通信前に停止しeffectを適用しない", async () => {
   const id = "test_llm_budget";
-  const hook = { event: id, target: "", handler: id, cond: "", llm: true };
+  const hook = { event: id, target: "", handler: id, cond: "", needsAi: true };
   workerScenario.hooks.push(hook);
   const initial = createInitialPlayerState();
   const original = structuredClone(initial);
@@ -261,7 +261,7 @@ test("hook cache keyは実model・reasoning・provider有無に対応し、hash�
 
 test("実API境界でcacheは設定変更・期限を区別し、書込後の掃除失敗でも進行する", async () => {
   const id = "test_llm_cached_event";
-  const hook = { event: id, target: "", handler: id, cond: "", llm: true };
+  const hook = { event: id, target: "", handler: id, cond: "", needsAi: true };
   const originalMode = workerScenario.playerMode;
   const originalLlm = workerScenario.features.llm;
   const originalFetch = globalThis.fetch;

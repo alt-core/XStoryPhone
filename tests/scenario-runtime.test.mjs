@@ -107,7 +107,7 @@ test("hook condの逐次guardはfalse→trueとtrue→falseを反映し、過ぎ
     { handler: "trace", cond: "guard" },
     { handler: "off", cond: "guard" },
     { handler: "trace", cond: "guard" }
-  ].map((row, index) => ({ ...row, event: "guard_probe", target: "", order: index, llm: false }));
+  ].map((row, index) => ({ ...row, event: "guard_probe", target: "", order: index, needsAi: false }));
   const trace = [];
   const runtime = createScenarioRuntime(scenario);
   const hooks = createScenarioHooksRuntime(runtime, {

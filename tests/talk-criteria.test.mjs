@@ -2,7 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { answerCandidates, criteriaMatches, normalizeAnswer, parseTalkExtraction, regexExtract } from "../src/shared/talkCriteria.ts";
 import { parseSetStatements } from "../src/shared/setExpression.ts";
+import { applyStateAssignments, evaluateCondition, validateStateAssignments } from "../src/shared/condition.ts";
+import { setExtractionIds, splitSetStatements } from "../src/shared/setExpression.ts";
 import { createAnswerDeriver } from "../src/shared/staticAnswer.ts";
+
+test("setとcondは引用符とescapeを同じ意味で読み、文字列内の区切りや抽出表記を再解釈しない", () => {
+  const defs = new Map([["label", {type:"string"}], ["count", {type:"integer"}]]);
+  for (const literal of [String.raw`"A\"B"`, String.raw`'A\'B'`, String.raw`"A\\B"`, '"A;B"', '"$extract.name"']) {
+    const input = `label = ${literal}; count += 1`;
+    const assignments = splitSetStatements(input);
+    assert.equal(assignments.length, 2, input);
+    assert.deepEqual(validateStateAssignments(assignments, defs), []);
+    const values = applyStateAssignments({label:"",count:0},assignments,{},defs);
+    assert.equal(evaluateCondition(`label == ${literal}`,values),true,literal);
+    assert.equal(values.count,1);
+    assert.deepEqual(setExtractionIds(assignments),[]);
+  }
+  assert.deepEqual(setExtractionIds(['label = "$extract.name"', 'label = $extract.name']), ['name']);
+  assert.equal(applyStateAssignments({label:"",count:0}, ['label = $extract.name'], {name:"抽出値"}, defs).label,"抽出値");
+});
 
 test("候補一覧は部分一致と全文一致を混ぜ、NFKC・前後空白・大小だけを揃える", () => {
   const text = '調査結果\n資料を見せて\n"鍵"\n"ＡＢＣ"';

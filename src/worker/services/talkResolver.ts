@@ -2,6 +2,7 @@ import { resolveTalkRule, type SemanticRuleSelector, type TalkReviewSelection } 
 import { renderTemplate, requireTemplateValues } from "../../shared/condition.ts";
 import type { ScenarioTalk, TalkRule } from "../../shared/scenario.ts";
 import { parseTalkExtraction, regexExtract } from "../../shared/talkCriteria.ts";
+import { setExtractionIds } from "../../shared/setExpression.ts";
 import { createStructuredOutputProvider, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
 import { extractTalkRuleMatch, semanticRuleSelector, typesafeRuleSelector, type TalkSelectorContext } from "./conversationLlm.ts";
 
@@ -92,7 +93,7 @@ export async function resolveScenarioTalkRule(input: ScenarioTalkRuleInput & {
   const extraction = parseTalkExtraction(selection.rule.match);
   if (extraction.kind === "regex") {
     const values = regexExtract(selection.rule.match, input.playerInput);
-    const required = selection.rule.set.flatMap(update => [...update.matchAll(/\$extract\.([a-zA-Z_][a-zA-Z0-9_]*)/gu)].map(match => match[1]));
+    const required = setExtractionIds(selection.rule.set);
     if (values && required.every(id => typeof values[id] === "string")) return { ...selection, reviewSelection, matchGroups: values };
     return { ok: true as const, rule: selection.defaultRule, defaultRule: selection.defaultRule, source: "default" as const,
       reviewSelection: { ...reviewSelection, accepted: false, finalRuleId: selection.defaultRule.id, fallbackReason: "extraction_no_match" }, matchGroups: {} };

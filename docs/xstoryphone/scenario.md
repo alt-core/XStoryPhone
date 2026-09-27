@@ -79,7 +79,7 @@ server/browser/staticで同じ規則を使います。時刻欄のない検索AI
 
 固定PINは4〜8桁の数字文字列です。Sheetで先頭ゼロを落とさず文字列として保持してください。正答はクライアントへ出さず、server/browserではAPIで、staticでは部分hashと回答JSONで判定します。入力画面の順序と保存方式は[プレイヤー進行の保存モード](player-modes.md#プレイヤーパスコードとロック画面)を参照してください。
 
-破損リンク案内の`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`もこの表で制作します。必須定数と初期画面の値はデモ表を基に編集し、`client.*`と`device.lock_pin_length`は自動生成されるため書きません。
+破損リンクを含む検索ナビの操作案内は`assistant_messages`で制作します。必須定数と初期画面の値はデモ表を基に編集し、`client.*`と`device.lock_pin_length`は自動生成されるため書きません。
 
 ## 初期UIの画像と告知
 
@@ -151,13 +151,46 @@ server/browser/staticで同じ規則を使います。時刻欄のない検索AI
 
 会話で添付する場合はtalk_blocksのattachmentに同じIDを書きます。attachmentsのcontentは対応するコンテンツID、posterは画像attachment IDです。画像・音声・動画とアルバム項目の対応は生成時に作られ、会話内メディアからアルバムへ移動できます。still_videoと実動画の両方をメッセージ・チャットへ添付できます。
 
+添付がアルバム項目の主メディアとして一意に対応するときは、アルバムの行先を重ねて記入する必要はありません。主メディアはvideo、audio、imageの順に決まり、そのIDを主メディアとして参照するphoto_itemsが1件なら、ビルド時に内部のalbumContentIdを生成します。会話上で表示されたメディアは、表示観測処理を通じてhidden/repairableのアルバム項目へ登録されます。条件やpartの取得状態、親アプリの利用条件は変更しません。
+
+attachments.contentは関連コンテンツIDです。アルバム項目を指定した場合はその行先を優先しますが、メモ等の別のコンテンツを指定した場合は、それをアルバムの行先だと解釈しません。関連コンテンツとアルバムの行先は内部で分け、作者のcontentを書き換えたり、同じ情報を別のTSV列へ要求したりしません。
+
+| attachments.contentの指定 | 操作上の意味 |
+|---|---|
+| lock=passwordあり | passwordの判定・開錠対象 |
+| 非鍵付きでphotos項目 | 関連先と、明示したアルバム移動先 |
+| 非鍵付きでnotes等 | 関連コンテンツ。これだけで画像タップをメモへ飛ばす指定にはならない。search/search_appがあれば添付検索の対象にも使う |
+| 空欄 | 主素材から一意に決まるアルバム先だけを補完する |
+
+同じ主メディアを複数項目が参照し行先が決まらない場合は、警告し、添付からの自動登録・移動を行いません。素材の再利用自体をビルドエラーにはしません。また、静止画＋音声の静止画側や動画のポスターからは対応を補完しません。鍵付き添付のcontentは、開錠対象として引き続き明示します。
+
+attachments.contentでアルバム項目を明示した場合は、会話内の画像・音声・動画のタップもその項目へ向かいます。未表示・未修復などで開けない場合、同じ素材を使う別項目へは差し替えません。
+
+疑似動画は画像＋音声で一つのコンテンツです。会話へ添付する場合はtalk_blocks.attachmentにaudioの添付IDを指定し、そのattachments.posterに画像の添付IDを指定します。アルバムから送信する場合も画像＋音声をまとめて扱います。表紙画像だけから動画を登録したり、動画へ移動したりはしません。画像添付のcontentに疑似動画・実動画を指定する記述は制作エラーにします。
+
+行先はビルド時に確定し、現在利用可能な先頭項目へは差し替えません。表紙画像やURLの一致も行先の根拠には使いません。
+
+photo_itemsでvideoとaudioを併記しても、audioで動画の音声を差し替える機能はありません。無視されるaudioは制作時に警告し、存在しない素材IDや異なるtypeの指定はエラーにします。
+
 鍵付き添付はattachmentsにlock=passwordとcontentを指定し、`passwords`にcontent、引用符付きpassword候補、load_partを書きます。候補と複数partはセル内改行で列挙します。load_part空欄は追加取得なしです。document型はbodyが必要です。server/browserの判定はAPI側で行い、staticは[回答JSON方式](static.md)を使います。通常の一覧項目を持たない鍵付き添付も定義できます。
+
+attachments.search_appは検索結果を開くアプリだけの設定です。添付型passwordの開錠資格は、実際に会話でその添付を表示済みかと表示条件で確認し、検索先では制限しません。作品アプリ型passwordは当該contentの利用条件で確認します。
+
+attachments.condは添付検索の候補条件です。会話に書いた添付メディア自体の表示を止める条件ではありません。到達前の本文・素材はtalkやコンテンツの条件、partで制限してください。
+
+鍵付きの画像・音声・動画・文書は、メッセージとチャットの両方で扱えます。解錠後のメディアは通常添付と同じ部品で表示・再生し、アルバムの対応先があれば移動できます。対応先はcontentによるアルバム項目の明示、または主素材を参照するphoto_itemsが一意であることから決めます。対応がない場合は会話内で表示・再生します。表紙だけを動画本体へ結び付けません。
+
+添付型passwordでは一つのcontentに一つの添付定義を対応させます。同じ添付を複数発話で再利用することや、別contentに同じ正答を設定することはできます。異なる添付を同じ開錠contentへ重複定義することは、表示の取り違えを防ぐため制作エラーにします。
+
+対応先のアルバム項目は解錠成功時に登録されます。受信・表示観測だけでは登録せず、条件や未取得part、親アプリの利用条件も迂回しません。対応先が未取得partなら暗黙には読み込みません。同時に登録するにはpasswords.load_partへ必要なpartを指定してください。アルバム項目のcondや親アプリの条件を満たしていなければ、満たすまでアルバムには表示されず、画像タップによる移動もできません。
+
+自動登録だけではcontent_repaired hookを追加発火しません。開錠の演出はcontent_unlocked、項目を開く操作の演出はcontent_openedで記述します。
 
 `passwords.content`には、登録済み作品アプリの`project_items.id`も指定できます。この場合は添付行なしで、[Stageの入力装置から解錠](extensions.md#stageの入力装置からpasswordを判定する)できます。対象は条件を満たし、取得済み・利用可能であることが必要です。正答や未取得本文を公開recordへ記述しないでください。
 
 ### 電話の字幕と書き起こし
 
-`incoming_calls`にid/name/audioを、`call_items`に履歴のid/name/kind/at/duration/audioを書きます。audioはaudio型attachmentのIDです。着信と履歴は独立した定義です。
+`incoming_calls`にid/name/audioを、`call_items`に履歴のid/name/kind/at/duration/audioを書きます。audioはaudio型attachmentのIDです。履歴のcall_itemsでは`gen_audio:ID`も指定できますが、どちらも一つだけです。実着信のincoming_callsは固定音声のみで、着信と履歴は独立した定義です。
 
 両表の任意のtranscriptセルへ、次のJSON配列を記述します。これは1セル内の字幕データであり、別のシナリオJSON原本ではありません。
 
@@ -208,7 +241,7 @@ player_input =~ /^(はい|了解)/u
 
 表示条件は状態変数を更新した次の評価から反映されます。TSVの `set` は `chapter = "ending"` のように書きます。integer変数だけは整数literalによる`count += 1`と`count -= 1`も使えます。右辺の式・状態参照・`++`は使えません。`extract` で抽出した文字列は、string変数に限り `player_name = $extract.name` で代入できます。
 
-作品固有Stageへ公開する必要がある状態だけは、`state_vars`のpublic列をtrueにします。公開値はPlayerStateの`projectState`へ入り、空欄またはfalseの状態変数は返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。ID重複や型不正はシナリオ検証で拒否されます。
+作品固有Stageへ公開する必要がある状態だけは、`state_vars`のpublic列をtrueにします。公開値はPlayerStateの`projectState`へ入り、空欄またはfalseの状態変数は返りません。正解、未到達本文、素材URLなどは公開対象にしないでください。ID重複や型不正はシナリオ検証で拒否されます。hookの対象として共有するアプリ・コンテンツ・talkのIDも相互に重複できません。人物や添付等の別名前空間、talkごとのblockスコープは別に扱います。
 
 制作中の既存プレイデータを開いた場合も、あとから追加した状態変数は宣言した既定値として評価され、talkは利用可能になった時点で作られます。一度消したToDoや通知は、シナリオ定義を再生成しても勝手に復活しません。
 
@@ -245,7 +278,9 @@ transcriptセルに着信字幕と同じJSON配列を指定すると、ラジオ
 
 `cues`セルは、cue IDをkey、秒数または`MM:SS`/`HH:MM:SS`をvalueにしたJSON objectです。例えば`{"notice":"00:25","finish":40}`と書きます。build時に時刻順へ並べ、ミリ秒へ正規化します。クライアントには順番と時刻だけを渡し、到達通知を受けたサーバーがcueIdとcueTarget（`content_id:cue_name`）を復元してhookへ渡します。hookはeventをaudio_cue_reached、targetを`content_id:cue_name`とし、`event.cueId / cueTarget / cueIndex`を確認します。
 
-固定音声はaudioセルへaudio attachmentのIDを書きます。複数音声をつなぐ場合は改行区切りで列挙し、生成音声は`gen_audio:音声ID`と書きます。単独の生成音声を使うgen_audio列もあります。定義はgen_audio表のid/title/providerで行い、状態と再生URLはラジオ項目と着信履歴のどちらでもサーバー応答時に解決されます。
+固定音声はaudioセルへaudio attachmentのID、生成音声は`gen_audio:音声ID`を書きます。ラジオだけは、複数音声を改行区切りで順番に列挙できます。生成音声の定義はgen_audio表のid/title/providerで行い、状態と再生URLはラジオ項目と着信履歴のどちらでもサーバー応答時に解決されます。
+
+radio_items・call_itemsの再生指定はaudio列に統一されています。生成失敗時の代替音声はgen_audio表のfallbackへaudio attachment IDを書いてください。再生列の固定音声を暗黙の代替にしません。音声なしの投稿フォーム専用項目は引き続き定義できます。
 
 ## チャット再認証
 
@@ -261,13 +296,43 @@ project_constantsの`chat_auth.cond`を満たす間、チャットは再認証�
 
 作品固有アプリはコード側のregistryと画面componentを登録し、home_itemsへアプリを加え、`project_items`へid/app/recordを書きます。recordはそのアプリ固有のJSON objectを1セルに記述する場所です（例: `{"title":"資料","body":"本文"}`）。標準アプリの本文を別JSON原本へ戻すための欄ではありません。registryの検証と公開投影を通し、未修復のrecordをクライアントへ先に出しません。詳細は[作品固有の拡張](extensions.md)を参照してください。
 
+作品固有アプリのアイコンはregistryで定義するため、home_items.iconは空欄で構いません。標準アプリのiconは従来どおりTSVで指定します。
+
 ## 検索AIの吹き出し
 
-`assistant_messages` は指定surfaceとcondに応じた案内を吹き出しで表示します。吹き出しをタップすると検索AIの会話を開き、会話を閉じたら吹き出しを消してナビを端へ引っ込めます。この非表示はその画面だけの一時状態で、別アプリへ移動して戻ると条件に合う案内を再表示できます。吹き出しの文言を会話履歴へ自動追加する機能ではありません。
+`assistant_messages`へid/trigger/bodyと任意のcond/weight/agent_action/hideを書きます。triggerは案内を表示する契機です。
 
-選ばれた案内をタップ操作で消したくない場合は、そのメッセージの `sticky` 列を `true` にします。検索AIの会話を開いている間は吹き出しを隠し、会話を閉じたら再表示します。背景タップでも消しません。空欄は `false` です。優先表示の指定ではないため、既存のweightによる選択や一時案内による置き換えは変わらず、condを満たさなくなれば表示対象から外れます。
+| trigger | 契機と選択順 |
+|---|---|
+| screen:home / screen:アプリID | ホーム／アプリを表示中の案内 |
+| app_unavailable:アプリID | アプリ自体が利用不可。個別行→app_unavailable→blocked_link |
+| blocked_link:アプリID | アプリ内の項目が利用不可。個別行→blocked_link |
+| search_open_failed | 検索ナビ内で対象を開けなかった時の一時発話。他triggerへはfallbackしない |
+| album_added | 受信メディアをアルバムへ登録した案内 |
+| repaired:アプリID / repaired | アプリ・コンテンツ・talk全体の修復完了。個別行→共通行 |
+| history_repaired:アプリID / history_repaired | 初期履歴の一部の修復完了。個別行→共通行 |
 
-通常の案内は背景タップでも引っ込みます。ただし、ホームの初回破損リンク案内は操作の手がかりを残すため、背景タップでは消しません。会話を開いて閉じれば、ほかの吹き出しと同様に引っ込みます。
+アプリIDは操作対象の所属先です。通知自体は現在画面へ表示します。条件成立済みの候補から、最初に候補がある段階だけをweightで抽選します。操作への返答と通常のscreen案内は混ぜません。
+
+weightは0以上の有限数で、空欄は1です。0の行は抽選対象外となり、その段階に正のweightの候補がなければ共通行へ進みます。必須の共通案内には、base・cond空欄・正のweightの行を少なくとも一つ用意してください。weightは文面の取得条件ではなく、非公開にする条件にはcondやpartを使います。
+
+blocked_link、search_open_failed、album_added、repaired、history_repairedには、それぞれbase・cond空欄の共通行が必要です。デモ表を基に口調やhideを編集できます。典型的なアプリ利用不可の案内はtrigger=app_unavailable:messages、cond空欄の一行で書け、表示のためだけのhookや修復フラグは不要です。
+
+操作案内は操作時点の取得済み候補から選び、hookの返答を待ちません。これから送るhookが立てるフラグは、その操作の即時案内の条件には使えません。開封・修復の成否を通信で確認する操作は、結果が確定してから通知します。未取得partや条件不成立の候補は先行配布しません。
+
+吹き出しをタップすると検索AIの会話を開き、閉じるとその表示機会を隠して端へ引っ込めます。別画面から戻れば通常案内を再表示でき、操作案内は同じ操作を繰り返すたびに新しい表示機会になります。パネルを開いている間に届いた新しい吹き出しは、閉じる操作だけでは消しません。通知をDBへ保存する機能ではありません。
+
+隠し方はhide列で指定します。本文・ID・特定アプリ名による特別扱いはありません。
+
+| hide | 吹き出しの動作 |
+|---|---|
+| auto／空欄 | 背景タップ、または会話を開いて閉じると隠す |
+| close | 背景タップでは消さず、会話を開いて閉じると隠す |
+| never | 上記の操作では隠さない。画面遷移や新しい通知への交代は妨げない |
+
+いずれも会話を開いている間は吹き出しを隠します。hideはweightや候補の条件を変更しません。通常のscreen案内は画面・条件に従い、閉じた同IDは同画面のpollingで復活しません。操作案内は一度選んだ文言を後からのpollingで再抽選しません。
+
+search_open_failedだけは、パネルを閉じずに会話内の一時発話として表示します。hideを適用せず、永続talk履歴へは追加しません。既に検索中のプレイヤーへ「検索してください」と促さないよう、blocked_linkの台詞を流用しません。
 
 ## hook
 
@@ -278,7 +343,13 @@ state.set("clue_reported", true);
 talk.addBlock("guide", "received", { mode: "stay" });
 ```
 
-セル内ではstate/talk等を直接使えるほか、`context.state`や`context.talk`も使えます。eventは第2引数として参照できます。scriptは型付きhandlerへ生成され、構文検査と`npm run check`の型検査を受けます。await/async/Promise/import/export/fetchを使う非同期scriptは書けません。LLMを使うhookはllm列で明示でき、未指定なら対応するllm呼出しから判定します。
+セル内ではstate/talk等を直接使えるほか、`context.state`や`context.talk`も使えます。eventは第2引数として参照できます。scriptは型付きhandlerへ生成され、構文検査と`npm run check`の型検査を受けます。await/async/Promise/import/export/fetchを使う非同期scriptは書けません。
+
+needs_ai列は「このhookにAIが必須か」の依存宣言です。trueはAI無効環境へのビルドを拒否し、falseは作者がAIなしの実行経路を用意していることを表します。実行時のAI使用禁止ではありません。実際のAI利用可否は作品全体のfeatures.llmで決まります。
+
+空欄なら直接のllm.extract/screen/match呼出しを調べ、コメント・文字列は除外します。全呼出しにオブジェクトでfallbackを直接指定した場合はfalse相当です。変数・関数alias・任意の条件分岐を完全に解析せず、明示falseと推測が食い違う場合は警告に留めます。AIなしでfallbackのない呼出しへ実際に到達した場合は、既存のサービスエラーになります。旧llm列はneeds_aiへ置換し、併用しないでください。
+
+標準eventのcontentId・attemptedContentId・talkId・attachmentId・callId・formIdは、公開IDからTSVのIDへ変換してhookへ渡します。`event.fields.attemptedContentId`は開けなかった対象、blocked_content_link_openedの`event.contentId`は対象アプリです。作品独自のfieldをIDらしい文字列として推測変換しません。
 
 利用できるイベントは次の通りです。
 
@@ -294,6 +365,8 @@ talk.addBlock("guide", "received", { mode: "stay" });
 - `talk_turn_completed`
 - `form_submitted`
 - `scheduled_event`
+
+target空欄で全対象にできるeventでは、`*`も同じ意味です。message_link_opened・form_submitted・scheduled_eventには具体的なtargetを指定してください。blocked_content_link_openedとpart_loadedは個別targetか`*`を指定します。
 
 このほか、作品Stageや予約処理から呼ぶ作品固有event IDを定義できます。廃止済みのtalk_sentとscenario_eventは使用できません。
 

@@ -415,7 +415,7 @@ export function createQaPlayerState(options: QaPlayerStateOptions = {}): PlayerS
     todos: visibleDeviceState.todos,
     assistantMessages: [{
       id: "qa-assistant",
-      surface: "home",
+      trigger: "screen:home",
       body: "検索エージェントの表示確認です。",
       weight: 1,
       agentAction: "hi"

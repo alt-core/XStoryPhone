@@ -77,11 +77,11 @@ test("TSVの表・列・素材参照を欠落させても成功扱いにしな�
 
 test("制作者定数を変更でき、private定数・正解・本文を初期clientへ配らない", () => {
   const { source } = loadScenarioAuthoring("scenario/demo");
-  source.projectConstants["search_agent.broken_link_body"] = "別の口調の修復案内";
+  source.assistantMessages.find(item => item.trigger === "blocked_link").body = "別の口調の修復案内";
   source.projectConstants["private.fixture"] = "未到達の固有ヒント";
   source.publicProjectConstants["public.fixture"] = "公開する短いラベル";
   const result = loadAndValidateScenario({ source });
-  assert.equal(result.projectConstants["searchAgent.broken_link_body"], "別の口調の修復案内");
+  assert.equal(result.worker.assistantMessages.find(item => item.trigger === "blocked_link").body, "別の口調の修復案内");
   assert.equal(result.projectConstants["public.fixture"], "公開する短いラベル");
   assert.equal(JSON.stringify(result.projectConstants).includes("未到達の固有ヒント"), false);
   assert.deepEqual(result.deviceState.notes, []);

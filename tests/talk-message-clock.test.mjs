@@ -43,9 +43,9 @@ test("空blockとrepeat blockのhookも別requestへ展開末尾の水位を渡�
   repeatBlock.messages = [originalRepeatMessages[0], { ...originalRepeatMessages[0], body: "repeatの二件目" }];
   state.talks.guide.blockDisplayCounts["guide::message_reply"] = 1;
   const hooks = [
-    { event: "test_clock_empty", target: "", handler: "test_clock_empty", cond: "", llm: false },
-    { event: "test_clock_repeat", target: "", handler: "test_clock_repeat", cond: "", llm: false },
-    { event: "test_clock_after_repeat", target: "", handler: "test_clock_after_repeat", cond: "", llm: false }
+    { event: "test_clock_empty", target: "", handler: "test_clock_empty", cond: "", needsAi: false },
+    { event: "test_clock_repeat", target: "", handler: "test_clock_repeat", cond: "", needsAi: false },
+    { event: "test_clock_after_repeat", target: "", handler: "test_clock_after_repeat", cond: "", needsAi: false }
   ];
   workerScenario.hooks.push(...hooks);
   scenarioHookHandlers.test_clock_empty = (context) => context.talk.addBlock("guide", "message_test_ack", { mode: "stay" });

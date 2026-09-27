@@ -12,12 +12,8 @@ export const demoProjectConstantsGenerated = {
   "device.wallpaper_url": "/demo/wallpaper.svg",
   "player.mode": "browser",
   "device.lock_method": "none",
-  "search_agent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
-  "search_agent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
   "device.lock_pin_length": 0,
   "player.access_code": "none",
   "talk.clock": "real",
-  "searchAgent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
-  "searchAgent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
-  "client.runtime_revision": "client_a9c27b231a6438c6"
+  "client.runtime_revision": "client_dec202782c857677"
 } as const;

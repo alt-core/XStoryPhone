@@ -115,6 +115,14 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
   function lockedContentPassword(contentId: string) {
     return workerScenario.lockedContentPasswords.find((item) => item.contentId === contentId);
   }
+  function unlockedAlbumContentIds(contentId: string) {
+    // 通常の添付表示観測からは登録しない。正答確認・part取得後だけ呼ぶ。
+    return unique(workerScenario.attachments.flatMap(attachment => {
+      if (attachment.lock !== "password" || attachment.content !== contentId || !attachment.albumContentId) return [];
+      const photo = contentByInternalId(attachment.albumContentId);
+      return photo?.appId === "photos" && !photo.unavailable ? [photo.id] : [];
+    }));
+  }
   function resolveTalkAttachment(attachmentId: string): ScenarioMessageAttachment | null {
     const attachment = attachmentsById.get(attachmentId);
     if (!attachment)
@@ -122,11 +130,21 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     if (attachment.lock === "password" && attachment.content) {
       return { kind: "locked", contentId: attachment.content, locked: true, ...(attachment.title ? { title: attachment.title } : {}) };
     }
+    return mediaForAttachment(attachment);
+  }
+  function mediaForAttachment(attachment: (typeof workerScenario.attachments)[number]): Exclude<ScenarioMessageAttachment, { kind: "locked" }> | null {
+    if (attachment.type === "document") return null;
+    const attachmentId = attachment.id;
+    const contentId = attachment.content ?? attachment.albumContentId;
+    const targets = {
+      ...(contentId ? { contentId } : {}),
+      ...(attachment.albumContentId ? { albumContentId: attachment.albumContentId } : {})
+    };
     if (attachment.type === "image") {
       return {
         kind: "image",
         attachmentId,
-        ...(attachment.content ? { contentId: attachment.content } : {}),
+        ...targets,
         imageUrl: attachment.asset ?? ""
       };
     }
@@ -135,7 +153,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       return {
         kind: "audio",
         attachmentId,
-        ...(attachment.content ? { contentId: attachment.content } : {}),
+        ...targets,
         ...(poster?.type === "image" ? { imageUrl: poster.asset } : {}),
         audioUrl: attachment.asset ?? ""
       };
@@ -143,7 +161,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     return {
       kind: "video",
       attachmentId,
-      ...(attachment.content ? { contentId: attachment.content } : {}),
+      ...targets,
       ...(poster?.type === "image" ? { imageUrl: poster.asset } : {}),
       videoUrl: attachment.asset ?? ""
     };
@@ -702,6 +720,9 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       if (message.attachment?.contentId) {
         revealedAttachmentContentIds.add(message.attachment.contentId);
       }
+      if (message.attachment && "albumContentId" in message.attachment && message.attachment.albumContentId) {
+        revealedAttachmentContentIds.add(message.attachment.albumContentId);
+      }
       for (const segment of message.segments ?? []) {
         if (segment.kind !== "link" || !("contentId" in segment) || !segment.linkId)
           continue;
@@ -780,6 +801,15 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     return evaluateCondition(cond ?? "", definedConditionState(effectiveStateValues(workerScenario.stateVariables, state.stateValues)));
   }
   function validatePartState(state: StoredPlayerState) {
+    for (const attachment of workerScenario.attachments) {
+      if (attachment.lock !== "password" || !attachment.content || !state.unlockedContentIds.includes(attachment.content)) continue;
+      const content = contentByInternalId(attachment.content);
+      if (!content || !conditionMet(content.cond, state)) continue;
+      const poster = attachment.poster ? attachmentsById.get(attachment.poster) : null;
+      if (attachment.unavailable || (attachment.poster && (!poster || poster.unavailable))) {
+        throw new Error(`開錠する添付またはposterのpartが未取得です: ${attachment.id}`);
+      }
+    }
     for (const content of workerScenario.contents) {
       if (usesStandardMedia(content.appId) && mediaAttachmentIds(content.record).length && appAvailable(content.appId, state) && conditionMet(content.cond, state)
         && (content.initialState === "normal" || state.repairedContentIds.includes(content.id) || state.unlockedContentIds.includes(content.id))) {
@@ -1061,10 +1091,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       : undefined;
     const firstSegmentAudioUrl = audioSegments?.find((segment) => (segment && typeof segment === "object" && !Array.isArray(segment) && typeof segment.audioUrl === "string" && segment.audioUrl))?.audioUrl;
     const currentAudioUrl = typeof record.audioUrl === "string" ? record.audioUrl : "";
-    const fixedProvider = workerScenario.generatedAudio.find(item => item.publicId === generatedAudioId)?.provider === "static";
-    const resolvedAudioUrl = currentAudioUrl && fixedProvider ? currentAudioUrl : generatedAudio
-      ? generatedAudioUrl(generatedAudio) || (generatedAudio.status === "failed" ? currentAudioUrl : "")
-      : currentAudioUrl || firstSegmentAudioUrl || "";
+    const resolvedAudioUrl = generatedAudio ? generatedAudioUrl(generatedAudio) : currentAudioUrl || firstSegmentAudioUrl || "";
     const { audioUrl: _sourceAudioUrl, ...withoutAudioUrl } = record;
     return {
       ...withoutAudioUrl,
@@ -1137,6 +1164,9 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
   function publicOpenTargetId(internalId: string) {
     return workerScenario.publicIds.content[internalId] ?? workerScenario.publicIds.talk[internalId] ?? internalId;
   }
+  function internalOpenTargetId(publicId: string) {
+    return contentByPublicId(publicId)?.id ?? talkByPublicId(publicId)?.id ?? publicId;
+  }
   async function sha256Hex(value: string) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -1159,20 +1189,24 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       })()
       : segment);
   }
+  function publicAttachment<T extends ScenarioMessageAttachment>(attachment: T): T {
+      return {
+        ...attachment,
+        ...("contentId" in attachment && attachment.contentId
+          ? { contentId: publicContentId(attachment.contentId) }
+          : {}),
+        ...("albumContentId" in attachment && attachment.albumContentId
+          ? { albumContentId: publicContentId(attachment.albumContentId) }
+          : {}),
+        ...("attachmentId" in attachment && attachment.attachmentId
+          ? { attachmentId: publicAttachmentId(attachment.attachmentId) }
+          : {})
+      };
+  }
   function publicTalkMessage(message: StoredTalkMessage): StoredTalkMessage {
     const { scenarioBlockId, historyRepairId: _historyRepairId, ...publicMessage } = message;
     const historyRepair = scenarioBlockId ? talkHistoryRepairByBlockId.get(scenarioBlockId) : undefined;
-    const attachment = message.attachment
-      ? {
-        ...message.attachment,
-        ...("contentId" in message.attachment && message.attachment.contentId
-          ? { contentId: publicContentId(message.attachment.contentId) }
-          : {}),
-        ...("attachmentId" in message.attachment && message.attachment.attachmentId
-          ? { attachmentId: publicAttachmentId(message.attachment.attachmentId) }
-          : {})
-      }
-      : message.attachment;
+    const attachment = message.attachment ? publicAttachment(message.attachment) : message.attachment;
     const segments = publicMessageSegments(message.segments);
     return {
       ...publicMessage,
@@ -1382,12 +1416,17 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
         const content = attachment.content ? contentByInternalId(attachment.content) : null;
         return attachment.lock === "password" && content && conditionMet(content.cond, state) && state.unlockedContentIds.includes(content.id);
       })
-        .map((attachment) => ({
-        contentId: publicContentId(attachment.content ?? ""),
-        title: attachment.title ?? "添付ファイル",
-        body: attachment.body ?? "",
-        ...(attachment.type === "image" ? { imageUrl: attachment.asset } : {})
-      })),
+        .map((attachment) => {
+        const photo = attachment.albumContentId ? contentByInternalId(attachment.albumContentId) : null;
+        const media = mediaForAttachment(attachment);
+        if (media && (!photo || !contentAvailable(photo, state))) delete media.albumContentId;
+        return {
+          contentId: publicContentId(attachment.content ?? ""),
+          title: attachment.title ?? "添付ファイル",
+          body: attachment.body ?? "",
+          ...(media ? { media: publicAttachment(media) } : {})
+        };
+      }),
       talks,
       transcriptDeltas: publicTranscriptDeltas,
       repairedContentCount: repairedContents.size
@@ -1431,16 +1470,18 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     const alreadyAvailableIds = new Set([...state.repairedContentIds, ...state.unlockedContentIds]);
     const attachmentIds = new Set(workerScenario.talkBlocks
       .filter((block) => block.talkId === talk.id)
-      .flatMap((block) => block.messages.map((message) => message.attachmentId).filter(Boolean)));
-    return unique([...attachmentIds].flatMap((attachmentId) => ((albumPhotoIdsByAttachmentId.get(attachmentId) ?? []).filter((photoId) => {
-      const content = contentByInternalId(photoId);
-      return Boolean(content
+      // 鍵付きの参照関係は保持するが、表示観測だけで解錠を迂回させない。
+      .flatMap((block) => block.messages.map((message) => message.attachmentId).filter(id => id && !attachmentsById.get(id)?.lock)));
+    return unique([...attachmentIds].flatMap((attachmentId) => {
+      const photoId = attachmentsById.get(attachmentId)?.albumContentId;
+      const content = photoId ? contentByInternalId(photoId) : null;
+      return content
         && content.appId === "photos"
         && content.initialState !== "normal"
         && !alreadyAvailableIds.has(content.id)
         && revealedIds.has(content.id)
-        && requestedIds.has(content.publicId));
-    }))));
+        && requestedIds.has(content.publicId) ? [content.id] : [];
+    }));
   }
   function talkByPublicId(publicId: string) {
     return workerScenario.talks.find((talk) => talk.publicId === publicId) ?? null;
@@ -1515,7 +1556,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       repairable: (talk.initialState !== "normal" && !state.repairedContentIds.includes(talk.id)) || parentNeedsRepair(talk.appId)
     }));
     const attachmentResults = workerScenario.attachments.flatMap((attachment) => {
-      const content = attachment.content ? contentByInternalId(attachment.content) : null;
+      const targetId = attachment.content ?? attachment.albumContentId;
+      const content = targetId ? contentByInternalId(targetId) : null;
       if (!content || !attachment.searchApp || !attachment.search?.length
         || !conditionMet(attachment.cond, state) || !termsMatch(attachment.search, value))
         return [];
@@ -1590,6 +1632,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     internalAttachmentId,
     internalIncomingCallId,
     internalFormId,
+    internalOpenTargetId,
     lockedContentPassword,
     resolveTalkAttachment,
     albumPhotoIdsForMediaAttachment,
@@ -1628,12 +1671,14 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
     contentByPublicId,
     contentByInternalId,
     observedAlbumMediaContentIds,
+    unlockedAlbumContentIds,
     talkByPublicId,
     talkByInternalId,
     appById,
     searchScenario,
     repairTarget,
     openTargetExists,
+    visibleTalkAttachmentMatches,
     notificationIdsForTarget,
   };
 }

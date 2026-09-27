@@ -55,12 +55,15 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     internalAttachmentId,
     internalFormId,
     internalIncomingCallId,
+    internalOpenTargetId,
     lockedContentPassword,
     messagesForTalkOutputSteps,
     nextTalkTurnKey,
     notificationIdsForTarget,
     observedAlbumMediaContentIds,
+    unlockedAlbumContentIds,
     openTargetExists,
+    visibleTalkAttachmentMatches,
     publicSearchAgentTimelineItems,
     publicTalkMessage,
     radioAudioCueForEvent,
@@ -147,8 +150,8 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     return cleanText(value, maxLength);
   }
   function internalScenarioField(key: string, value: string) {
-    if (key === "contentId")
-      return contentByPublicId(value)?.id ?? value;
+    if (key === "contentId" || key === "attemptedContentId")
+      return internalOpenTargetId(value);
     if (key === "talkId")
       return talkByPublicId(value)?.id ?? value;
     if (key === "attachmentId")
@@ -990,7 +993,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     let repaired = false;
     const transcriptAppends: TranscriptAppend[] = [];
     const contentHookResults: ScenarioHookResult[] = [];
-    let internalTargetId = contentByPublicId(contentId)?.id ?? talkByPublicId(contentId)?.id ?? contentId;
+    let internalTargetId = internalOpenTargetId(contentId);
     if (repairParent) {
       const parentHook = await applyHooks(c, player.id, nextState, { eventId: "content_repaired", contentId: appId });
       nextState = parentHook.state;
@@ -1116,7 +1119,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const passwordDefinition = content ? lockedContentPassword(content.id) : undefined;
     const available = content && passwordDefinition && (passwordDefinition.target === "content"
       ? contentAvailable(content, player.state)
-      : openTargetExists(content.publicId, content.appId, player.state) && player.state.revealedAttachmentContentIds.includes(content.id));
+      : ["messages", "chat"].some(appId => visibleTalkAttachmentMatches(content.publicId, appId, player.state)));
     if (!content || !available) {
       return operationResult({ ok: false, error: "not_available", playerState: await stateJson(c, player) }, 409);
     }
@@ -1132,6 +1135,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       throw new Error(`解錠する本文のpartが未取得です: ${content.id}`);
     const nextState = activated.state;
     nextState.unlockedContentIds = unique([...nextState.unlockedContentIds, content.id]);
+    nextState.repairedContentIds = unique([...nextState.repairedContentIds, ...unlockedAlbumContentIds(content.id)]);
     const hookResult = await applyHookEvents(c, player.id, nextState, [...partLoadedEvents(activated.added), { eventId: "content_unlocked", contentId: content.id }]);
     if (hookResult.rejection)
       return operationResult({ ok: false, error: hookResult.rejection.error, playerState: await stateJson(c, player) }, 422);

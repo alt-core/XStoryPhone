@@ -25,6 +25,7 @@ function stateType(definition) {
 
 try {
   const scenario = loadAndValidateScenario();
+  for (const warning of scenario.authoringWarnings) console.warn(`[制作確認] ${warning}`);
   for (const warning of scenario.partWarnings) console.warn(`[part確認] ${warning}`);
   const hooksModule = buildScenarioHooksModule(scenario.hookScripts);
   fs.mkdirSync(sharedGeneratedDir, { recursive: true });

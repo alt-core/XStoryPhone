@@ -88,7 +88,7 @@ test("表示時計だけをcompact eventへ保存し、template・実時刻・�
 test("hookのaddBlockはその行までの作中時計を捕捉し、再取得時の時計で置き換えない", async () => {
   const scenario = structuredClone(workerScenario);
   scenario.project.talkClock = "scenario";
-  scenario.hooks = [{ event: "clock_test", target: "", cond: "", handler: "clock_test", llm: false }];
+  scenario.hooks = [{ event: "clock_test", target: "", cond: "", handler: "clock_test", needsAi: false }];
   const runtime = createScenarioRuntime(scenario);
   const hooks = createScenarioHooksRuntime(runtime, {
     clock_test(context) {

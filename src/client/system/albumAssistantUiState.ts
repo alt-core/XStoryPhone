@@ -1,13 +1,11 @@
-import type { AppId, AssistantMessage } from "../scenario-runtime/types";
-
-export const ALBUM_MEDIA_ADDED_ASSISTANT_BODY = "新しいデータをアルバムに追加しておきました！";
+import type { AppId, AssistantMessage, TransientAssistantMessage } from "../scenario-runtime/types";
 
 export function albumMediaAddedAssistantKey(appId: AppId, contentId: string) {
   return `${appId}:${contentId}`;
 }
 
-export function isAlbumMediaAddedAssistant(message: AssistantMessage | undefined) {
-  return message?.body === ALBUM_MEDIA_ADDED_ASSISTANT_BODY;
+export function selectAssistantSurfaceMessage(transient: TransientAssistantMessage | undefined, authored: AssistantMessage | undefined) {
+  return transient ?? authored;
 }
 
 export function assistantHiddenByComposerPhotoDraft(activeAppId: AppId | null, draftByApp: Partial<Record<AppId, boolean>>) {
@@ -25,13 +23,13 @@ export function clearAlbumAssistantStateForPhotoDraft({
 }: {
   appId: AppId;
   pendingKeys: readonly string[];
-  transientMessage: AssistantMessage | undefined;
+  transientMessage: TransientAssistantMessage | undefined;
 }) {
   const keyPrefix = `${appId}:`;
   return {
     pendingKeys: pendingKeys.filter((key) => !key.startsWith(keyPrefix)),
     transientMessage:
-      transientMessage?.surface === appId && isAlbumMediaAddedAssistant(transientMessage)
+      transientMessage?.surface === appId && transientMessage.notice === "album_added"
         ? undefined
         : transientMessage
   };

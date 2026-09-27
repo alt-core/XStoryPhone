@@ -130,7 +130,7 @@ test("Quick Replyはblock IDと利用したtemplate値だけから復元する",
 test("hookの入力操作はeffect順を守りfromとturnKeyを変更しない", async () => {
   const initialized = await reconcileScenarioState(createInitialPlayerState(), "talk-input-hook-player");
   const before = initialized.state.talks.guide;
-  const hook = { event: "test_talk_input_hook", target: "", handler: "test_talk_input_hook", cond: "", llm: false };
+  const hook = { event: "test_talk_input_hook", target: "", handler: "test_talk_input_hook", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_talk_input_hook = (context) => {
     context.talk.hideInput("guide");
@@ -157,7 +157,7 @@ test("hookの入力操作はeffect順を守りfromとturnKeyを変更しない",
 test("hookのenableは最新message境界で再開し、検索talkにも同じ契約を使う", async () => {
   const initialized = await reconcileScenarioState(createInitialPlayerState(), "talk-input-enable-player");
   initialized.state.talks[SEARCH_AGENT_TALK_ID].inputEnabled = false;
-  const hook = { event: "test_talk_input_enable", target: "", handler: "test_talk_input_enable", cond: "", llm: false };
+  const hook = { event: "test_talk_input_enable", target: "", handler: "test_talk_input_enable", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_talk_input_enable = (context) => context.talk.enableInput(SEARCH_AGENT_TALK_ID);
   try {

@@ -25,7 +25,6 @@
   import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
   import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
   import { resourceUrl } from "./resourceUrls";
-  import { demoProjectConstantsGenerated as projectConstants } from "../generated/demoProjectConstants.generated";
 
   type ContentStateSnapshot = {
     contentId: string;
@@ -55,7 +54,8 @@
     messageRef: string,
     segmentIndex: number,
     linkId?: string
-  ) => void | Promise<void> = () => {};
+  ) => void | "not_available" | Promise<void | "not_available"> = () => {};
+  export let selectOpenFailureMessage: () => string = () => "";
   export let delayMemoryKey = "";
   export let peeking = false;
   export let surfaceKey = "home";
@@ -73,6 +73,7 @@
   let lastSurfaceKey = surfaceKey;
   let lastCloseRequestId = closeRequestId;
   let expandedFromVisible = false;
+  let openedSurfaceMessageKey = "";
   let agentAction: SearchAgentAction = "idle";
   let lastServerMessageKey = "";
   let visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
@@ -188,9 +189,8 @@
   }
 
   function openExpanded() {
+    openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
-    // 画面内だけの既読扱い。別画面へ移ると解除し、同じ案内を再び表示できる。
-    dismissSurfaceMessage();
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
     expanded = true;
     onOpenChange(true);
@@ -208,15 +208,16 @@
   }
 
   function closeExpanded() {
-    if (expanded) dismissSurfaceMessage();
+    if (expanded && openedSurfaceMessageKey && openedSurfaceMessageKey === surfaceMessageKey) dismissSurfaceMessage("close");
+    openedSurfaceMessageKey = "";
     expanded = false;
     expandedFromVisible = false;
     onOpenChange(false);
   }
 
-  function dismissSurfaceMessage() {
-    // stickyの案内は、会話を閉じても背景をタップしても、条件を満たす間は出し続ける。
-    if (surfaceMessage?.sticky) return;
+  function dismissSurfaceMessage(reason: "outside" | "close") {
+    // 隠した状態はこの画面だけ。本文や案内の用途には依存しない。
+    if (surfaceMessage?.hide === "never" || (surfaceMessage?.hide === "close" && reason === "outside")) return;
     dismissedSurfaceMessageKey = surfaceMessageKey;
   }
 
@@ -224,11 +225,7 @@
     if (!surfaceBubbleVisible || (event.target instanceof Element && event.target.closest(".search-agent"))) {
       return;
     }
-    // 初回の操作導線だけは、会話を開くまで背景タップで消さない。
-    if (surfaceKey === "home" && surfaceMessage?.id.startsWith("broken-link-")
-      && surfaceMessage.body === projectConstants["searchAgent.broken_link_tutorial_body"]) return;
-
-    dismissSurfaceMessage();
+    dismissSurfaceMessage("outside");
   }
 
   function seenMessageIds(talkId: string) {
@@ -435,14 +432,27 @@
     await sendBody(reply, false);
   }
 
-  function openMessageLink(message: Extract<SearchAgentMessage, { kind: "message" }>, segmentIndex: number) {
+  async function openMessageLink(message: Extract<SearchAgentMessage, { kind: "message" }>, segmentIndex: number) {
     const segment = message.segments?.[segmentIndex];
-    return onOpenMessageLink(
+    const requestId = closeRequestId;
+    const result = await onOpenMessageLink(
       message.talkId,
       message.id,
       segmentIndex,
       segment?.kind === "link" && "linkId" in segment ? segment.linkId : undefined
     );
+    if (!destroyed && requestId === closeRequestId && result === "not_available") showOpenFailure();
+  }
+
+  function showOpenFailure() {
+    const body = selectOpenFailureMessage();
+    if (!body) return;
+    transientMessages = [...transientMessages, {
+      kind: "message", seq: (messages[messages.length - 1]?.seq ?? 0) + transientMessages.length + 1,
+      id: `searchAgent-open-failed-${crypto.randomUUID()}`, talkId: talk?.talkId ?? "search_agent",
+      sender: "other", body, sentAt: new Date().toISOString()
+    }];
+    void scrollMessagesToBottom();
   }
 
   async function openResult(result: SearchAgentSearchResult) {
@@ -461,19 +471,7 @@
         return;
       }
 
-      transientMessages = [
-        ...transientMessages,
-        {
-          kind: "message",
-          seq: (messages[messages.length - 1]?.seq ?? 0) + transientMessages.length + 1,
-          id: `searchAgent-open-failed-${crypto.randomUUID()}`,
-          talkId: talk?.talkId ?? "search_agent",
-          sender: "other",
-          body: "このデータはまだ開けないみたい。",
-          sentAt: new Date().toISOString()
-        }
-      ];
-      void scrollMessagesToBottom();
+      showOpenFailure();
     } finally {
       openingResult = false;
     }

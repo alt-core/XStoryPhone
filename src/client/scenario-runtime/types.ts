@@ -8,13 +8,12 @@ export type ContentStateValue = "repaired" | "unlocked";
 export type AssistantMessageSurface = "home" | AppId;
 export type SearchAgentAction = "idle" | "hi";
 
-export type AssistantMessage = {
-  id: string;
+export type AssistantMessage = import("../../shared/assistantMessages").AssistantMessage;
+
+// 一時通知の種類は本文から判定しない。シナリオの制作列には含めない。
+export type TransientAssistantMessage = AssistantMessage & {
   surface: AssistantMessageSurface;
-  body: string;
-  weight: number;
-  agentAction?: SearchAgentAction;
-  sticky?: boolean;
+  notice: import("../../shared/assistantMessages").AssistantNotice;
 };
 
 export type AppCatalogEntry = {
@@ -57,19 +56,20 @@ export type MessageSegment =
     };
 
 export type LockedAttachment = {
-  kind?: "locked";
+  kind: "locked";
   contentId: string;
   locked: boolean;
   title?: string;
   unlockedTitle?: string;
   unlockedBody?: string;
-  unlockedImageUrl?: string;
+  unlockedMedia?: MediaAttachment;
 };
 
 export type MediaAttachment = {
   kind: "image" | "audio" | "video";
   attachmentId?: string;
   contentId?: string;
+  albumContentId?: string;
   imageUrl?: string;
   audioUrl?: string;
   videoUrl?: string;

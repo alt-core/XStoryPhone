@@ -33,7 +33,7 @@ function scenarioFixture() {
   });
   worker.contents.push({ id: "secret_note", publicId: "c_secret_note", appId: "notes", initialState: "repairable", repairLabel: "破損データ", part: "evidence", order: 1000, cond: "", search: ["秘密の記録"], record: { title: "秘密の記録", body: "未到達のメモマーカー9467" } });
   worker.publicIds.content.secret_note = "c_secret_note";
-  worker.hooks.push({ event: "part_loaded", target: "evidence", cond: "!part_seen", handler: "static_part_notice", part: "evidence", order: 1000, llm: false });
+  worker.hooks.push({ event: "part_loaded", target: "evidence", cond: "!part_seen", handler: "static_part_notice", part: "evidence", order: 1000, needsAi: false });
   worker.hookTalkBlocks.search_agent.push("secret_reply", "part_notice");
   scenario.hookScripts.static_part_notice = 'state.set("part_seen", true); talk.addBlock("search_agent", "part_notice", {mode: "stay"});';
   return scenario;
@@ -228,7 +228,7 @@ test("Stage用passwordは利用可能な作品contentだけを受け付け、正
     w.publicIds.content.keypad="c_keypad";w.publicIds.content.inactive_keypad="c_inactive";
     w.lockedContentPasswords.push({contentId:"keypad",target:"content",answers:["stage-secret-4286"],loadParts:["evidence"],part:"base"},
       {contentId:"inactive_keypad",target:"content",answers:["stage-secret-4286"],loadParts:["evidence"],part:"base"});
-    w.hooks.push({event:"content_unlocked",target:"keypad",cond:"",part:"evidence",order:1001,handler:"stage_unlocked",llm:false});
+    w.hooks.push({event:"content_unlocked",target:"keypad",cond:"",part:"evidence",order:1001,handler:"stage_unlocked",needsAi:false});
     scenario.hookScripts.stage_unlocked='state.set("old_note_opened", true);';
   });
   assert.ok(!fs.readFileSync(path.join(f.outputDir,f.manifest.base),"utf8").includes("stage-secret-4286"));
@@ -315,7 +315,7 @@ test("staticの到達済みリンクもhookで解放してから遷移先を返�
     assert.ok(block);
     block.messages[0].body = "[メモを開く](open:notes:old_note;action:link_open)";
     block.messages[0].segments = [{ kind: "link", text: "メモを開く", appId: "notes", contentId: "old_note", actionId: "link_open", linkId: "static_link_probe" }];
-    worker.hooks.push({ event: "message_link_opened", target: "link_open", handler: "link_open", cond: "", llm: false, part: "base" });
+    worker.hooks.push({ event: "message_link_opened", target: "link_open", handler: "link_open", cond: "", needsAi: false, part: "base" });
     hookScripts.link_open = 'content.setState("old_note", "repaired"); effect.noise();';
   });
   const execution = createStaticPlayerExecution(f.options);
@@ -333,7 +333,9 @@ test("staticはgen_audioの固定代替を利用し、外部生成を実行し�
     const definition = worker.generatedAudio.find(item => item.id === "demo_voice");
     Object.assign(definition, { provider: "external_fixture", staticUrl: "", fallbackAttachmentId: "fallback_fixture" });
     worker.attachments.push({ id: "fallback_fixture", type: "audio", asset: "/fixture/fallback.wav", part: "base" });
-    delete worker.contents.find(item => item.id === "sample_radio").record.audioAttachmentId;
+    const radio = worker.contents.find(item => item.id === "sample_radio");
+    delete radio.record.audioAttachmentId;
+    radio.record.genAudioId = definition.id;
   });
   const execution = createStaticPlayerExecution(f.options);
   await execution.initialize();
@@ -434,7 +436,7 @@ test("staticは操作前に確定した予約を残し、拒否されたpart候�
     w.stateVariables.scheduled_probe=0;w.stateVariableDefinitions.scheduled_probe={type:"integer"};w.stateVariableParts.scheduled_probe="base";
     w.publicStateVariables.push("scheduled_probe");
     w.initialSchedules=[{id:"probe",eventId:"probe",delayMs:0,fields:{}}];
-    w.hooks.push({event:"scheduled_event",target:"probe",handler:"scheduled_probe",cond:"",part:"base",order:999,llm:false});
+    w.hooks.push({event:"scheduled_event",target:"probe",handler:"scheduled_probe",cond:"",part:"base",order:999,needsAi:false});
     w.publicIds.scenarioEvent.probe="e_probe";
     scenario.hookScripts.scheduled_probe='state.apply(["scheduled_probe += 1"]);';
     scenario.hookScripts.static_part_notice='form.deny("読み込まない");';
@@ -580,7 +582,7 @@ test("複数partの一部取得失敗後も両方を初回通知し、hook行順
     for (const [part, letter, order] of [["evidence", "A", 2001], ["second", "B", 2002]]) {
       for (const event of ["part_loaded", "talk_turn_completed"]) {
         const handler = `${part}_${event}`;
-        worker.hooks.push({ event, target: event === "part_loaded" ? part : "search_agent", cond: "", handler, part, order: order + (event === "part_loaded" ? 10 : 0), llm: false });
+        worker.hooks.push({ event, target: event === "part_loaded" ? part : "search_agent", cond: "", handler, part, order: order + (event === "part_loaded" ? 10 : 0), needsAi: false });
         scenario.hookScripts[handler] = `state.set("trace", state.get("trace") + ${JSON.stringify(event === "part_loaded" ? letter.toLowerCase() : letter)});`;
       }
     }
@@ -642,7 +644,7 @@ test("secretのgame_overもpart通知とsetを保存し、一時返信・from・
       messages: [{ id: "game-over-reply", sender: "guide", body: "一時表示の終端返信", attachmentId: "", sentAt: "" }] });
     talk.rules.unshift({ ...worker.talks.find(item => item.id === "search_agent").rules.find(rule => rule.type === "secret"),
       id: "secret-game-over", from, mode: "game_over", nextFromId: blockId, nextBlocks: [blockId], outputSteps: [{ kind: "block", blockId }] });
-    worker.hooks.push({ event: "talk_turn_completed", target: "guide", cond: "", part: "evidence", order: 2000, handler: "unexpected_completion", llm: false });
+    worker.hooks.push({ event: "talk_turn_completed", target: "guide", cond: "", part: "evidence", order: 2000, handler: "unexpected_completion", needsAi: false });
     scenario.hookScripts.unexpected_completion = 'throw new Error("game_overでは呼ばない");';
   });
   const execution = createStaticPlayerExecution(f.options);

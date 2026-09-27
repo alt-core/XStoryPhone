@@ -1,15 +1,14 @@
 <script lang="ts">
   import { afterUpdate, beforeUpdate, onDestroy } from "svelte";
-  import { FileImage, FileLock2, ImagePlus, List, MessageCircle, Radio, Send, Unlock, Video, X } from "@lucide/svelte";
+  import { FileImage, ImagePlus, List, MessageCircle, Radio, Send, Video, X } from "@lucide/svelte";
+  import LockedAttachmentContents from "./LockedAttachmentContents.svelte";
+  import TalkMediaAttachment from "./TalkMediaAttachment.svelte";
   import type { AppId, LockedAttachment, MessageAttachment, MessageThread, PendingShareDraft, PhotoItem, TalkInputState } from "../scenario-runtime/types";
-  import AttachmentImageFrame from "../system/AttachmentImageFrame.svelte";
-  import AudioPlaybackButton from "../system/AudioPlaybackButton.svelte";
   import MessageBody from "../system/MessageBody.svelte";
   import QuickReplies from "../system/QuickReplies.svelte";
   import ScrollHint from "../system/ScrollHint.svelte";
   import TypingIndicator from "../system/TypingIndicator.svelte";
   import UserAvatar from "../system/UserAvatar.svelte";
-  import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import { resourceUrl } from "../system/resourceUrls";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
@@ -83,9 +82,6 @@
   const draftForThread = createTalkDrafts();
   let composer = draftForThread(selectedThreadId);
   let sending = false;
-  let unlockDrafts: Record<string, string> = {};
-  let unlockingContentId = "";
-  let unlockError = "";
   let historyList: HTMLDivElement;
   let lastHistorySignature = "";
   let lastHistoryThreadId = "";
@@ -338,7 +334,6 @@
       selectedThreadId = talkId;
       pickerOpen = true;
       setPhotoPickerOpen(false);
-      unlockError = "";
       onNoise();
       onBlockedContentOpen(thread.contentId ?? thread.id);
       return;
@@ -442,7 +437,6 @@
       title: shareDraft.title
     };
     composer.error = "";
-    unlockError = "";
     onInitialShareDraftConsumed(shareDraft.requestId);
   }
 
@@ -467,7 +461,7 @@
           return "";
         }
 
-        return `${message.id}:${attachment.kind}:${attachment.contentId ?? ""}:${attachment.attachmentId ?? ""}`;
+        return `${message.id}:${attachment.kind}:${attachment.albumContentId ?? ""}:${attachment.attachmentId ?? ""}`;
       })
       .filter(Boolean)
       .join("|");
@@ -476,8 +470,8 @@
   function mediaAttachmentContentIds(messages: MessageThread["messages"]) {
     return [...new Set(messages.flatMap((message) => {
       const attachment = message.attachment;
-      return attachment && isMediaAttachment(attachment) && attachment.contentId
-        ? [attachment.contentId]
+      return attachment && isMediaAttachment(attachment) && attachment.albumContentId
+        ? [attachment.albumContentId]
         : [];
     }))];
   }
@@ -592,40 +586,14 @@
     return thread.avatarUrl ?? thread.messages.find((message) => message.sender === "other" && message.avatarUrl)?.avatarUrl ?? "";
   }
 
-  async function unlockAttachment(contentId: string) {
-    const password = unlockDrafts[contentId]?.trim() ?? "";
-
-    if (!password || unlockingContentId) {
-      return;
-    }
-
-    unlockingContentId = contentId;
-    unlockError = "";
-    const result = await onUnlockAttachment(contentId, password);
-    unlockingContentId = "";
-
-    if (!result.ok) {
-      unlockError = result.error ?? "開けません。";
-      return;
-    }
-
-    unlockDrafts = { ...unlockDrafts, [contentId]: "" };
-  }
-
   function isLockedAttachment(attachment: MessageAttachment): attachment is LockedAttachment {
-    return !attachment.kind || attachment.kind === "locked";
+    return attachment.kind === "locked";
   }
 
   function isMediaAttachment(
     attachment: MessageAttachment
   ): attachment is Extract<MessageAttachment, { kind: "image" | "audio" | "video" }> {
     return attachment.kind === "image" || attachment.kind === "audio" || attachment.kind === "video";
-  }
-
-  function lockedAttachmentTitle(attachment: LockedAttachment) {
-    return attachment.locked
-      ? attachment.title ?? "ロックファイル"
-      : attachment.unlockedTitle ?? attachment.title ?? "開封済みファイル";
   }
 
   function notifyAudioPlaybackComplete(attachment: MessageAttachment) {
@@ -921,110 +889,18 @@
                     {#if message.attachment}
                       <section class="attachment-card" aria-label="添付">
                         {#if isLockedAttachment(message.attachment)}
+                          {#key message.attachment.contentId}
+                          <LockedAttachmentContents attachment={message.attachment} playbackId={`message-audio:${selectedThread.id}:${message.id}`}
+                            canOpenAlbum={Boolean(albumMediaContentId(message.attachment))} onOpenAlbum={() => openAlbumMedia(message.attachment)}
+                            onComplete={notifyAudioPlaybackComplete} onUnlock={onUnlockAttachment} />
+                          {/key}
+                        {:else if isMediaAttachment(message.attachment)}
                           <div>
-                            {#if message.attachment.locked}
-                              <FileLock2 size={16} strokeWidth={2.1} />
-                            {:else}
-                              <Unlock size={16} strokeWidth={2.1} />
-                            {/if}
-                            <strong>{lockedAttachmentTitle(message.attachment)}</strong>
+                            {#if message.attachment.kind === "image"}<FileImage size={16} strokeWidth={2.1} />{:else}<Video size={16} strokeWidth={2.1} />{/if}
+                            <strong>{message.attachment.kind === "image" ? "画像" : "動画"}</strong>
                           </div>
-                          {#if message.attachment.locked}
-                            <form
-                              on:submit|preventDefault={() => {
-                                if (message.attachment && isLockedAttachment(message.attachment)) {
-                                  void unlockAttachment(message.attachment.contentId);
-                                }
-                              }}
-                            >
-                              <input
-                                bind:value={unlockDrafts[message.attachment.contentId]}
-                                type="text"
-                                autocomplete="off"
-                                placeholder="パスワード"
-                                disabled={unlockingContentId === message.attachment.contentId}
-                              />
-                              <button
-                                type="submit"
-                                disabled={unlockingContentId === message.attachment.contentId || !unlockDrafts[message.attachment.contentId]?.trim()}
-                              >
-                                開く
-                              </button>
-                            </form>
-                          {:else}
-                            {#if message.attachment.unlockedImageUrl}
-                              <AttachmentImageFrame src={message.attachment.unlockedImageUrl} alt="" />
-                            {/if}
-                            <p>{message.attachment.unlockedBody ?? ""}</p>
-                          {/if}
-                        {:else if message.attachment.kind === "image"}
-                          <div>
-                            <FileImage size={16} strokeWidth={2.1} />
-                            <strong>画像</strong>
-                          </div>
-                          {#if message.attachment.imageUrl}
-                            {#if albumMediaContentId(message.attachment)}
-                              <button
-                                class="media-attachment-button"
-                                type="button"
-                                title="アルバムで開く"
-                                aria-label="画像をアルバムで開く"
-                                on:click={() => openAlbumMedia(message.attachment)}
-                              >
-                                <AttachmentImageFrame src={message.attachment.imageUrl} alt="" />
-                              </button>
-                            {:else}
-                              <AttachmentImageFrame src={message.attachment.imageUrl} alt="" />
-                            {/if}
-                          {/if}
-                        {:else if message.attachment.kind === "audio"}
-                          <div>
-                            <Video size={16} strokeWidth={2.1} />
-                            <strong>動画</strong>
-                          </div>
-                          {#if message.attachment.audioUrl}
-                            {#if albumMediaContentId(message.attachment)}
-                              <button
-                                class="media-attachment-button"
-                                type="button"
-                                title="アルバムで開く"
-                                aria-label="動画をアルバムで開く"
-                                on:click={() => openAlbumMedia(message.attachment)}
-                              >
-                                <VideoStillFrame src={message.attachment.imageUrl} />
-                              </button>
-                            {:else}
-                              <VideoStillFrame src={message.attachment.imageUrl} />
-                            {/if}
-                            <AudioPlaybackButton
-                              playbackId={`message-audio:${selectedThread.id}:${message.id}`}
-                              src={message.attachment.audioUrl}
-                              label="再生"
-                              onComplete={() => message.attachment && notifyAudioPlaybackComplete(message.attachment)}
-                            />
-                          {/if}
-                        {:else if message.attachment.kind === "video"}
-                          <div>
-                            <Video size={16} strokeWidth={2.1} />
-                            <strong>動画</strong>
-                          </div>
-                          {#if message.attachment.videoUrl}
-                            <VideoPlayback
-                              src={message.attachment.videoUrl}
-                              poster={message.attachment.imageUrl ?? ""}
-                              label="添付動画"
-                              onComplete={() => message.attachment && notifyAudioPlaybackComplete(message.attachment)}
-                            />
-                            {#if albumMediaContentId(message.attachment)}
-                              <button
-                                class="shared-link-card"
-                                type="button"
-                                on:click={() => openAlbumMedia(message.attachment)}
-                              >
-                                <span>アルバムで表示</span>
-                              </button>
-                            {/if}
-                          {/if}
+                          <TalkMediaAttachment media={message.attachment} playbackId={`message-audio:${selectedThread.id}:${message.id}`}
+                            canOpenAlbum={Boolean(albumMediaContentId(message.attachment))} onOpenAlbum={() => openAlbumMedia(message.attachment)} onComplete={notifyAudioPlaybackComplete} />
                         {:else if message.attachment.kind === "share"}
                           <div>
                             <Radio size={16} strokeWidth={2.1} />
@@ -1063,7 +939,7 @@
           </ScrollHint>
         </div>
 
-        {#if composerVisible || composer.error || unlockError}
+        {#if composerVisible || composer.error}
           <div class="conversation-controls">
             {#if composerVisible}
             <form class="composer" aria-label="メッセージ入力欄" on:submit|preventDefault={submitMessage}>
@@ -1112,9 +988,6 @@
             {/if}
             {#if composer.error}
               <p class="send-error">{composer.error}</p>
-            {/if}
-            {#if unlockError}
-              <p class="send-error">{unlockError}</p>
             {/if}
           </div>
         {/if}
@@ -1341,59 +1214,6 @@
     font-size: 0.74rem;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .attachment-card form {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px;
-  }
-
-  .attachment-card input {
-    min-width: 0;
-    height: 32px;
-    border: 1px solid var(--ap-border);
-    border-radius: 10px;
-    padding: 0 9px;
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--ap-text);
-    font: inherit;
-    outline: none;
-  }
-
-  .attachment-card button {
-    min-width: 48px;
-    height: 32px;
-    border: 0;
-    border-radius: 10px;
-    background: #5cc8a7;
-    color: #061914;
-    cursor: pointer;
-    font-weight: 820;
-  }
-
-  .attachment-card button:disabled {
-    cursor: default;
-    opacity: 0.46;
-  }
-
-  .attachment-card .media-attachment-button {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    padding: 0;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    color: inherit;
-    text-align: inherit;
-    cursor: pointer;
-  }
-
-  .attachment-card .media-attachment-button:focus-visible {
-    outline: 2px solid rgba(92, 200, 167, 0.72);
-    outline-offset: 2px;
   }
 
   .attachment-card .shared-link-card {

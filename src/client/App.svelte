@@ -22,6 +22,7 @@
   import type {
     AppId,
     AssistantMessage,
+    TransientAssistantMessage,
     BrowserTabItem,
     CalendarEvent,
     ChatAppMessage,
@@ -80,11 +81,12 @@
   import PlayerPasscodeScreen from "./system/PlayerPasscodeScreen.svelte";
   import StartConfirmationScreen from "./system/StartConfirmationScreen.svelte";
   import {
-    ALBUM_MEDIA_ADDED_ASSISTANT_BODY,
     albumMediaAddedAssistantKey,
     assistantHiddenByComposerPhotoDraft,
-    clearAlbumAssistantStateForPhotoDraft
+    clearAlbumAssistantStateForPhotoDraft,
+    selectAssistantSurfaceMessage
   } from "./system/albumAssistantUiState";
+  import { assistantNoticeTriggers, selectAssistantMessage, type AssistantNotice } from "../shared/assistantMessages";
   import {
     clearTranscriptStorage,
     loadPlayerState,
@@ -171,8 +173,6 @@
   const ALL_CLEAR_RETURN_WHITEOUT_MIN_MS = 280;
   const ALL_CLEAR_LABEL = "そして、数時間後……";
   const RADIO_PLAYBACK_PROGRESS_INTERVAL_MS = 250;
-  const INITIAL_MESSAGE_LINK_TUTORIAL_BODY = projectConstants["searchAgent.broken_link_tutorial_body"];
-  const BROKEN_LINK_ASSISTANT_BODY = projectConstants["searchAgent.broken_link_body"];
   const TALK_INITIAL_DATE_LABEL = formatStoryDateCompact(projectConstants["device.date"]);
   type TalkKind = "sms" | "chat";
   type PendingTalkMessage = GameOverTalkMessage & { displayTime?: string };
@@ -253,9 +253,8 @@
   let selectedAssistantSurface = "";
   let selectedAssistantRevision = "";
   let selectedAssistantMessage: AssistantMessage | undefined;
-  let transientAssistantMessage: AssistantMessage | undefined;
-  let brokenLinkAssistantSerial = 0;
-  let albumMediaAddedAssistantSerial = 0;
+  let transientAssistantMessage: TransientAssistantMessage | undefined;
+  let assistantNoticeSerial = 0;
   let pendingAlbumMediaAddedAssistantKeys: string[] = [];
   let focusedContentId = qaMode ? qaFocusContentId : "";
   let focusedContentRequestId = 0;
@@ -401,8 +400,7 @@
   }
   $: assistantSurfaceKey = activeApp?.id ?? "home";
   $: updateSelectedAssistantMessage(assistantSurfaceKey, playerState?.revision ?? deviceState.revision, playerState?.assistantMessages ?? []);
-  $: rawAssistantSurfaceMessage = transientAssistantMessage ?? selectedAssistantMessage;
-  $: assistantSurfaceMessage = visibleSurfaceMessageFor(rawAssistantSurfaceMessage, activeAppId, shadeOpen);
+  $: assistantSurfaceMessage = selectAssistantSurfaceMessage(transientAssistantMessage, selectedAssistantMessage);
   $: searchAgentTalkView = searchAgentTalkViewFor(playerState);
   $: updateNotificationToast(deviceState.notifications);
   $: syncScenarioWakeTimer(
@@ -706,7 +704,7 @@
 
     selectedAssistantSurface = surface;
     selectedAssistantRevision = revision;
-    selectedAssistantMessage = chooseWeightedAssistantMessage(messages.filter((message) => message.surface === surface));
+    selectedAssistantMessage = selectAssistantMessage(messages, [`screen:${surface}`]);
   }
 
   function updateNotificationToast(notifications: NotificationItem[]) {
@@ -730,32 +728,6 @@
         notificationToast = null;
       }
     }, 4200);
-  }
-
-  function chooseWeightedAssistantMessage(messages: AssistantMessage[]) {
-    if (!messages.length) {
-      return undefined;
-    }
-
-    const totalWeight = messages.reduce((sum, message) => sum + Math.max(0, message.weight || 1), 0);
-    let cursor = Math.random() * (totalWeight || messages.length);
-
-    for (const message of messages) {
-      cursor -= Math.max(0, message.weight || 1);
-      if (cursor <= 0) {
-        return message;
-      }
-    }
-
-    return messages[messages.length - 1];
-  }
-
-  function visibleSurfaceMessageFor(message: AssistantMessage | undefined, currentAppId: AppId | null, notificationShadeOpen: boolean) {
-    if (message?.body === INITIAL_MESSAGE_LINK_TUTORIAL_BODY && (currentAppId !== null || notificationShadeOpen)) {
-      return undefined;
-    }
-
-    return message;
   }
 
   function mergePlayerState(
@@ -1114,6 +1086,7 @@
         kind: "video",
         ...(photo.attachmentId ? { attachmentId: photo.attachmentId } : {}),
         contentId: photo.contentId ?? photo.id,
+        albumContentId: photo.contentId ?? photo.id,
         ...(photo.imageUrl ? { imageUrl: photo.imageUrl } : {}),
         videoUrl: photo.videoUrl
       };
@@ -1124,6 +1097,7 @@
         kind: "audio",
         ...(photo.attachmentId ? { attachmentId: photo.attachmentId } : {}),
         contentId: photo.contentId ?? photo.id,
+        albumContentId: photo.contentId ?? photo.id,
         ...(photo.imageUrl ? { imageUrl: photo.imageUrl } : {}),
         audioUrl: photo.audioUrl
       };
@@ -1133,6 +1107,7 @@
       kind: "image",
       ...(photo.attachmentId ? { attachmentId: photo.attachmentId } : {}),
       contentId: photo.contentId ?? photo.id,
+      albumContentId: photo.contentId ?? photo.id,
       imageUrl: photo.imageUrl ?? ""
     };
   }
@@ -1225,11 +1200,11 @@
     return threads;
   }
 
-  function applyAttachmentState(
-    message: Message,
+  function applyAttachmentState<T extends Message>(
+    message: T,
     contentStates: Map<string, string>,
-    unlockedAttachments: Map<string, { title: string; body: string; imageUrl?: string }>
-  ): Message {
+    unlockedAttachments: Map<string, PlayerState["unlockedAttachments"][number]>
+  ): T {
     if (!message.attachment) {
       return message;
     }
@@ -1248,7 +1223,7 @@
         : {
             unlockedTitle: unlocked.title,
             unlockedBody: unlocked.body,
-            ...(unlocked.imageUrl ? { unlockedImageUrl: unlocked.imageUrl } : {})
+            ...(unlocked.media ? { unlockedMedia: unlocked.media } : {})
           })
     };
 
@@ -1256,7 +1231,7 @@
   }
 
   function isLockedAttachment(attachment: MessageAttachment): attachment is LockedAttachment {
-    return !attachment.kind || attachment.kind === "locked";
+    return attachment.kind === "locked";
   }
 
   function mergeChatMessages(
@@ -1267,9 +1242,11 @@
     pendingMessages: PendingTalkMessage[],
     temporaryMessages: GameOverTalkMessage[]
   ) {
+    const contentStates = new Map(state.contentStates.map(item => [item.contentId, item.state]));
+    const unlockedAttachments = new Map(state.unlockedAttachments.map(item => [item.contentId, item]));
     const threads = baseThreads.map((thread) => ({
       ...thread,
-      messages: thread.messages.map((message) => ({ ...message, sentAt: talkMessageDisplayTime(message) }))
+      messages: thread.messages.map((message) => applyAttachmentState({ ...message, sentAt: talkMessageDisplayTime(message) }, contentStates, unlockedAttachments))
     }));
 
     const chatMessages = [
@@ -1308,7 +1285,7 @@
         ...(chatMessage.historyRepairId ? { historyRepairId: chatMessage.historyRepairId } : {}),
         attachment
       };
-      thread.messages.push(message);
+      thread.messages.push(applyAttachmentState(message, contentStates, unlockedAttachments));
     }
 
     return threads;
@@ -2516,7 +2493,7 @@
     if (!app.available) {
       triggerNoise();
       trackEvent({ name: "locked_app", appId: app.id });
-      recordBlockedContentLink(app.id, focusContentId || app.id);
+      recordBlockedContentLink(app.id, focusContentId || app.id, "app_unavailable");
       return false;
     }
 
@@ -2546,7 +2523,7 @@
     if (!app.available) {
       triggerNoise();
       trackEvent({ name: "locked_app", appId: app.id });
-      recordBlockedContentLink(app.id, contentId || app.id);
+      recordBlockedContentLink(app.id, contentId || app.id, "app_unavailable");
       return false;
     }
 
@@ -2561,8 +2538,8 @@
     return true;
   }
 
-  function recordBlockedContentLink(appId: AppId, attemptedContentId: string) {
-    showBrokenLinkAssistantMessage(appId, attemptedContentId);
+  function recordBlockedContentLink(appId: AppId, attemptedContentId: string, notice: "blocked_link" | "app_unavailable" = "blocked_link") {
+    showAssistantNotice(notice, appId);
 
     if (!uiState.sessionToken) {
       return;
@@ -2583,31 +2560,24 @@
       .catch(() => {});
   }
 
-  function showBrokenLinkAssistantMessage(appId: AppId, attemptedContentId: string) {
-    const body =
-      appId === "messages" && attemptedContentId
-        ? INITIAL_MESSAGE_LINK_TUTORIAL_BODY
-        : BROKEN_LINK_ASSISTANT_BODY;
-
-    brokenLinkAssistantSerial += 1;
+  function showAssistantNotice(notice: AssistantNotice, appId?: AppId) {
+    const message = selectAssistantMessage(playerState?.assistantMessages ?? [], assistantNoticeTriggers(notice, appId));
+    if (!message) return;
+    assistantNoticeSerial += 1;
     showTransientAssistantMessage({
-      id: `broken-link-${brokenLinkAssistantSerial}`,
-      surface: appId,
-      body,
-      weight: 1,
-      agentAction: "hi"
+      ...message,
+      id: `${message.id}:${assistantNoticeSerial}`,
+      notice,
+      surface: activeAppId ?? "home"
     });
   }
 
-  function showAlbumMediaAddedAssistantMessage(surface: AssistantMessage["surface"]) {
-    albumMediaAddedAssistantSerial += 1;
-    showTransientAssistantMessage({
-      id: `album-media-added-${albumMediaAddedAssistantSerial}`,
-      surface,
-      body: ALBUM_MEDIA_ADDED_ASSISTANT_BODY,
-      weight: 1,
-      agentAction: "hi"
-    });
+  function selectSearchOpenFailureMessage() {
+    return selectAssistantMessage(playerState?.assistantMessages ?? [], ["search_open_failed"])?.body ?? "";
+  }
+
+  function showAlbumMediaAddedAssistantMessage() {
+    showAssistantNotice("album_added");
   }
 
   function hasNewAlbumContent(previousState: PlayerState | null, nextState: PlayerState) {
@@ -2648,7 +2618,7 @@
     return true;
   }
 
-  function showTransientAssistantMessage(message: AssistantMessage) {
+  function showTransientAssistantMessage(message: TransientAssistantMessage) {
     transientAssistantMessage = message;
   }
 
@@ -2837,7 +2807,7 @@
 
   function handleVisibleMediaObserved(appId: AppId, contentId: string | undefined) {
     if (consumeAlbumMediaAddedAssistant(appId, contentId)) {
-      showAlbumMediaAddedAssistantMessage(appId);
+      showAlbumMediaAddedAssistantMessage();
     }
   }
 
@@ -3005,13 +2975,7 @@
       const parentWasRepaired = parentWasCorrupted
         && playerState?.visibleDeviceState.apps?.some((app) => app.id === result.appId && app.available && app.corrupted !== true);
       if (result.repairable && (parentWasRepaired || (!targetWasRepaired && isSearchAgentResultAlreadyRepaired(result)))) {
-        showTransientAssistantMessage({
-          id: `repair-${result.contentId}`,
-          surface: result.appId as AssistantMessage["surface"],
-          body: historyTalkId ? "壊れていた履歴を修復しておいたよ。" : "アプリから開けるようにデータを修復しておいたよ。",
-          weight: 1,
-          agentAction: "hi"
-        });
+        showAssistantNotice(historyTalkId ? "history_repaired" : "repaired", result.appId);
       }
     }
     return opened;
@@ -3548,6 +3512,9 @@
     }
     if (!result.ok) {
       applyErrorPlayerState(result);
+      if (result.status === 409 && result.error === "not_available" && canNavigate()) {
+        return "not_available" as const;
+      }
       return;
     }
 
@@ -3565,9 +3532,15 @@
     void openContentFromExplicitNavigation(targetAppId, result.target.contentId);
   }
 
-  function handleMessageLinkOpen(talkId: string, messageRef: string, segmentIndex: number) {
+  async function handleMessageLinkOpen(talkId: string, messageRef: string, segmentIndex: number) {
     const backLinkSource = activeAppId === "messages" || activeAppId === "chat" ? activeAppId : null;
-    return openTalkMessageLink(talkId, messageRef, segmentIndex, { backLinkSource });
+    const segment = [...deviceState.messages, ...deviceState.chatThreads].find(thread => thread.id === talkId)
+      ?.messages.find(message => message.id === messageRef)?.segments?.[segmentIndex];
+    const result = await openTalkMessageLink(talkId, messageRef, segmentIndex, { backLinkSource });
+    if (result === "not_available" && segment?.kind === "link" && "appId" in segment) {
+      const app = apps.find(item => item.id === segment.appId);
+      recordBlockedContentLink(segment.appId, segment.contentId, app?.available === false ? "app_unavailable" : "blocked_link");
+    }
   }
 
   function handleSearchAgentMessageLink(talkId: string, messageRef: string, segmentIndex: number, linkId?: string) {
@@ -3628,17 +3601,21 @@
     }
   }
 
-  function albumMediaContentId(attachment: MessageAttachment | undefined) {
-    if (!attachment || !isAlbumMediaAttachment(attachment)) {
+  function albumMediaContentId(attachment: MessageAttachment | undefined): string {
+    if (!attachment) {
       return "";
     }
     if (!apps.some((app) => app.id === "photos" && app.available)) {
       return "";
     }
-
-    const photo = attachment.attachmentId ? sendablePhotos.find((item) => item.attachmentId === attachment.attachmentId) : undefined;
-
-    return photo ? photo.contentId ?? photo.id : "";
+    if (attachment.kind === "locked") {
+      return attachment.locked ? "" : albumMediaContentId(attachment.unlockedMedia);
+    }
+    if (!isAlbumMediaAttachment(attachment)) return "";
+    // 関連contentとアルバム行先を混同せず、未指定の候補を先頭一致で推測しない。
+    if (!attachment.albumContentId) return "";
+    const photo = sendablePhotos.find(item => (item.contentId ?? item.id) === attachment.albumContentId);
+    return photo && !(attachment.kind === "image" && photo.mediaKind) ? attachment.albumContentId : "";
   }
 
   function isAlbumMediaAttachment(
@@ -3727,6 +3704,7 @@
           assistantVisible={!uiState.locked && !appModalOpen && !assistantHiddenByComposerPhotoDraft(activeAppId, composerPhotoDraftByApp)}
           assistantSurfaceKey={assistantSurfaceKey}
           assistantSurfaceMessage={assistantSurfaceMessage}
+          {selectSearchOpenFailureMessage}
           {shadeOpen}
           homeButtonVisible={!uiState.locked && (activeAppId !== null || shadeOpen)}
           backLinkLabel={visibleTalkBackLink ? TALK_BACK_LINK_LABELS[visibleTalkBackLink.sourceAppId] : ""}
@@ -3876,6 +3854,7 @@
             albumMediaContentId={albumMediaContentId}
             onOpenAlbumMedia={handleOpenAlbumMedia}
             onAuthLinkRequest={handleChatAuthLinkRequest}
+            onUnlockAttachment={handleContentUnlock}
             onOpenMessageLink={handleMessageLinkOpen}
             onContentOpen={(contentId, mediaContentIds) => void handleContentOpen("chat", contentId, { mediaContentIds })}
             onMediaObserved={(contentId, mediaContentIds) => void handleContentMediaObserved("chat", contentId, mediaContentIds)}

@@ -107,7 +107,7 @@ export type PublicPlayerState = {
     contentId: string;
     title: string;
     body: string;
-    imageUrl?: string;
+    media?: import("../scenario-runtime/types").MediaAttachment;
   }>;
   talks: Array<{
     transcriptKey: string;

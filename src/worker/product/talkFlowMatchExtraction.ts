@@ -1,3 +1,5 @@
+import { setExtractionIds } from "../../shared/setExpression.ts";
+
 export type TalkFlowMatchPick = "same" | "best";
 export type TalkFlowMatchNull = "no" | "ok" | "weak";
 export type TalkFlowMatchSelectionMode = "stable" | "once";
@@ -305,12 +307,8 @@ function collectMatchGroups(values: TalkFlowMatchOutput) {
 
 function matchGroupsForStateUpdates(values: TalkFlowMatchOutput, setUpdates: readonly string[]) {
   const matchGroups = collectMatchGroups(values);
-  for (const update of setUpdates) {
-    for (const reference of String(update).matchAll(/\$extract\.([a-zA-Z_][a-zA-Z0-9_]*)/gu)) {
-      if (typeof matchGroups[reference[1]] !== "string") {
-        return null;
-      }
-    }
+  for (const id of setExtractionIds(setUpdates)) {
+    if (typeof matchGroups[id] !== "string") return null;
   }
   return matchGroups;
 }

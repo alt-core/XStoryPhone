@@ -29,6 +29,8 @@ import { validateScenarioParts } from "./lib/scenario-parts.mjs";
 import { buildScenarioHooksModule, validateHookReferences } from "./lib/scenario-hooks.mjs";
 import { normalizeRadioCues } from "./lib/radio-cues.mjs";
 import { selectedScenarioDir } from "./lib/scenario-directory.mjs";
+import { REQUIRED_ASSISTANT_TRIGGERS, validAssistantTrigger } from "../src/shared/assistantMessages.ts";
+import { splitSetStatements } from "../src/shared/setExpression.ts";
 
 const rootDir = process.cwd();
 const engineRootDir = path.resolve(import.meta.dirname, "..");
@@ -274,10 +276,6 @@ function stableId(namespace, value) {
   return `${namespace}_${createHash("sha256").update(`xstoryphone:v2\0${namespace}\0${value}`).digest("hex").slice(0, 12)}`;
 }
 
-function splitAssignments(value) {
-  return String(value ?? "").split(";").map((item) => item.trim()).filter(Boolean);
-}
-
 function validateTalkInputOutputShape(label, steps, errors) {
   const inputSteps = steps.flatMap((step, index) => step.kind === "input" ? [{ action: step.action, index }] : []);
   const firstContentIndex = steps.findIndex((step) => step.kind !== "input");
@@ -517,6 +515,7 @@ function deviceStateFor(source, publicIds, revision) {
 export function loadAndValidateScenario(overrides = {}) {
   const errors = [];
   const authoring = loadScenarioAuthoring(scenarioDir);
+  const authoringWarnings = [...authoring.warnings];
   buildScenarioHooksModule(authoring.hookScripts);
   // 純粋な検証fixtureの注入。製品CLIは常にSheets由来TSVを読み、JSON原本へfallbackしない。
   const source = overrides.source ?? authoring.source;
@@ -624,6 +623,7 @@ export function loadAndValidateScenario(overrides = {}) {
     );
     if (!idPattern.test(talk?.id ?? "")) errors.push(`talk id が不正です: ${talk?.id ?? ""}`);
     else if (talkIds.has(talk.id)) errors.push(`talk id が重複しています: ${talk.id}`);
+    else if (appIds.has(talk.id)) errors.push(`talk id がapp idと重複しています: ${talk.id}`);
     talkIds.add(talk.id);
     for (const key of ["inputVisible", "inputEnabled"]) {
       if (talk?.[key] !== undefined && typeof talk[key] !== "boolean") {
@@ -675,6 +675,7 @@ export function loadAndValidateScenario(overrides = {}) {
     if (!idPattern.test(content?.id ?? "")) errors.push(`content id が不正です: ${content?.id ?? ""}`);
     else if (contentIds.has(content.id)) errors.push(`content id が重複しています: ${content.id}`);
     else if (talkIds.has(content.id)) errors.push(`content id がtalk idと重複しています: ${content.id}`);
+    else if (appIds.has(content.id)) errors.push(`content id がapp idと重複しています: ${content.id}`);
     contentIds.add(content.id);
     if (!appIds.has(content?.appId)) errors.push(`${content?.id ?? "content"}: appId が不正です。`);
     if (!initialStates.has(content?.initialState)) errors.push(`${content?.id ?? "content"}: initialState が不正です。`);
@@ -734,14 +735,23 @@ export function loadAndValidateScenario(overrides = {}) {
   talkPeopleById.set(searchAgentPerson.id, searchAgentPerson);
   const talkPeople = [...authoredTalkPeople.filter((person) => person?.id !== "search_agent"), searchAgentPerson];
 
-  const attachments = Array.isArray(source.attachments) ? source.attachments : [];
+  const authoredAttachments = Array.isArray(source.attachments) ? source.attachments : [];
+  const attachments = authoredAttachments.map(attachment => {
+    if (!["image", "audio", "video"].includes(attachment.type)) return attachment;
+    const explicit = contents.find(content => content.id === attachment.content && content.appId === "photos");
+    const targets = [...new Set((source.albumMediaAttachmentLinks ?? [])
+      .filter(link => link.attachmentId === attachment.id).map(link => link.photoId))];
+    const albumContentId = explicit?.id ?? (targets.length === 1 ? targets[0] : undefined);
+    if (!albumContentId && targets.length > 1) authoringWarnings.push(`attachments.${attachment.id}: アルバムの対応先が複数のため、自動登録・移動は行いません。行先のアルバム項目をcontentで指定するか、台本に明示的なリンクを用意してください。`);
+    return albumContentId ? { ...attachment, albumContentId } : attachment;
+  });
   const attachmentsById = new Map();
-  for (const attachment of attachments) {
-    validateObjectKeys(`attachment ${attachment?.id ?? ""}`, attachment, ["id", "type", "asset", "content", "lock", "title", "body", "poster", "search", "searchApp", "cond"], errors);
+  for (const [index, attachment] of attachments.entries()) {
+    validateObjectKeys(`attachment ${attachment?.id ?? ""}`, authoredAttachments[index], ["id", "type", "asset", "content", "lock", "title", "body", "poster", "search", "searchApp", "cond"], errors);
     validateCondition(`attachment ${attachment?.id ?? ""}`, attachment?.cond, stateVariableDefinitions, errors);
     if (attachment.search?.length) {
       validateSearchTerms(`attachment ${attachment.id}`, attachment.search, errors);
-      if (!attachment.content || !["messages", "chat"].includes(attachment.searchApp)) errors.push(`${attachment.id}: 添付検索にはcontentとmessages/chatのsearchAppが必要です。`);
+      if (!(attachment.content || attachment.albumContentId) || !["messages", "chat"].includes(attachment.searchApp)) errors.push(`${attachment.id}: 添付検索には対応コンテンツとmessages/chatのsearchAppが必要です。`);
     }
     const mediaType = ["image", "audio", "video"].includes(attachment?.type);
     const documentType = attachment?.type === "document";
@@ -758,6 +768,10 @@ export function loadAndValidateScenario(overrides = {}) {
     if (attachment.content && repairableTalkContentIds.has(attachment.content)) {
       errors.push(`${attachment.id}: talk初期履歴の修復contentをattachment対象にできません。`);
     }
+    const albumTarget = contents.find(content => content.id === attachment.content && content.appId === "photos");
+    if (attachment.type === "image" && ["still_video", "video"].includes(albumTarget?.record?.mediaKind)) {
+      errors.push(`${attachment.id}: content=${attachment.content}は動画です。表紙画像だけを対応させず、疑似動画はaudio、実動画はvideoの添付にcontentを指定してください。`);
+    }
     if (attachment.lock && attachment.lock !== "password") errors.push(`${attachment.id}: lock が不正です。`);
     attachmentsById.set(attachment.id, attachment);
   }
@@ -766,6 +780,9 @@ export function loadAndValidateScenario(overrides = {}) {
       errors.push(`${attachment.id}: poster はimage attachmentを指定してください。`);
     }
     if (attachment.lock === "password") {
+      if (attachments.some(other => other !== attachment && other.lock === "password" && other.content === attachment.content)) {
+        errors.push(`${attachment.id}: 開錠content=${attachment.content}に複数の添付があります。一つの開錠対象には一つの添付を指定してください。`);
+      }
       const lockedContent = contents.find((content) => content.id === attachment.content);
       if (!lockedContent || typeof lockedContent.record?.unlockCode !== "string" || !lockedContent.record.unlockCode.trim()) {
         errors.push(`${attachment.id}: password lockにはunlockCodeを持つcontentが必要です。`);
@@ -891,6 +908,10 @@ export function loadAndValidateScenario(overrides = {}) {
   const formIds = new Set();
   for (const content of contents) {
     const record = usesStandardMedia(content.appId) ? resolveMediaRecord(content.record ?? {},source.attachments) : content.record ?? {};
+    if (["radio", "phone"].includes(content.appId) && record.genAudioId
+      && (record.audioUrl || (Array.isArray(record.audioSegments) && record.audioSegments.length))) {
+      errors.push(`${content.id}: 固定音声・再生列とgen_audioは同時指定できません。代替音声はgen_audio表のfallbackに指定してください。`);
+    }
     if (record.form !== undefined) {
       if (!record.form || typeof record.form !== "object" || Array.isArray(record.form) || !idPattern.test(record.form.id ?? "")) {
         errors.push(`${content.id}: record.form.id が不正です。`);
@@ -984,7 +1005,7 @@ export function loadAndValidateScenario(overrides = {}) {
   const hookEvents = new Set(Object.keys(CORE_SCENARIO_HOOK_EVENTS));
   const hookIds = new Set();
   for (const hook of hooks) {
-    validateObjectKeys(`hook ${hook?.handler ?? ""}`, hook, ["event", "target", "handler", "cond", "llm"], errors);
+    validateObjectKeys(`hook ${hook?.handler ?? ""}`, hook, ["event", "target", "handler", "cond", "needsAi"], errors);
     if (!hookEvents.has(hook?.event) && !idPattern.test(hook?.event ?? "")) errors.push(`hook event が不正です: ${hook?.event ?? ""}`);
     if (["scenario_event", "talk_sent"].includes(hook?.event)) errors.push(`${hook.handler}: 廃止済みhook eventです: ${hook.event}`);
     if (!idPattern.test(hook?.handler ?? "")) errors.push(`hook handler id が不正です: ${hook?.handler ?? ""}`);
@@ -993,6 +1014,8 @@ export function loadAndValidateScenario(overrides = {}) {
     const target = typeof hook.target === "string" ? hook.target.trim() : "";
     if (metadata?.targetRequired && !target) {
       errors.push(`${hook.handler}: ${hook.event} のtargetは必須です。`);
+    } else if (target === "*" && metadata && !metadata.targetRequired && metadata.targetKind !== "none") {
+      // 空欄で全対象を扱えるeventでは、明示的な全対象指定も同じ意味にする。
     } else if (metadata?.targetKind === "blocked_app" && target !== "*" && !appIds.has(target)) {
       errors.push(`${hook.handler}: target appが未定義です。`);
     } else if (metadata?.targetKind === "content_open" && target
@@ -1015,8 +1038,8 @@ export function loadAndValidateScenario(overrides = {}) {
     } else if (metadata?.targetKind === "part" && target !== "*" && !(source.partIds ?? ["base"]).includes(target)) {
       errors.push(`${hook.handler}: part targetが未定義です。`);
     }
-    if (source.features?.llm !== true && hook?.llm === true) errors.push(`${hook.handler}: LLM無効時はllm hookを使用できません。`);
-    if (hook?.llm !== undefined && typeof hook.llm !== "boolean") errors.push(`${hook.handler}: llm はbooleanにしてください。`);
+    if (source.features?.llm !== true && hook?.needsAi === true) errors.push(`${hook.handler}: LLM無効時はneeds_ai=trueのhookを使用できません。`);
+    if (hook?.needsAi !== undefined && typeof hook.needsAi !== "boolean") errors.push(`${hook.handler}: needsAi はbooleanにしてください。`);
     if (hook?.clientCallable !== undefined) errors.push(`${hook.handler}: clientCallable はhookではなくclientCallableEventsへ指定してください。`);
     validateCondition(`hook ${hook?.handler ?? ""}`, hook?.cond, stateVariableDefinitions, errors);
   }
@@ -1079,13 +1102,20 @@ export function loadAndValidateScenario(overrides = {}) {
   const assistantItems = Array.isArray(source.assistantMessages) ? source.assistantMessages : [];
   validateUniqueItems("assistantMessage", assistantItems, errors);
   for (const message of assistantItems) {
-    validateObjectKeys(`assistantMessage ${message?.id ?? ""}`, message, ["id", "surface", "body", "weight", "agentAction", "sticky", "cond"], errors);
-    if (message?.sticky !== undefined && typeof message.sticky !== "boolean") errors.push(`${message?.id ?? "assistantMessage"}: sticky は true/false にしてください。`);
-    if (typeof message?.surface !== "string" || !message.surface.trim() || typeof message?.body !== "string" || !message.body.trim()) {
-      errors.push(`${message?.id ?? "assistantMessage"}: surface と body が必要です。`);
+    validateObjectKeys(`assistantMessage ${message?.id ?? ""}`, message, ["id", "trigger", "body", "weight", "agentAction", "hide", "cond"], errors);
+    if (message?.hide !== undefined && !["auto", "close", "never"].includes(message.hide)) errors.push(`${message?.id ?? "assistantMessage"}: hide は auto/close/never にしてください。`);
+    if (typeof message?.trigger !== "string" || !validAssistantTrigger(message.trigger, appIds)) {
+      errors.push(`${message?.id ?? "assistantMessage"}: triggerが不正です。`);
     }
-    if (!Number.isFinite(message?.weight)) errors.push(`${message?.id ?? "assistantMessage"}: weight は数値にしてください。`);
+    if (typeof message?.body !== "string" || !message.body.trim()) errors.push(`${message?.id ?? "assistantMessage"}: bodyが必要です。`);
+    if (!Number.isFinite(message?.weight) || message.weight < 0) errors.push(`${message?.id ?? "assistantMessage"}: weight は0以上の有限数にしてください。`);
     validateTextLength(`${message?.id ?? "assistantMessage"}.body`, message?.body, 600, errors);
+  }
+  for (const trigger of REQUIRED_ASSISTANT_TRIGGERS) {
+    if (!assistantItems.some(message => message.trigger === trigger && message.weight > 0 && !String(message.cond ?? "").trim()
+      && (source.partOwnership?.assistantMessages?.[message.id] ?? "base") === "base")) {
+      errors.push(`assistant_messages: trigger=${trigger}の共通行（base・cond空欄・weightが正）が必要です。`);
+    }
   }
 
   for (const [id, description] of Object.entries(source.photoDescriptions ?? {})) {
@@ -1130,7 +1160,7 @@ export function loadAndValidateScenario(overrides = {}) {
     const mode = String(row.mode ?? "").trim();
     if (!["", "stay", "game_over"].includes(mode)) errors.push(`${label}: modeが不正です。`);
     if (searchAgent && mode === "game_over") errors.push(`${label}: search_agentではmode=game_overを使用できません。`);
-    const assignments = splitAssignments(row.set);
+    const assignments = splitSetStatements(String(row.set ?? ""));
     validateCondition(label, row.cond, stateVariableDefinitions, errors);
     let matchIds = new Set();
     if (match) {
@@ -1468,10 +1498,10 @@ export function loadAndValidateScenario(overrides = {}) {
     publicId: publicIds.incomingCall[call.id]
   }));
   const albumMediaAttachmentLinks = [...(source.albumMediaAttachmentLinks ?? []), ...attachments.flatMap((attachment) => {
-    if (attachment.lock || !attachment.content || !["image", "audio", "video"].includes(attachment.type)) return [];
+    if (!attachment.content || !["image", "audio", "video"].includes(attachment.type)) return [];
     const content = contents.find((item) => item.id === attachment.content);
     return content?.appId === "photos" ? [{ attachmentId: attachment.id, photoId: content.id }] : [];
-  })].filter((link, index, links) => !attachmentsById.get(link.attachmentId)?.lock && links.findIndex((candidate) => candidate.attachmentId === link.attachmentId && candidate.photoId === link.photoId) === index);
+  })].filter((link, index, links) => links.findIndex((candidate) => candidate.attachmentId === link.attachmentId && candidate.photoId === link.photoId) === index);
   const lockedContentPasswords = contents.flatMap((content) => {
     const attachment = attachments.find(item => item.lock === "password" && item.content === content.id);
     if (!attachment && !projectAppById.has(content.appId)) return [];
@@ -1486,7 +1516,7 @@ export function loadAndValidateScenario(overrides = {}) {
     ...hook,
     target: hook.target ?? "",
     cond: hook.cond ?? "",
-    llm: hook.llm === true
+    needsAi: hook.needsAi === true
   }));
   const normalizedTodos = (Array.isArray(source.todos) ? source.todos : []).map((todo) => ({
     ...todo,
@@ -1521,9 +1551,7 @@ export function loadAndValidateScenario(overrides = {}) {
     "search_agent.name": source.project.assistantName,
     "player.mode": playerMode,
     "player.access_code": source.project.accessCode,
-    "talk.clock": source.project.talkClock,
-    "searchAgent.broken_link_tutorial_body": source.projectConstants?.["search_agent.broken_link_tutorial_body"] ?? "",
-    "searchAgent.broken_link_body": source.projectConstants?.["search_agent.broken_link_body"] ?? ""
+    "talk.clock": source.project.talkClock
   };
   const transcriptRevision = transcriptRevisionFor({
     version: 1,
@@ -1617,6 +1645,7 @@ export function loadAndValidateScenario(overrides = {}) {
   const partWarnings = validateScenarioParts(worker, {workbook:authoring.workbook, hookScripts:authoring.hookScripts});
   return {
     partWarnings,
+    authoringWarnings,
     revision,
     clientRevision,
     transcriptRevision,

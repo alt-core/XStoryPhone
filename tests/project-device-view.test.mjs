@@ -67,7 +67,7 @@ test("検索結果から親だけを修復した場合も案内し、同じ結�
     uiState: { sessionToken: "session" }, playerState: state, displayedTalkTarget: null,
     captureContentNavigation: () => () => true,
     handleContentOpen: async () => { state.visibleDeviceState.apps = [{ id: "chat", available: true, corrupted: false }]; return true; },
-    focusOpenedContent() {}, showTransientAssistantMessage: message => messages.push(message)
+    focusOpenedContent() {}, showAssistantNotice: (...args) => messages.push(args)
   });
   const result = { appId: "chat", contentId: "room", targetKind: "content", repairable: true };
   assert.equal(await context.handleOpenSearchAgentResult(result), true);
@@ -80,11 +80,11 @@ function searchAgentHarness(props = {}, dependencies = {}) {
   return componentScriptHarness(searchAgentUrl, {
     deviceState: { apps: [] },
     talk: { talkId: "search", messages: [] },
+    selectOpenFailureMessage: () => "開けませんでした。",
     ...props
   }, {
     appCatalog: [],
     Element: class Element {},
-    projectConstants: { "searchAgent.broken_link_tutorial_body": "初回の検索案内" },
     tick: () => Promise.resolve(),
     window: { clearTimeout() {}, matchMedia: () => ({ matches: false }) },
     loadTalkDelaySeenMessages: () => ({}),
@@ -124,10 +124,10 @@ test("検索の手動開閉は実expandedの更新直後に通知する", () => 
   assert.deepEqual(opened, [true, false, true, false], "後から古いtrueを再通知しない");
 });
 
-test("初回の破損リンク案内は背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {
+test("hide=closeは背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {
   const harness = searchAgentHarness({
     peeking: true, surfaceKey: "home",
-    surfaceMessage: { id: "broken-link-1", surface: "home", body: "初回の検索案内" }
+    surfaceMessage: { id: "hint", surface: "home", body: "案内", hide: "close" }
   });
   harness.evaluate("handleScreenPointerDown({ target: null })");
   harness.flush();
@@ -145,10 +145,24 @@ test("初回の破損リンク案内は背景タップで消えず、会話を�
   assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "通常案内の背景タップは従来どおり");
 });
 
-test("stickyの案内は会話を閉じても背景をタップしても表示し続ける", () => {
+test("パネル内で届いた新しい案内は一度も見ないままcloseで消さない", () => {
+  const harness = searchAgentHarness();
+  harness.evaluate("openExpanded()");
+  harness.update({ surfaceMessage: { id: "new:1", trigger: "repaired", body: "新しい通知", hide: "close" } });
+  harness.evaluate("closeExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
+  harness.evaluate("openExpanded(); closeExpanded()");
+  harness.flush();
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), false);
+  harness.update({ surfaceMessage: { id: "new:2", trigger: "repaired", body: "新しい通知", hide: "close" } });
+  assert.equal(harness.evaluate("surfaceBubbleVisible"), true, "次の操作は同じ案内でも再表示");
+});
+
+test("hide=neverの案内は会話を閉じても背景をタップしても表示し続ける", () => {
   const harness = searchAgentHarness({
     peeking: true, surfaceKey: "home",
-    surfaceMessage: { id: "urgent", surface: "home", body: "今すぐ検索", sticky: true }
+    surfaceMessage: { id: "urgent", surface: "home", body: "今すぐ検索", hide: "never" }
   });
   harness.evaluate("openExpanded()");
   harness.flush();
@@ -162,6 +176,18 @@ test("stickyの案内は会話を閉じても背景をタップしても表示�
   assert.equal(harness.evaluate("surfaceBubbleVisible"), true);
   harness.update({ surfaceMessage: undefined });
   assert.equal(harness.evaluate("surfaceBubbleVisible"), false, "condを満たさなくなれば消える");
+});
+
+test("同じ文言でもhideとsurfaceだけが表示・非表示を決める", () => {
+  for (const surface of ["home", "notes"]) for (const hide of ["auto", "close", "never"]) {
+    const h = searchAgentHarness({ surfaceKey: surface, surfaceMessage: { id: "hint", surface, body: "同じ案内文", hide } });
+    h.evaluate("handleScreenPointerDown({target:null})"); h.flush();
+    assert.equal(h.evaluate("surfaceBubbleVisible"), hide !== "auto");
+    h.evaluate("openExpanded(); closeExpanded()"); h.flush();
+    assert.equal(h.evaluate("surfaceBubbleVisible"), hide === "never");
+    h.update({ surfaceKey: "photos" }); h.update({ surfaceKey: surface });
+    assert.equal(h.evaluate("surfaceBubbleVisible"), true);
+  }
 });
 
 test("吹き出しから会話を開いて閉じると引っ込み、画面へ戻ったときだけ案内を再表示する", () => {
@@ -236,6 +262,30 @@ test("検索結果を開けた場合は閉じた状態を通知する", async ()
   assert.deepEqual(opened, [true, false]);
 });
 
+test("開封失敗の本文は失敗確定時にだけ抽選し、その後の状態更新では書き換えない", async () => {
+  let draws = 0;
+  let finish;
+  const harness = searchAgentHarness({
+    selectOpenFailureMessage: () => `失敗案内${++draws}`,
+    onOpenSearchAgentResult: () => new Promise(resolve => { finish = resolve; })
+  }, { crypto: globalThis.crypto });
+  harness.update({ deviceState: { apps: [] } });
+  assert.equal(draws, 0);
+  const request = harness.evaluate('openResult({appId:"notes",contentId:"item"})');
+  harness.flush();
+  assert.equal(draws, 0, "通信待ち中は選ばない");
+  finish(false); await request; harness.flush();
+  assert.equal(draws, 1);
+  assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "失敗案内1");
+  harness.update({ deviceState: { apps: [] }, selectOpenFailureMessage: () => `別の案内${++draws}` });
+  assert.equal(draws, 1, "状態更新で再抽選しない");
+  assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "失敗案内1");
+  const again = harness.evaluate('openResult({appId:"notes",contentId:"item"})');
+  finish(false); await again; harness.flush();
+  assert.equal(draws, 2);
+  assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "別の案内2");
+});
+
 test("入力欄を隠した検索会話でも、開封失敗後にQuick Replyで続行できる", async () => {
   const menu = { kind: "message", id: "menu", seq: 1, talkId: "search", sender: "other", body: "選んでください", sentAt: "2026-01-01T00:00:00Z", quickReplies: ["続ける"] };
   const talk = { talkId: "search", messages: [menu], inputVisible: false, inputEnabled: true, inputVisibleAfterSeq: 0, inputEnabledAfterSeq: 0, canPost: true };
@@ -255,7 +305,7 @@ test("入力欄を隠した検索会話でも、開封失敗後にQuick Replyで
     assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける");
     await harness.evaluate('openResult({ appId: "messages", contentId: "unavailable" })');
     harness.flush();
-    assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "このデータはまだ開けないみたい。");
+    assert.equal(harness.evaluate("displayedMessages.at(-1).body"), "開けませんでした。");
     assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), "続ける");
     harness.evaluate("closeExpanded(); openExpanded()");
     harness.flush();

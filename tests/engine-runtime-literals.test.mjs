@@ -26,6 +26,7 @@ test("engineの公開語彙は実行時literalのみで、型・コメント・�
 });
 
 test("構造値の重複があっても本文・答え・字幕に書かれた値は保護を維持する", () => {
+  assert.deepEqual(privateTextLeaves({ trigger: "search_open_failed", body: "search_open_failed", answers: ["search_open_failed"] }), ["search_open_failed", "search_open_failed"]);
   assert.deepEqual(privateTextLeaves({ mediaKind: "still_video", imageUrl: "/system/audio-only-video-thumbnail.png", cues: [{ eventId: "incoming_call" }] }), []);
   assert.deepEqual(privateTextLeaves({ body: "still_video", answers: ["incoming_call"], transcript: [{ text: "字幕" }], pin: "1234" }), ["still_video", "incoming_call", "字幕", "1234"]);
 });

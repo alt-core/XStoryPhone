@@ -117,8 +117,8 @@ reviewTest("D1の開始失敗・PIN・reset・再開始は同じ初期化を使�
     workerScenario.stateVariableParts.reset_capture="base";
     workerScenario.talkBlocks.find(block=>block.id==="guide::intro").messages[0].body="{{reset_capture}}";
     workerScenario.hooks=[
-      {event:"part_loaded",target:"base",handler:"reset_fixture_loaded",cond:"",part:"base",order:0,llm:false},
-      {event:"session_started",target:"",handler:"reset_fixture_started",cond:"",part:"base",order:1,llm:false}
+      {event:"part_loaded",target:"base",handler:"reset_fixture_loaded",cond:"",part:"base",order:0,needsAi:false},
+      {event:"session_started",target:"",handler:"reset_fixture_started",cond:"",part:"base",order:1,needsAi:false}
     ];
     scenarioHookHandlers.reset_fixture_loaded=()=>{loadedCalls++; if(fail) throw new Error("開始失敗fixture");};
     scenarioHookHandlers.reset_fixture_started=context=>{startedCalls++;context.state.set("reset_capture","開始hook後");};

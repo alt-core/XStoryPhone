@@ -12,6 +12,7 @@
   export let assistantVisible = false;
   export let assistantSurfaceKey = "home";
   export let assistantSurfaceMessage: AssistantMessage | undefined = undefined;
+  export let selectSearchOpenFailureMessage: () => string = () => "";
   export let shadeOpen = false;
   export let homeButtonVisible = false;
   export let backLinkLabel = "";
@@ -45,7 +46,7 @@
     messageRef: string,
     segmentIndex: number,
     linkId?: string
-  ) => void | Promise<void> = () => {};
+  ) => void | "not_available" | Promise<void | "not_available"> = () => {};
 
   $: wallpaperStyle = wallpaperUrl ? `--phone-wallpaper-image: url("${resourceUrl(wallpaperUrl)}");` : "";
 </script>
@@ -111,6 +112,7 @@
           onOpenChange={onSearchAgentOpenChange}
           onOpenMessageLink={onOpenSearchAgentMessageLink}
           {onOpenSearchAgentResult}
+          selectOpenFailureMessage={selectSearchOpenFailureMessage}
         />
       {/if}
     </div>

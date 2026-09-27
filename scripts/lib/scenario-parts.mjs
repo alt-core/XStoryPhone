@@ -197,7 +197,7 @@ export function validateScenarioParts(worker, { workbook, hookScripts = {} } = {
     for (const talk of worker.talks) for (const rule of talk.rules) {
       if (rule.type === "ai" || (rule.match && !rule.match.startsWith("/"))) errors.push(`${talk.id}/${rule.id}: staticではAI判定・AI抽出を使用できません。`);
     }
-    for (const hook of worker.hooks) if (hook.llm) errors.push(`hooks.${hook.handler}: staticではAIを使うhookを使用できません。`);
+    for (const hook of worker.hooks) if (hook.needsAi) errors.push(`hooks.${hook.handler}: staticではAIが必須のhookを使用できません。`);
   }
   if (errors.length) throw new Error(errors.map(error => `- ${error}`).join("\n"));
   return [...warnings];

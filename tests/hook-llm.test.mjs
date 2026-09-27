@@ -7,7 +7,7 @@ import { resolveHookLlmProfile } from "../src/worker/product/llmProfiles.ts";
 import { runScenarioHooks } from "../src/worker/services/scenarioHooks.ts";
 
 function withHook(id, handler, run) {
-  const hook = { event: id, target: "", handler: id, cond: "", llm: true };
+  const hook = { event: id, target: "", handler: id, cond: "", needsAi: true };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers[id] = handler;
   return Promise.resolve(run()).finally(() => {

@@ -95,6 +95,18 @@ npm run scenario:sheets:put -- --tables note_items,photo_items --yes-overwrite-g
 
 ## セルの書き方
 
+制作表を以前の形式から更新する場合、次の変更をまとめて反映してください。旧名の互換読込みはありません。
+
+| 以前の指定 | 現在の指定 |
+|---|---|
+| hooks.llm | needs_ai。AI使用禁止ではなく、AIが必須かの依存宣言 |
+| assistant_messages.sticky | hide。falseはauto、trueはnever。closeも指定可能 |
+| assistant_messages.surface | trigger。通常画面はscreen:home／screen:アプリID |
+| search_agent.broken_link_body / broken_link_tutorial_body | assistant_messagesのblocked_link／app_unavailable等の行 |
+| radio_items / call_itemsのgen_audio列 | audioセルへgen_audio:ID。gen_audio定義表とfallback列は維持 |
+
+assistant_messagesには、base・cond空欄でblocked_link、search_open_failed、album_added、repaired、history_repairedの共通行を用意します。標準の文言はデモ表を参照してください。詳しい選択順とhideの動作は[検索AIの吹き出し](scenario.md#検索aiの吹き出し)を確認してください。
+
 - A列は`comment`。空欄の行がデータで、通常のコメント行は生成しません。完全な空行は無視します。`#part名`だけをA列に置いた行は、以降の定義のpart所属を指定します。
 - `talk_blocks`だけは、A列の`*talk_id`、block名、`---`を宣言として解釈します。
 - 本文やscriptはセル内改行を使えます。取得時にTSVの引用符・改行を保ちます。
@@ -124,7 +136,7 @@ part宣言の境界でも継承は解除されます。`talk_blocks`では`*talk
 
 標準設定には`project.*`、`device.*`、`search_agent.*`、`player.*`、`features.*`、`chat_auth.*`、`event.*`等を使います。未知のkeyは任意定数になり得るため、標準設定の誤記を全て検出するわけではありません。標準keyはデモと[端末設定](scenario.md#端末設定)を確認し、作品独自定数は区別できる名前にしてください。
 
-作品名・OS名・背景等の初期画面に必要な標準設定は、表示用データにも使います。秘密情報を入れないでください。`search_agent.broken_link_tutorial_body`と`search_agent.broken_link_body`は初期clientで使う案内文なので、exposureに`public`を指定する必要があります。
+作品名・OS名・背景等の初期画面に必要な標準設定は、表示用データにも使います。秘密情報を入れないでください。初回案内や操作への返答はassistant_messagesのtrigger・cond・hideで制作します。
 
 列の用途は[シナリオ作成](scenario.md)、会話は[会話エンジン](conversation.md)、制作検査は[制作テスト](authoring-tests.md)を参照してください。分岐IDは定義内容から生成し、行の挿入やメモの変更では変えません。条件・返答先等の定義が変わると別IDになり、過去ログを推定で新分岐へ混ぜません。条件文字列の内部空白だけを変えた場合も別IDになることがあります。論理的に同じ式かを推定して統合する方式ではありません。
 

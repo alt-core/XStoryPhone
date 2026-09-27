@@ -1,15 +1,14 @@
 <script lang="ts">
   import { afterUpdate, beforeUpdate, onDestroy } from "svelte";
   import { FileImage, ImagePlus, KeyRound, List, MessageSquareText, Radio, Send, Video, X } from "@lucide/svelte";
+  import LockedAttachmentContents from "./LockedAttachmentContents.svelte";
+  import TalkMediaAttachment from "./TalkMediaAttachment.svelte";
   import type { AppId, ChatAppThread, ChatAuthGate, MessageAttachment, PendingShareDraft, PhotoItem, TalkInputState } from "../scenario-runtime/types";
-  import AttachmentImageFrame from "../system/AttachmentImageFrame.svelte";
-  import AudioPlaybackButton from "../system/AudioPlaybackButton.svelte";
   import MessageBody from "../system/MessageBody.svelte";
   import QuickReplies from "../system/QuickReplies.svelte";
   import ScrollHint from "../system/ScrollHint.svelte";
   import TypingIndicator from "../system/TypingIndicator.svelte";
   import UserAvatar from "../system/UserAvatar.svelte";
-  import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import { resourceUrl } from "../system/resourceUrls";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
@@ -62,6 +61,7 @@
   export let albumMediaContentId: (attachment: MessageAttachment | undefined) => string = () => "";
   export let onOpenAlbumMedia: (attachment: MessageAttachment | undefined) => void = () => {};
   export let inputStateByThread: Record<string, TalkInputState> = {};
+  export let onUnlockAttachment: (contentId: string, password: string) => Promise<{ ok: boolean; error?: string }> = async () => ({ ok: false, error: "開けません。" });
   export let onAuthLinkRequest: () => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"
@@ -472,7 +472,7 @@
           return "";
         }
 
-        return `${message.id}:${attachment.kind}:${attachment.contentId ?? ""}:${attachment.attachmentId ?? ""}`;
+        return `${message.id}:${attachment.kind}:${attachment.albumContentId ?? ""}:${attachment.attachmentId ?? ""}`;
       })
       .filter(Boolean)
       .join("|");
@@ -481,8 +481,8 @@
   function mediaAttachmentContentIds(messages: ChatAppThread["messages"]) {
     return [...new Set(messages.flatMap((message) => {
       const attachment = message.attachment;
-      return attachment && isMediaAttachment(attachment) && attachment.contentId
-        ? [attachment.contentId]
+      return attachment && isMediaAttachment(attachment) && attachment.albumContentId
+        ? [attachment.albumContentId]
         : [];
     }))];
   }
@@ -951,67 +951,22 @@
                               <span>{message.attachment.title}</span>
                             </button>
                           </section>
+                        {:else if message.attachment?.kind === "locked"}
+                          <section class="attachment-card" aria-label="添付">
+                            {#key message.attachment.contentId}
+                            <LockedAttachmentContents attachment={message.attachment} playbackId={`chat-audio:${selectedThread.id}:${message.id}`}
+                              canOpenAlbum={Boolean(albumMediaContentId(message.attachment))} onOpenAlbum={() => openAlbumMedia(message.attachment)}
+                              onComplete={notifyAudioPlaybackComplete} onUnlock={onUnlockAttachment} />
+                            {/key}
+                          </section>
                         {:else if message.attachment && isMediaAttachment(message.attachment)}
                           <section class="attachment-card" aria-label="添付">
                             <div>
-                              {#if message.attachment.kind === "image"}
-                                <FileImage size={16} strokeWidth={2.1} />
-                              {:else}
-                                <Video size={16} strokeWidth={2.1} />
-                              {/if}
+                              {#if message.attachment.kind === "image"}<FileImage size={16} strokeWidth={2.1} />{:else}<Video size={16} strokeWidth={2.1} />{/if}
                               <b>{message.attachment.kind === "image" ? "画像" : "動画"}</b>
                             </div>
-                            {#if message.attachment.kind === "image" && message.attachment.imageUrl}
-                              {#if albumMediaContentId(message.attachment)}
-                                <button
-                                  class="media-attachment-button"
-                                  type="button"
-                                  title="アルバムで開く"
-                                  aria-label="画像をアルバムで開く"
-                                  on:click={() => openAlbumMedia(message.attachment)}
-                                >
-                                  <AttachmentImageFrame src={message.attachment.imageUrl} alt="" />
-                                </button>
-                              {:else}
-                                <AttachmentImageFrame src={message.attachment.imageUrl} alt="" />
-                              {/if}
-                            {:else if message.attachment.kind === "audio" && message.attachment.audioUrl}
-                              {#if albumMediaContentId(message.attachment)}
-                                <button
-                                  class="media-attachment-button"
-                                  type="button"
-                                  title="アルバムで開く"
-                                  aria-label="動画をアルバムで開く"
-                                  on:click={() => openAlbumMedia(message.attachment)}
-                                >
-                                  <VideoStillFrame src={message.attachment.imageUrl} />
-                                </button>
-                              {:else}
-                                <VideoStillFrame src={message.attachment.imageUrl} />
-                              {/if}
-                              <AudioPlaybackButton
-                                playbackId={`chat-audio:${selectedThread.id}:${message.id}`}
-                                src={message.attachment.audioUrl}
-                                label="再生"
-                                onComplete={() => message.attachment?.kind === "audio" && notifyAudioPlaybackComplete(message.attachment)}
-                              />
-                            {:else if message.attachment.kind === "video" && message.attachment.videoUrl}
-                              <VideoPlayback
-                                src={message.attachment.videoUrl}
-                                poster={message.attachment.imageUrl ?? ""}
-                                label="添付動画"
-                                onComplete={() => message.attachment?.kind === "video" && notifyAudioPlaybackComplete(message.attachment)}
-                              />
-                              {#if albumMediaContentId(message.attachment)}
-                                <button
-                                  class="shared-link-card"
-                                  type="button"
-                                  on:click={() => openAlbumMedia(message.attachment)}
-                                >
-                                  <span>アルバムで表示</span>
-                                </button>
-                              {/if}
-                            {/if}
+                            <TalkMediaAttachment media={message.attachment} playbackId={`chat-audio:${selectedThread.id}:${message.id}`}
+                              canOpenAlbum={Boolean(albumMediaContentId(message.attachment))} onOpenAlbum={() => openAlbumMedia(message.attachment)} onComplete={notifyAudioPlaybackComplete} />
                           </section>
                         {/if}
                       </article>
@@ -1396,6 +1351,10 @@
   }
 
   .attachment-card {
+    --attachment-color: #bef9cc;
+    --attachment-border: rgba(126, 224, 147, 0.22);
+    --attachment-background: rgba(126, 224, 147, 0.1);
+    --attachment-focus: rgba(126, 224, 147, 0.72);
     display: grid;
     gap: 8px;
     margin-top: 3px;
@@ -1418,25 +1377,6 @@
     font-size: 0.72rem;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .attachment-card .media-attachment-button {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    padding: 0;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    color: inherit;
-    text-align: inherit;
-    cursor: pointer;
-  }
-
-  .attachment-card .media-attachment-button:focus-visible {
-    outline: 2px solid rgba(126, 224, 147, 0.72);
-    outline-offset: 2px;
   }
 
   .attachment-card .shared-link-card {

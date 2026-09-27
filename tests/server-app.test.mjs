@@ -187,7 +187,7 @@ test("server/browserも取得済partだけで会話・hook・公開状態を処�
   const handlers = { ...scenarioHookHandlers };
   try {
     workerScenario.parts = ["base", "evidence"];
-    workerScenario.hooks = [{ event: "part_loaded", target: "evidence", cond: "", part: "evidence", order: 1, handler: "part_fixture", llm: false }];
+    workerScenario.hooks = [{ event: "part_loaded", target: "evidence", cond: "", part: "evidence", order: 1, handler: "part_fixture", needsAi: false }];
     workerScenario.stateVariables.part_probe = false;
     workerScenario.stateVariableDefinitions.part_probe = { type: "boolean" };
     workerScenario.stateVariableParts.part_probe = "evidence";
@@ -667,7 +667,7 @@ test("browserの入場認証はPIN前に確認し、開始とtoken受理でも�
     workerScenario.playerMode = "browser";
     workerScenario.project.accessCode = "required";
     workerScenario.project.lockScreen = { method: "fixed-pin", pin: "0042" };
-    workerScenario.hooks = [{ event: "session_started", target: "", handler: "entry_probe", cond: "", llm: false }];
+    workerScenario.hooks = [{ event: "session_started", target: "", handler: "entry_probe", cond: "", needsAi: false }];
     scenarioHookHandlers.entry_probe = () => { starts += 1; };
     const app = createApp({ store, config });
     const post = (route, body = {}) => app.request(`https://game.example/api/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -727,9 +727,10 @@ test("browserの任意生成音声は補助jobだけ保存し、同じtokenで�
     definition.staticUrl = "";
     const radio = workerScenario.contents.find(item => item.id === "sample_radio");
     delete radio.record.audioAttachmentId;
+    radio.record.genAudioId = definition.id;
     radio.record.playbackCond = "image_color_reported";
     radio.record.transcript = [{ atMs: 0, text: "再生前の字幕fixture9841" }];
-    workerScenario.hooks = [{ event: "session_started", target: "", handler: "audio_probe", cond: "", llm: false }];
+    workerScenario.hooks = [{ event: "session_started", target: "", handler: "audio_probe", cond: "", needsAi: false }];
     scenarioHookHandlers.audio_probe = context => context.genAudio.prepare("demo_voice", { inputText: "未公開の台本fixture928471" });
     const app = createApp({ store, config: { appEnv: "production", adminReviewSecret: "admin", browserStateSecret: "browser-secret", llm: {} } });
     const started = await (await app.request("https://game.example/api/session/start", { method: "POST" })).json();
@@ -1089,7 +1090,7 @@ test("browserモードでは発話を追加した同じ更新でtalkを非表示
     target: "",
     handler: "test_hide_talk_after_append",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.playerMode = "browser";
   workerScenario.stateVariables.test_hide_talk_after_append = false;
@@ -1149,7 +1150,7 @@ test("browserモードでは同じrequestの予定eventが追加した発話も�
     target: "",
     handler: "test_hide_talk_after_due_append",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.playerMode = "browser";
   workerScenario.stateVariables.test_hide_talk_after_due_append = false;
@@ -1388,7 +1389,7 @@ test("同じturnKeyの会話再送はstaleとして本文と返信を二重保�
     target: "guide",
     handler: "test_capture_talk_transition",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(talkHook);
   scenarioHookHandlers.test_capture_talk_transition = (_context, event) => { capturedTalkEvent = structuredClone(event); };
@@ -1453,8 +1454,8 @@ test("server/browserとも発話時の作中日時を保存し、setや完了hoo
     nextBlocks: ["guide::message_reply"], outputSteps: [{ kind: "block", blockId: "guide::message_reply" }]
   };
   const hookDefinitions = [
-    { event: "session_started", target: "", handler: "test_clock_start", cond: "", llm: false },
-    { event: "talk_turn_completed", target: "guide", handler: "test_clock_completed", cond: "", llm: false }
+    { event: "session_started", target: "", handler: "test_clock_start", cond: "", needsAi: false },
+    { event: "talk_turn_completed", target: "guide", handler: "test_clock_completed", cond: "", needsAi: false }
   ];
   settings.talkClock = "scenario";
   guide.rules.unshift(rule);
@@ -1601,14 +1602,14 @@ test("修復対象を開く時は修復hookの後に開封hookを実行する", 
     target: "old_note",
     handler: "test_capture_repaired_order",
     cond: "",
-    llm: false
+    needsAi: false
   };
   const openedHook = {
     event: "content_opened",
     target: "old_note",
     handler: "test_capture_opened_order",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(repairedHook, openedHook);
   scenarioHookHandlers.test_capture_repaired_order = () => { order.push("repaired"); };
@@ -1647,9 +1648,9 @@ test("親アプリ同時修復はopt-inで到達済みの子だけを開き、�
   let invalidateParent = false;
   let terminate = false;
   const hooks = [
-    { event: "content_repaired", target: "notes", handler: "test_parent_repair", cond: "", llm: false },
-    { event: "content_repaired", target: "old_note", handler: "test_child_repair", cond: "", llm: false },
-    { event: "content_opened", target: "old_note", handler: "test_child_open", cond: "", llm: false }
+    { event: "content_repaired", target: "notes", handler: "test_parent_repair", cond: "", needsAi: false },
+    { event: "content_repaired", target: "old_note", handler: "test_child_repair", cond: "", needsAi: false },
+    { event: "content_opened", target: "old_note", handler: "test_child_open", cond: "", needsAi: false }
   ];
   workerScenario.hooks.push(...hooks);
   scenarioHookHandlers.test_parent_repair = context => {
@@ -1737,7 +1738,7 @@ test("server/browserとも通常状態のコンテンツ・ルームを検索し
   const content = workerScenario.contents.find(item => item.id === "old_note");
   const originalParentInitial = parent.initialState;
   const originalContentInitial = content.initialState;
-  const hook = { event: "session_started", target: "", handler: "test_normal_child_setup", cond: "", llm: false };
+  const hook = { event: "session_started", target: "", handler: "test_normal_child_setup", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_normal_child_setup = context => context.state.set("sealed_note_unlocked", true);
   workerScenario.project.repairParentApp = true;
@@ -1790,14 +1791,14 @@ test("修復hookと開封hookが同じ外部副作用IDを操作した場合は�
     target: "old_note",
     handler: "test_duplicate_repaired_effect",
     cond: "",
-    llm: false
+    needsAi: false
   };
   const openedHook = {
     event: "content_opened",
     target: "old_note",
     handler: "test_duplicate_opened_effect",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(repairedHook, openedHook);
   try {
@@ -1895,14 +1896,14 @@ test("修復hookがeffect sequenceを開始した後は同じrequestの開封hoo
     target: "old_note",
     handler: "test_repair_sequence",
     cond: "",
-    llm: false
+    needsAi: false
   };
   const openedHook = {
     event: "content_opened",
     target: "old_note",
     handler: "test_open_after_sequence",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(repairedHook, openedHook);
   scenarioHookHandlers.test_repair_sequence = (context) => context.effectSequence.gameOver();
@@ -1943,7 +1944,7 @@ test("開封hookは同じコンテンツを開くたびに実行する", async (
     target: "welcome_note",
     handler: "test_count_content_opened",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(openedHook);
   scenarioHookHandlers.test_count_content_opened = () => { openedCount += 1; };
@@ -1972,7 +1973,7 @@ test("通常talkの開封hookは公開IDを内部talk IDへ戻して毎回実行
     target: "guide",
     handler: "test_count_talk_content_opened",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(openedHook);
   scenarioHookHandlers.test_count_talk_content_opened = (_context, event) => {
@@ -2011,7 +2012,7 @@ test("開封hookが新しく出した同一対象の通知を同じrequestで消
     target: "welcome_note",
     handler: "test_open_notification",
     cond: "!test_open_notification",
-    llm: false
+    needsAi: false
   };
   workerScenario.notifications.push(notification);
   workerScenario.publicIds.notification.test_open_notification = "notification_test_open";
@@ -2057,7 +2058,7 @@ test("メッセージ内リンクhookへ照合済みの遷移先を渡す", asyn
     target: "verified_action",
     handler: "test_capture_message_link",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(linkHook);
   scenarioHookHandlers.test_capture_message_link = (_context, event) => { capturedEvent = structuredClone(event); };
@@ -2089,7 +2090,7 @@ test("到達済みリンクのhookを先に確定し、遷移できなくても�
   const content = workerScenario.contents.find(item => item.id === "welcome_note");
   const parent = workerScenario.apps.find(item => item.id === content.appId);
   const initial = [content.initialState, parent.initialState];
-  const hook = { event: "message_link_opened", target: "link_probe", handler: "link_probe", cond: "", llm: false };
+  const hook = { event: "message_link_opened", target: "link_probe", handler: "link_probe", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   workerScenario.stateVariables.link_probe = false;
   workerScenario.stateVariableDefinitions.link_probe = { type: "boolean" };
@@ -2193,9 +2194,13 @@ test("到達済み能力がなければ修復・添付解錠・会話リンク�
 
 test("鍵付き添付は到達後にNFKC正規化したパスワードhashで解錠する", async () => {
   const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  await app.request("http://localhost/api/session/start", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ serialCode: "1234" }) });
   store.player.state.stateValues.image_color_reported = true;
   store.player.state.revealedAttachmentContentIds.push("sealed_note");
-  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: false, llm: {} } });
+  const attachment = workerScenario.attachments.find(item => item.content === "sealed_note");
+  const block = workerScenario.talkBlocks.find(item => item.messages.some(message => message.attachmentId === attachment.id));
+  store.player.state.talks[block.talkId].blockDisplayCounts[block.id] = 1;
   const response = await app.request("http://localhost/api/content/unlock", {
     method: "POST",
     headers: { authorization: "Bearer memory-token", "content-type": "application/json" },
@@ -2212,7 +2217,7 @@ test("予定イベントの公開拒否は完了扱いにせず再実行可能�
     target: "test_scheduled_rejection",
     handler: "test_scheduled_rejection",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_scheduled_rejection = (context) => context.form.deny("rejected");
@@ -2250,14 +2255,14 @@ test("完了イベントの状態更新後に期限到来済み予約イベン�
     target: "sample_radio",
     handler: "test_mark_completion",
     cond: "!test_completion",
-    llm: false
+    needsAi: false
   };
   const scheduledHook = {
     event: "scheduled_event",
     target: "test_after_completion",
     handler: "test_apply_scheduled",
     cond: "test_completion && !test_scheduled",
-    llm: false
+    needsAi: false
   };
   workerScenario.stateVariables.test_completion = false;
   workerScenario.stateVariables.test_scheduled = false;
@@ -2305,7 +2310,7 @@ test("期限到来した着信は後続予約と通常操作を止め、通話�
     target: "test_after_incoming",
     handler: "test_after_incoming",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(afterIncomingHook);
   scenarioHookHandlers.test_after_incoming = (context) => context.state.set("test_after_incoming", true);
@@ -2361,9 +2366,9 @@ test("作品イベントの不受理は両モードで元の理由と予約適�
   const originalMode = workerScenario.playerMode;
   const originalPublicStateVariables = workerScenario.publicStateVariables;
   const hooks = [
-    { event: "test_stage_schedule", target: "", handler: "test_stage_schedule", cond: "", llm: false },
-    { event: "scheduled_event", target: "test_stage_due", handler: "test_stage_due", cond: "", llm: false },
-    { event: "test_stage_action", target: "", handler: "test_stage_action", cond: "", llm: false }
+    { event: "test_stage_schedule", target: "", handler: "test_stage_schedule", cond: "", needsAi: false },
+    { event: "scheduled_event", target: "test_stage_due", handler: "test_stage_due", cond: "", needsAi: false },
+    { event: "test_stage_action", target: "", handler: "test_stage_action", cond: "", needsAi: false }
   ];
   const eventIds = ["test_stage_schedule", "test_stage_action"];
   const stateIds = ["test_stage_due_applied", "test_stage_action_applied"];
@@ -2480,14 +2485,14 @@ test("完了イベントの保存競合では予約を先に消費せず、再�
     target: "sample_radio",
     handler: "test_mark_completion_conflict",
     cond: "!test_completion_conflict",
-    llm: false
+    needsAi: false
   };
   const scheduledHook = {
     event: "scheduled_event",
     target: "test_after_completion_conflict",
     handler: "test_apply_scheduled_conflict",
     cond: "test_completion_conflict && !test_scheduled_conflict",
-    llm: false
+    needsAi: false
   };
   workerScenario.stateVariables.test_completion_conflict = false;
   workerScenario.stateVariables.test_scheduled_conflict = false;
@@ -2540,14 +2545,14 @@ test("完了イベントがeffect sequenceを開始した時は同じrequestで�
     target: "sample_radio",
     handler: "test_completion_sequence",
     cond: "",
-    llm: false
+    needsAi: false
   };
   const scheduledHook = {
     event: "scheduled_event",
     target: "test_after_completion_sequence",
     handler: "test_after_completion_sequence",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.stateVariables.test_after_completion_sequence = false;
   workerScenario.hooks.push(completionHook, scheduledHook);
@@ -2593,7 +2598,7 @@ test("クライアントからの作品固有イベントは明示許可され�
     target: "",
     handler: "test_client_secondary",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(secondaryHook);
   scenarioHookHandlers.test_client_secondary = (context) => {
@@ -2666,7 +2671,7 @@ test("フォーム送信は現在利用可能なコンテンツに定義され�
     target: "demo_form",
     handler: "test_capture_form_context",
     cond: "",
-    llm: false
+    needsAi: false
   };
   content.record.form = { kind: "html", id: "demo_form", label: "テスト", url: "/test" };
   content.record.formDisabledCond = "radio_playback_completed";
@@ -2753,7 +2758,7 @@ test("音声cueは表示中のラジオ定義と照合して非公開IDをhook�
     target: "sample_radio:private_marker",
     handler: "test_capture_audio_cue",
     cond: "",
-    llm: false
+    needsAi: false
   };
   workerScenario.hooks.push(cueHook);
   scenarioHookHandlers.test_capture_audio_cue = (_context, event) => { capturedEvent = structuredClone(event); };
@@ -3225,9 +3230,9 @@ test("送信後の同commit hook・別request hook・予定hookはtalk水位を�
   t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-05T01:00:00.000Z") });
   const fixture = await startTalkClockFixture();
   const hooks = [
-    { event: "talk_turn_completed", target: "guide", handler: "test_clock_turn", cond: "", llm: false },
-    { event: "test_clock_request", target: "", handler: "test_clock_request", cond: "", llm: false },
-    { event: "scheduled_event", target: "test_clock_due", handler: "test_clock_due", cond: "", llm: false }
+    { event: "talk_turn_completed", target: "guide", handler: "test_clock_turn", cond: "", needsAi: false },
+    { event: "test_clock_request", target: "", handler: "test_clock_request", cond: "", needsAi: false },
+    { event: "scheduled_event", target: "test_clock_due", handler: "test_clock_due", cond: "", needsAi: false }
   ];
   workerScenario.hooks.push(...hooks);
   workerScenario.clientCallableEvents.push("test_clock_request");
@@ -3265,7 +3270,7 @@ test("シナリオ更新後の現行talkは保存済み水位を再開session ho
   assert.equal(savedDeliveredAt, beforeUpdate.at(-1).sentAt);
   const originalRevision = workerScenario.revision;
   workerScenario.revision = `${originalRevision}-clock-update`;
-  const hook = { event: "session_started", target: "", handler: "test_clock_resume", cond: "", llm: false };
+  const hook = { event: "session_started", target: "", handler: "test_clock_resume", cond: "", needsAi: false };
   workerScenario.hooks.push(hook);
   scenarioHookHandlers.test_clock_resume = (context) => context.talk.addBlock("guide", "call_history_guide", { mode: "stay" });
   let loads = 0;
@@ -3292,7 +3297,7 @@ for (const dispatchMode of ["同commit", "別request"]) {
     const fixture = await startTalkClockFixture();
     const hooks = ["a", "b"].map((name) => ({
       event: dispatchMode === "同commit" ? "test_shared_hook_block" : `test_shared_hook_block_${name}`,
-      target: "", handler: `test_shared_hook_block_${name}`, cond: `!test_shared_hook_block_${name}_done`, llm: false
+      target: "", handler: `test_shared_hook_block_${name}`, cond: `!test_shared_hook_block_${name}_done`, needsAi: false
     }));
     const eventIds = [...new Set(hooks.map((hook) => hook.event))];
     for (const hook of hooks) {
@@ -3334,7 +3339,7 @@ for (const dispatchMode of ["同commit", "別request"]) {
 
 test("同一turnのCAS敗者はhookのevent IDや表示回数を余分に確定しない", async () => {
   const fixture = await startTalkClockFixture();
-  const hook = { event: "talk_turn_completed", target: "guide", handler: "test_hook_id_cas", cond: "!test_hook_id_cas_done", llm: false };
+  const hook = { event: "talk_turn_completed", target: "guide", handler: "test_hook_id_cas", cond: "!test_hook_id_cas_done", needsAi: false };
   workerScenario.stateVariables.test_hook_id_cas_done = false;
   workerScenario.hooks.push(hook);
   scenarioHookHandlers[hook.handler] = (context) => {

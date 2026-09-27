@@ -2,9 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "5f9d0ecd6ea86718",
-  "clientRevision": "client_a9c27b231a6438c6",
-  "transcriptRevision": "transcript_e9c974a22d047fed",
+  "revision": "64d7997ea5b44e87",
+  "clientRevision": "client_dec202782c857677",
+  "transcriptRevision": "transcript_25e3137a6f827b77",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -38,8 +38,6 @@ export const workerScenario: WorkerScenario = {
     "player.mode": "browser",
     "features.llm": "false",
     "device.lock_method": "none",
-    "search_agent.broken_link_tutorial_body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
-    "search_agent.broken_link_body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
     "event.client_callable": "chat_auth_link_requested",
     "chat_auth.cond": "sealed_note_unlocked && !chat_auth_verified",
     "chat_auth.link_sent_cond": "chat_auth_link_sent",
@@ -1094,7 +1092,7 @@ export const workerScenario: WorkerScenario = {
       ],
       "record": {
         "programTitle": "接続テスト放送",
-        "genAudioId": "demo_voice",
+        "audioAttachmentId": "media_9",
         "transcript": [
           {
             "atMs": 0,
@@ -1108,8 +1106,7 @@ export const workerScenario: WorkerScenario = {
             "atMs": 6000,
             "text": "字幕データがなければ、この欄は表示されません。"
           }
-        ],
-        "audioAttachmentId": "media_9"
+        ]
       },
       "publicId": "c_513e68175e27",
       "part": "base",
@@ -4853,6 +4850,7 @@ export const workerScenario: WorkerScenario = {
       "type": "image",
       "asset": "/demo/album/rainy-window.webp",
       "content": "rainy_window",
+      "albumContentId": "rainy_window",
       "part": "base",
       "order": 0
     },
@@ -4872,6 +4870,7 @@ export const workerScenario: WorkerScenario = {
       "type": "image",
       "asset": "/demo/dummy-data.svg",
       "content": "demo_received_image",
+      "albumContentId": "demo_received_image",
       "part": "base",
       "order": 2
     },
@@ -4888,6 +4887,7 @@ export const workerScenario: WorkerScenario = {
       "asset": "/demo/demo-video.mp4",
       "content": "demo_video",
       "poster": "demo_video_poster",
+      "albumContentId": "demo_video",
       "part": "base",
       "order": 4
     },
@@ -4902,6 +4902,7 @@ export const workerScenario: WorkerScenario = {
       "id": "media_7",
       "type": "image",
       "asset": "/demo/album/evening-platform.webp",
+      "albumContentId": "evening_platform",
       "part": "base",
       "order": 6
     },
@@ -4909,6 +4910,7 @@ export const workerScenario: WorkerScenario = {
       "id": "media_8",
       "type": "image",
       "asset": "/demo/album/coffee-table.webp",
+      "albumContentId": "coffee_table",
       "part": "base",
       "order": 7
     },
@@ -5087,72 +5089,145 @@ export const workerScenario: WorkerScenario = {
   "assistantMessages": [
     {
       "id": "home_hint",
-      "surface": "home",
+      "trigger": "screen:home",
       "body": "ナビで「古いメモ」を検索し、修復してみよう。",
       "weight": 1,
       "cond": "!old_note_opened",
       "agentAction": "hi",
+      "hide": "close",
       "part": "base",
       "order": 0
     },
     {
       "id": "photo_hint",
-      "surface": "home",
+      "trigger": "screen:home",
       "body": "古いメモに書かれた写真を探して、灯りの色を確かめよう。",
       "weight": 1,
       "cond": "old_note_opened && !rainy_window_opened && !image_color_reported",
       "agentAction": "hi",
+      "hide": "auto",
       "part": "base",
       "order": 1
     },
     {
       "id": "report_hint",
-      "surface": "home",
+      "trigger": "screen:home",
       "body": "写真で一番大きく見える灯りの色を、ナビで教えて。",
       "weight": 1,
       "cond": "rainy_window_opened && !image_color_reported",
       "agentAction": "hi",
+      "hide": "auto",
       "part": "base",
       "order": 2
     },
     {
       "id": "sealed_note_opened",
-      "surface": "messages",
+      "trigger": "screen:messages",
       "body": "次の案内がナビに届いています。右下のナビを開いてください。",
       "weight": 1,
       "cond": "sealed_note_unlocked && !chat_auth_link_sent",
       "agentAction": "hi",
+      "hide": "auto",
       "part": "base",
       "order": 3
     },
     {
       "id": "contact_owner",
-      "surface": "home",
+      "trigger": "screen:home",
       "body": "再認証したチャットで、メッセージを送ってみよう。",
       "weight": 1,
       "cond": "chat_auth_verified && !demo_completed",
       "agentAction": "hi",
+      "hide": "auto",
       "part": "base",
       "order": 4
     },
     {
       "id": "demo_completed_nav",
-      "surface": "chat",
+      "trigger": "screen:chat",
       "body": "基本デモが完了しました。右下のナビから機能テストも試せます。",
       "weight": 1,
       "cond": "demo_completed",
       "agentAction": "hi",
+      "hide": "auto",
       "part": "base",
       "order": 5
     },
     {
       "id": "radio_completed",
-      "surface": "radio",
+      "trigger": "screen:radio",
       "body": "音声の再生完了イベントを受け取りました。",
       "weight": 1,
       "cond": "radio_playback_completed",
+      "hide": "auto",
       "part": "base",
       "order": 6
+    },
+    {
+      "id": "blocked_link_default",
+      "trigger": "blocked_link",
+      "body": "リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "auto",
+      "part": "base",
+      "order": 7
+    },
+    {
+      "id": "messages_unavailable_help",
+      "trigger": "app_unavailable:messages",
+      "body": "ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "close",
+      "part": "base",
+      "order": 8
+    },
+    {
+      "id": "search_open_failed_default",
+      "trigger": "search_open_failed",
+      "body": "このデータはまだ開けないみたい。",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "auto",
+      "part": "base",
+      "order": 9
+    },
+    {
+      "id": "album_added_default",
+      "trigger": "album_added",
+      "body": "新しいデータをアルバムに追加しておきました！",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "auto",
+      "part": "base",
+      "order": 10
+    },
+    {
+      "id": "repaired_default",
+      "trigger": "repaired",
+      "body": "アプリから開けるようにデータを修復しておいたよ。",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "auto",
+      "part": "base",
+      "order": 11
+    },
+    {
+      "id": "history_repaired_default",
+      "trigger": "history_repaired",
+      "body": "壊れていた履歴を修復しておいたよ。",
+      "weight": 1,
+      "cond": "",
+      "agentAction": "hi",
+      "hide": "auto",
+      "part": "base",
+      "order": 12
     }
   ],
   "chatAuthGate": {
@@ -5236,7 +5311,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "!session_started",
       "handler": "mark_session_started",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 0
     },
@@ -5245,7 +5320,7 @@ export const workerScenario: WorkerScenario = {
       "target": "old_note",
       "cond": "!old_note_opened",
       "handler": "mark_old_note_opened",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 1
     },
@@ -5254,7 +5329,7 @@ export const workerScenario: WorkerScenario = {
       "target": "rainy_window",
       "cond": "!rainy_window_opened",
       "handler": "mark_rainy_window_opened",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 2
     },
@@ -5263,7 +5338,7 @@ export const workerScenario: WorkerScenario = {
       "target": "search_agent",
       "cond": "clue_attachments_pending",
       "handler": "deliver_clue_attachments",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 3
     },
@@ -5272,7 +5347,7 @@ export const workerScenario: WorkerScenario = {
       "target": "search_agent",
       "cond": "",
       "handler": "handle_demo_nav_test_command",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 4
     },
@@ -5281,7 +5356,7 @@ export const workerScenario: WorkerScenario = {
       "target": "guide",
       "cond": "",
       "handler": "handle_demo_message_test_command",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 5
     },
@@ -5290,7 +5365,7 @@ export const workerScenario: WorkerScenario = {
       "target": "sealed_note",
       "cond": "!sealed_note_unlocked",
       "handler": "mark_sealed_note_unlocked",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 6
     },
@@ -5299,7 +5374,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "",
       "handler": "schedule_demo_call",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 7
     },
@@ -5308,7 +5383,7 @@ export const workerScenario: WorkerScenario = {
       "target": "show_demo_call",
       "cond": "",
       "handler": "show_demo_call",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 8
     },
@@ -5317,7 +5392,7 @@ export const workerScenario: WorkerScenario = {
       "target": "deliver_demo_delayed_message",
       "cond": "",
       "handler": "deliver_demo_delayed_message",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 9
     },
@@ -5326,7 +5401,7 @@ export const workerScenario: WorkerScenario = {
       "target": "demo_call",
       "cond": "!demo_call_completed",
       "handler": "mark_demo_call_completed",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 10
     },
@@ -5335,7 +5410,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "",
       "handler": "demo_form_game_over",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 11
     },
@@ -5344,7 +5419,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "",
       "handler": "demo_all_clear",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 12
     },
@@ -5353,7 +5428,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "",
       "handler": "demo_form_reject",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 13
     },
@@ -5362,7 +5437,7 @@ export const workerScenario: WorkerScenario = {
       "target": "",
       "cond": "sealed_note_unlocked && !chat_auth_link_sent && !chat_auth_verified",
       "handler": "send_chat_auth_link",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 14
     },
@@ -5371,7 +5446,7 @@ export const workerScenario: WorkerScenario = {
       "target": "chat_auth_link_opened",
       "cond": "chat_auth_link_sent && !chat_auth_verified",
       "handler": "verify_chat_auth",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 15
     },
@@ -5380,7 +5455,7 @@ export const workerScenario: WorkerScenario = {
       "target": "lobby",
       "cond": "demo_completed && !demo_completion_announced",
       "handler": "complete_demo_todo",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 16
     },
@@ -5389,7 +5464,7 @@ export const workerScenario: WorkerScenario = {
       "target": "lobby",
       "cond": "",
       "handler": "handle_demo_chat_test_command",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 17
     },
@@ -5398,7 +5473,7 @@ export const workerScenario: WorkerScenario = {
       "target": "sample_radio",
       "cond": "!radio_playback_completed",
       "handler": "mark_radio_playback_completed",
-      "llm": false,
+      "needsAi": false,
       "part": "base",
       "order": 18
     }

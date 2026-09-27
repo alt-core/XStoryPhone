@@ -1,3 +1,5 @@
+import { readQuotedString } from "./quotedString.ts";
+
 export type ConditionStateType = "boolean" | "enum" | "integer" | "string";
 
 export type ConditionStateDefinition = {
@@ -118,26 +120,14 @@ function tokenizeConditionExpression(input: string): { tokens: Token[]; errors: 
     }
 
     if (char === "\"" || char === "'") {
-      const quote = char;
-      let value = "";
-      index += 1;
-      while (index < input.length && input[index] !== quote) {
-        if (input[index] === "\\" && index + 1 < input.length) {
-          value += input[index + 1];
-          index += 2;
-          continue;
-        }
-        value += input[index];
-        index += 1;
-      }
-
-      if (input[index] !== quote) {
+      const literal = readQuotedString(input, index);
+      if (!literal.closed) {
         errors.push("文字列リテラルが閉じていません");
         return { tokens, errors };
       }
 
-      tokens.push({ type: "string", value });
-      index += 1;
+      tokens.push({ type: "string", value: literal.value });
+      index = literal.endIndex;
       continue;
     }
 

@@ -1,8 +1,14 @@
-comment	id	surface	body	weight	cond	agent_action	notes
-	home_hint	home	ナビで「古いメモ」を検索し、修復してみよう。	1	!old_note_opened	hi	
-	photo_hint	home	古いメモに書かれた写真を探して、灯りの色を確かめよう。	1	old_note_opened && !rainy_window_opened && !image_color_reported	hi	
-	report_hint	home	写真で一番大きく見える灯りの色を、ナビで教えて。	1	rainy_window_opened && !image_color_reported	hi	
-	sealed_note_opened	messages	次の案内がナビに届いています。右下のナビを開いてください。	1	sealed_note_unlocked && !chat_auth_link_sent	hi	
-	contact_owner	home	再認証したチャットで、メッセージを送ってみよう。	1	chat_auth_verified && !demo_completed	hi	
-	demo_completed_nav	chat	基本デモが完了しました。右下のナビから機能テストも試せます。	1	demo_completed	hi	
-	radio_completed	radio	音声の再生完了イベントを受け取りました。	1	radio_playback_completed
+comment	id	trigger	body	weight	cond	agent_action	notes	hide
+	home_hint	screen:home	ナビで「古いメモ」を検索し、修復してみよう。	1	!old_note_opened	hi		close
+	photo_hint	screen:home	古いメモに書かれた写真を探して、灯りの色を確かめよう。	1	old_note_opened && !rainy_window_opened && !image_color_reported	hi		""
+	report_hint	screen:home	写真で一番大きく見える灯りの色を、ナビで教えて。	1	rainy_window_opened && !image_color_reported	hi		""
+	sealed_note_opened	screen:messages	次の案内がナビに届いています。右下のナビを開いてください。	1	sealed_note_unlocked && !chat_auth_link_sent	hi		""
+	contact_owner	screen:home	再認証したチャットで、メッセージを送ってみよう。	1	chat_auth_verified && !demo_completed	hi		""
+	demo_completed_nav	screen:chat	基本デモが完了しました。右下のナビから機能テストも試せます。	1	demo_completed	hi		""
+	radio_completed	screen:radio	音声の再生完了イベントを受け取りました。	1	radio_playback_completed			""
+	blocked_link_default	blocked_link	リンクが破損しています。中身が分かれば、ナビの検索結果から開けるかもしれません。	1		hi		auto
+	messages_unavailable_help	app_unavailable:messages	ごめんなさい。アプリへのリンクが破損しています。右下のナビを開いて「メッセージ」と検索してみてください。	1		hi		close
+	search_open_failed_default	search_open_failed	このデータはまだ開けないみたい。	1		hi		""
+	album_added_default	album_added	新しいデータをアルバムに追加しておきました！	1		hi		auto
+	repaired_default	repaired	アプリから開けるようにデータを修復しておいたよ。	1		hi		auto
+	history_repaired_default	history_repaired	壊れていた履歴を修復しておいたよ。	1		hi		auto

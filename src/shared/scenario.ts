@@ -128,7 +128,7 @@ export type ScenarioMessageSegment =
 
 export type ScenarioMessageAttachment =
   | { kind: "locked"; contentId: string; locked: true; title?: string }
-  | { kind: "image" | "audio" | "video"; attachmentId: string; contentId?: string; imageUrl?: string; audioUrl?: string; videoUrl?: string };
+  | { kind: "image" | "audio" | "video"; attachmentId: string; contentId?: string; albumContentId?: string; imageUrl?: string; audioUrl?: string; videoUrl?: string };
 
 export type ScenarioTalkBlockMessage = {
   initialRole?: "owner" | "npc";
@@ -162,6 +162,8 @@ export type ScenarioAttachmentDefinition = PartOwned & {
   asset?: string;
   content?: string;
   lock?: "password";
+  // アルバムの移動・登録先。関連コンテンツとは別にTSVの主素材参照から生成する。
+  albumContentId?: string;
   title?: string;
   body?: string;
   poster?: string;
@@ -200,13 +202,7 @@ export type ScenarioNotification = PartOwned & {
   cond: string;
 };
 
-export type ScenarioAssistantMessage = PartOwned & {
-  id: string;
-  surface: string;
-  body: string;
-  weight: number;
-  agentAction?: "idle" | "hi";
-  sticky?: boolean;
+export type ScenarioAssistantMessage = PartOwned & import("./assistantMessages").AssistantMessage & {
   cond: string;
 };
 
@@ -289,7 +285,7 @@ export type ScenarioHookDefinition = PartOwned & {
   target: string;
   handler: string;
   cond: string;
-  llm: boolean;
+  needsAi: boolean;
 };
 
 export type StoredTalkMessage = {

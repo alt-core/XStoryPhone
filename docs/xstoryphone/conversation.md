@@ -31,7 +31,7 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 内部リンクは表示済みであることを確認してからhookを実行し、その結果で遷移先の利用可否を判定します。hookで対象を解放してから開くことができます。hookが成立しても対象が開けない場合は、状態更新と演出だけを適用して現在の画面に留まります。`form.deny`による拒否ではhookの変更を保存しません。
 
-`attachments.tsv` の `lock` を `password` にすると、メッセージアプリ内にパスワード入力付きの添付を表示できます。答えは `passwords.tsv` の `password`に、引用符付き候補を改行して書きます。`content`で対象を、`load_part`で正解後の追加取得先を指定します。server/browserではAPI側で判定し、staticでは部分hashと回答JSONを使います。正答原文はプレイヤーへ配布しません。
+`attachments.tsv` の `lock` を `password` にすると、メッセージ／チャットアプリ内にパスワード入力付きの画像・音声・動画・文書を表示できます。答えは `passwords.tsv` の `password`に、引用符付き候補を改行して書きます。`content`で対象を、`load_part`で正解後の追加取得先を指定します。server/browserではAPI側で判定し、staticでは部分hashと回答JSONを使います。正答原文はプレイヤーへ配布しません。
 
 `quick_replies`はセル内改行で選択肢を並べます。表示文字列がそのままプレイヤー発話として送信され、通常の会話ruleで判定されます。本文と同じ`{{state_id}}` templateを使用できます。Quick Reply固有の個数・20文字制限は設けず、空の選択肢、同一message内の重複、定義時点で既存プレイヤー入力上限を超える文字列を拒否します。template展開結果は正規化後に同じ上限へ収めます。
 
@@ -123,7 +123,7 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 | `text` | 場面説明または判定条件 |
 | `extract` | 名前付き正規表現、またはAI抽出のJSON object |
 | `next` | 表示するblock、全talk共通の`/input`、または検索AI用command。複数はセル内で改行し、通常遷移では最後の無条件blockが次のfromになる |
-| `set` | `;` 区切りの状態更新 |
+| `set` | `;` または改行区切りの状態更新。引用符内は区切らない |
 | `mode` | 空欄、`stay`、`game_over` |
 | `notes` | 監修用メモ |
 | `example` | 代表入力 |
