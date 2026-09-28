@@ -214,6 +214,87 @@ test("Jevの設定誤りは通信せずprovider_unavailableにし、既存LLMへ
   assert.equal(errors.some((line) => line.includes("typesafe-secret-key")), false);
 });
 
+test("Jevの閾値未満だけを既存LLMへ回し、最初の判定と最終判定を監修記録に残す", async () => {
+  const fallbackEnv = { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" };
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  const llmRequests = [];
+  const providerFor = (value) => ({ id: "fake", async completeJson(request) {
+    llmRequests.push(request);
+    return value.error ? { ok: false, error: value.error } : { ok: true, value, raw: JSON.stringify(value) };
+  } });
+  const llmAgree = providerFor({ rule_id: "agree", confidence: 0.8, reason_code: "matched_intent" });
+
+  // 確信度が閾値以上なら、defaultを選んだ場合も含めてJevの結果をそのまま使う。
+  for (const [choice, expected] of [["agree", "agree"], ["default", "default"]]) {
+    await withFetch([answer(choice, 0.9)], async () => {
+      const selected = await createTalkRuleSelector(fallbackEnv, llmAgree, context)(selectorInput);
+      assert.equal(selected.ruleId, expected);
+      assert.equal(selected.reviewSelection.selector, "typesafe");
+      assert.equal(selected.reviewSelection.escalatedFrom, undefined);
+    });
+  }
+  assert.equal(llmRequests.length, 0);
+
+  const talk = { id: "talk", publicId: "public", kind: "sms", appId: "messages", label: "会話", cond: "", startBlocks: ["start"], initialFrom: "start", rules };
+  await withFetch([answer("agree", 0.5, { agree: 0.5, end: 0.1, default: 0.4 })], async () => {
+    const resolved = await resolveScenarioTalkRule({ env: fallbackEnv, llmEnabled: true, provider: llmAgree, talk, from: "start", playerInput: "いいよ", stateValues: {} });
+    assert.equal(resolved.ok && resolved.rule.id, "agree");
+    assert.equal(resolved.reviewSelection.selector, undefined, "最終判定は既存LLM");
+    assert.equal(resolved.reviewSelection.decision.confidence, 0.8);
+    assert.deepEqual(resolved.reviewSelection.escalatedFrom, {
+      selector: "typesafe", fallbackReason: "low_confidence", model: "jev-1.13.0",
+      decision: { rule_id: "agree", confidence: 0.5, reason_code: "matched_intent" },
+      probabilities: { agree: 0.5, end: 0.1, default: 0.4 }
+    });
+  });
+  assert.equal(llmRequests.length, 1);
+  assert.equal(llmRequests[0].taskId, "talk_rule_selection");
+
+  // game over用の閾値だけ満たさない場合も回し、回付先では既存LLMの閾値で判定する。
+  await withFetch([answer("end", 0.85)], async () => {
+    const selected = await createTalkRuleSelector(fallbackEnv, providerFor({ rule_id: "end", confidence: 0.8, reason_code: "matched_intent" }), context)(selectorInput);
+    assert.equal(selected.ruleId, "default");
+    assert.equal(selected.reviewSelection.fallbackReason, "low_game_over_confidence");
+    assert.equal(selected.reviewSelection.escalatedFrom.fallbackReason, "low_game_over_confidence");
+  });
+
+  // 回付先の失敗は既存LLMと同じ再送可能な失敗。Jevの通信失敗はLLMへ回さない。
+  await withFetch([answer("agree", 0.5)], async () => {
+    assert.deepEqual(await createTalkRuleSelector(fallbackEnv, providerFor({ error: "provider_error" }), context)(selectorInput), { ok: false, error: "provider_error" });
+  });
+  const before = llmRequests.length;
+  await withFetch([new Response("unauthorized", { status: 401 })], async () => {
+    const failed = await createTalkRuleSelector(fallbackEnv, llmAgree, context)(selectorInput);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error, "provider_error");
+  });
+  assert.equal(llmRequests.length, before);
+});
+
+test("LLMへ回す設定の誤りは、迷った入力を待たずに最初のai判定で明示する", async () => {
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  const provider = { id: "fake", async completeJson() { assert.fail("設定誤りでLLMを呼ばない"); } };
+  assert.equal(resolveTypesafeConfig(env).lowConfidenceFallback, "default");
+  const originalError = console.error;
+  const errors = [];
+  console.error = (line) => errors.push(String(line));
+  try {
+    await withFetch([answer("agree", 0.9)], async (requests) => {
+      assert.deepEqual(await createTalkRuleSelector({ ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" }, null, context)(selectorInput),
+        { ok: false, error: "provider_unavailable" }, "LLM_API_KEYがない");
+      const invalid = { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "gpt" };
+      assert.equal(resolveTypesafeConfig(invalid).ok, false);
+      assert.deepEqual(await createTalkRuleSelector(invalid, provider, context)(selectorInput), { ok: false, error: "provider_unavailable" });
+      assert.equal(requests.length, 0);
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /LLM_API_KEY/u);
+  assert.match(errors[1], /TYPESAFE_LOW_CONFIDENCE_FALLBACK/u);
+});
+
 test("既定のselectorは既存LLM経路だけを使い、typesafeはLLM_API_KEYなしでもrule選択できる", async () => {
   const talk = { id: "talk", publicId: "public", kind: "sms", appId: "messages", label: "会話", cond: "", startBlocks: ["start"], initialFrom: "start", rules };
   const input = { llmEnabled: true, talk, from: "start", playerInput: "photo:abc", semanticPlayerInput: "写真: 駅の看板", stateValues: {} };

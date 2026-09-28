@@ -1,4 +1,5 @@
 import { defaultGeminiOpenAiReasoningEffort, parseReasoningEffort, type OpenAiCompatibleReasoningEffort } from "../product/llmProfiles.ts";
+import { reportedTokenUsage, type ProviderUsageObserver } from "./providerUsage.ts";
 
 export type StructuredOutputRequest = {
   taskId: string;
@@ -12,6 +13,7 @@ export type StructuredOutputRequest = {
   model?: string;
   timeoutMs?: number;
   observation?: LlmObservation;
+  onUsage?: ProviderUsageObserver;
 };
 
 export type LlmHashes = { inputHash: string; promptHash: string; schemaHash: string };
@@ -69,6 +71,7 @@ export type LlmProviderEnv = {
   TYPESAFE_MODEL?: string;
   TYPESAFE_MIN_CONFIDENCE?: string;
   TYPESAFE_GAME_OVER_MIN_CONFIDENCE?: string;
+  TYPESAFE_LOW_CONFIDENCE_FALLBACK?: string;
 };
 
 function cleanText(value: unknown) {
@@ -257,6 +260,13 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
             parsedOutput: result.ok ? result.value : null
           }));
         }
+        request.onUsage?.({
+          provider: "openai-compatible",
+          model: cleanText(payload && typeof payload === "object" ? (payload as { model?: unknown }).model : undefined) || requestModel,
+          attempts: attempts.length,
+          httpStatus: attempts[attempts.length - 1]?.httpStatus,
+          usage: reportedTokenUsage(payload, "openai-compatible")
+        });
         return result.ok ? {
           ...result,
           model: cleanText(payload && typeof payload === "object" ? (payload as { model?: unknown }).model : undefined) || requestModel,

@@ -184,7 +184,8 @@ test("AWSデプロイは設定されたLLM項目だけをLambdaへ渡す", () =>
     ["TypesafeApiKey", "TYPESAFE_API_KEY"],
     ["TypesafeModel", "TYPESAFE_MODEL"],
     ["TypesafeMinConfidence", "TYPESAFE_MIN_CONFIDENCE"],
-    ["TypesafeGameOverMinConfidence", "TYPESAFE_GAME_OVER_MIN_CONFIDENCE"]
+    ["TypesafeGameOverMinConfidence", "TYPESAFE_GAME_OVER_MIN_CONFIDENCE"],
+    ["TypesafeLowConfidenceFallback", "TYPESAFE_LOW_CONFIDENCE_FALLBACK"]
   ]) {
     assert.match(template, new RegExp(`${environmentVariable}: !Ref ${parameter}`, "u"));
     assert.match(deployAws, new RegExp(`\\["${parameter}", "${environmentVariable}"\\]`, "u"));

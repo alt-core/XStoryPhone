@@ -193,7 +193,13 @@ test("レポートの設定には解決済みmodelと閾値を含め、API key�
   assert.equal(config.model, "jev-1.13.0");
   assert.deepEqual(config.thresholds, { minConfidence: 0.6, minGameOverConfidence: 0.9 });
   assert.doesNotMatch(JSON.stringify(config), /secret-for-test/u);
+  assert.equal(config.lowConfidenceFallback, "default");
+  assert.equal(config.fallbackModel, undefined);
   assert.deepEqual(talkCaseEvaluationConfig({ env }), { selector: "mock" });
+  const escalating = talkCaseEvaluationConfig({ live: true, env: { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm", LLM_API_KEY: "llm-secret-for-test", LLM_MODEL: "回付先モデル" } });
+  assert.equal(escalating.lowConfidenceFallback, "llm");
+  assert.equal(escalating.fallbackModel, "回付先モデル");
+  assert.doesNotMatch(JSON.stringify(escalating), /secret-for-test/u);
 });
 
 test("レポートの既定閾値は通常分岐とgame overの採否境界に一致する", async () => {

@@ -31,9 +31,25 @@ npm run scenario:talk-flow:examples:test
 
 会話地点ごとの条件状態パターン上限は既定16です。必要な作品では`--cond-pattern-limit=40`のように正の整数で変更できます。`--dry-run`で対象を確認してから実行してください。上限を増やすと試験数が増え、liveではAPI利用・費用も増え得ます。
 
-`--live`で`LLM_TALK_SELECTOR=typesafe`の場合は、本番と同じrequest・再試行・閾値でJevを呼び、reportの各行と失敗詳細へ応答したmodel版と確率分布を加えます。`TYPESAFE_MIN_CONFIDENCE`等を変えて再実行すれば、閾値の影響を比べられます。
+本番と同じ選択処理を使い、候補の順序、cond、match/secretの優先判定も揃えます。`--live`で`LLM_TALK_SELECTOR=typesafe`の場合はreportの各行と失敗詳細へ応答したmodel版と確率分布を加えます。`TYPESAFE_MIN_CONFIDENCE`等を変えて再実行すれば、閾値の影響を比べられます。`TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`では閾値未満だけをLLMで判定し直し、その行に最初のJevの判定を`escalatedFrom`として残します。LLM未設定時の事前停止、回付条件、最終の閾値判定をexample側へ重複実装しません。
 
 OpenAI互換経路のlive実行も本番と同じproviderと選択器を使います。接続先・model・timeout・推論強度・JSON Schema・出力上限は本番設定に従い、`--retries=0`だけは評価時の再試行を止められます。接続先やmodelを省略して、評価側だけ別の既定modelへ補完することはありません。
+
+exampleは生の判定と、閾値適用後の最終判定の両方を期待値と比較します。この検査は本番処理の共有後も維持します。最終選択だけを評価する場合は、下記のcase試験の`--selection-only`を使います。
+
+live実行の使用量は、成功・期待不一致・途中失敗を含めて、provider・model・段階別に表示します。
+
+| 出力 | 意味 |
+|---|---|
+| cases / aiSelectionCases | 実行した試験数／実際に外部判定を呼んだ試験数 |
+| fallbackCases | Jevの後にLLMも呼んだ試験数 |
+| providerCalls / httpAttempts | 再試行をまとめたprovider呼出し数／再試行を含むHTTP試行数 |
+| stage | jev、llm_fallback（Jevから回したLLM）、llm（LLM単独） |
+| inputTokens / outputTokens | APIから報告されたtoken数の合計。未取得なら「不明」 |
+| inputTokensAvg / outputTokensAvg | 報告された試行だけの平均。未報告試行を0として割らない |
+| inputUnreportedAttempts / outputUnreportedAttempts | token数を受け取れていないHTTP試行数 |
+
+JSON reportでは各成功・失敗ケースの`providerCalls`に内訳、`usage.providers`に集計を残します。集計の`tokens`は入力・出力・合計・cache別に`reportedTotal`、`reportedAverage`、`unreportedAttempts`を持ちます。未報告値はnullで、0とは区別します。再試行前の通信失敗などがある合計は、報告された分だけの値であり、請求総量の保証ではありません。provider間でtokenや料金を合算しません。成功行の直下にあるinputTokens等は最終provider分なので、Jev分も含めた比較には内訳を使ってください。
 
 既定のmockではLLMの期待応答を与えるため、自然文を実LLMが正しく分類することまでは検証しません。また、このコマンドはrule選択の確認であり、後続の抽出値・hook・プレイ全体を実行するものではありません。
 

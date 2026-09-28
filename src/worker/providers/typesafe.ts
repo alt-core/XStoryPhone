@@ -1,5 +1,6 @@
 import type { LlmHashes, LlmProviderEnv } from "./structuredOutput.ts";
 import { talkFlowLlmDefaultThresholds } from "../product/talkFlowLlmSelection.ts";
+import { reportedTokenUsage, type ProviderUsageObserver } from "./providerUsage.ts";
 
 // TypeSafeのSystem One modelは生成せず、型付きの質問へ確率付きで答える。会話rule選択だけで使う。
 const typesafeDefaultModel = "jev-1.13.0";
@@ -11,6 +12,8 @@ export type TypesafeConfig = {
   model: string;
   minConfidence: number;
   minGameOverConfidence: number;
+  // 閾値未満の結果をdefaultへ戻すか、既存のLLM判定へ回すか。
+  lowConfidenceFallback: "default" | "llm";
   analytics: boolean;
   debugLogs: boolean;
 };
@@ -42,12 +45,17 @@ export function resolveTypesafeConfig(env: LlmProviderEnv): TypesafeConfigResult
   if (minGameOverConfidence < minConfidence) {
     return { ok: false, reason: "TYPESAFE_GAME_OVER_MIN_CONFIDENCEはTYPESAFE_MIN_CONFIDENCE以上にしてください。" };
   }
+  const lowConfidenceFallback = cleanText(env.TYPESAFE_LOW_CONFIDENCE_FALLBACK) || "default";
+  if (lowConfidenceFallback !== "default" && lowConfidenceFallback !== "llm") {
+    return { ok: false, reason: "TYPESAFE_LOW_CONFIDENCE_FALLBACKはdefaultまたはllmにしてください。" };
+  }
   return {
     ok: true,
     apiKey,
     model: cleanText(env.TYPESAFE_MODEL) || typesafeDefaultModel,
     minConfidence,
     minGameOverConfidence,
+    lowConfidenceFallback,
     analytics: env.LLM_ANALYTICS_ENABLED === "true",
     debugLogs: env.LLM_DEBUG_LOGS === "true"
   };
@@ -66,7 +74,8 @@ function inputTokens(payload: unknown) {
 export async function requestTypesafeSystemOne(
   config: TypesafeConfig,
   body: Record<string, unknown>,
-  observation: Partial<LlmHashes> & Record<string, unknown> = {}
+  observation: Partial<LlmHashes> & Record<string, unknown> = {},
+  onUsage?: ProviderUsageObserver
 ): Promise<TypesafeRequestResult> {
   const startedAt = Date.now();
   const attempts: Array<{ attempt: number; httpStatus?: number; error?: string; durationMs: number }> = [];
@@ -83,6 +92,12 @@ export async function requestTypesafeSystemOne(
     };
     if (config.analytics) console.log(JSON.stringify({ event: "llm_usage", ...summary }));
     if (config.debugLogs) console.log(JSON.stringify({ event: "llm_debug", ...summary, request: body, attempts, providerPayload: payload }));
+    const model = payload && typeof payload === "object" ? (payload as { model?: unknown }).model : undefined;
+    onUsage?.({
+      provider: "typesafe", model: cleanText(model) || config.model, attempts: attempts.length,
+      httpStatus: attempts[attempts.length - 1]?.httpStatus,
+      usage: reportedTokenUsage(payload, "typesafe")
+    });
     return result;
   };
   for (let attempt = 0; attempt < 2; attempt += 1) {

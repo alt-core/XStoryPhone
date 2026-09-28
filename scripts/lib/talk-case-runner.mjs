@@ -72,9 +72,12 @@ export function talkCaseEvaluationConfig({ live = false, env = {} } = {}) {
   const selector = talkRuleSelectorKind(env);
   if (selector === "typesafe") {
     const config = resolveTypesafeConfig(env);
-    return config.ok
-      ? { selector, model: config.model, thresholds: { minConfidence: config.minConfidence, minGameOverConfidence: config.minGameOverConfidence } }
-      : { selector, configurationError: config.reason };
+    if (!config.ok) return { selector, configurationError: config.reason };
+    return {
+      selector, model: config.model, thresholds: { minConfidence: config.minConfidence, minGameOverConfidence: config.minGameOverConfidence },
+      lowConfidenceFallback: config.lowConfidenceFallback,
+      ...(config.lowConfidenceFallback === "llm" ? { fallbackModel: resolveStructuredOutputConfig(env).model } : {})
+    };
   }
   if (selector === null) return { selector: "invalid" };
   const config = resolveStructuredOutputConfig(env);

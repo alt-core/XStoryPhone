@@ -4,7 +4,6 @@ import test from "node:test";
 import { runTalkCase, runTalkCases } from "../scripts/lib/talk-case-runner.mjs";
 import { talkTestContext } from "../scripts/lib/talk-test-context.mjs";
 import { resolveScenarioTalkRule } from "../src/worker/services/talkResolver.ts";
-import { buildTalkFlowLlmMessages } from "../src/worker/product/talkFlowLlmSelection.ts";
 
 const base = {
   order: 1, from: "guide::start", isDefault: false, cond: "", intent: "回答", type: "ai", criteria: "名前を伝えた", match: "",
@@ -24,7 +23,6 @@ const scenario = {
 test("制作promptは現在stateのcriteria/contextとfromの台詞を本番と同じ値へ展開する", async () => {
   const fixture = { talkId: "guide", from: "start", input: "名前です", stateValues: { scene: "新しい場面" } };
   const built = talkTestContext(scenario, fixture);
-  const cliInput = JSON.parse(buildTalkFlowLlmMessages(built.context.input)[1].content);
   let actualInput;
   await resolveScenarioTalkRule({
     env: {}, llmEnabled: true, talk: { ...built.talk, rules: built.talk.rules.map((rule) => ({ ...rule, match: "" })) },
@@ -34,10 +32,9 @@ test("制作promptは現在stateのcriteria/contextとfromの台詞を本番と�
       return { ok: true, value: { rule_id: "answer", confidence: 0.9, reason_code: "matched_intent" }, raw: "{}" };
     } }
   });
-  assert.deepEqual(cliInput, actualInput);
-  assert.equal(cliInput.current_context, "現在は新しい場面");
-  assert.match(cliInput.candidate_rules.find((rule) => rule.rule_id === "answer").criteria, /新しい場面/u);
-  assert.equal(cliInput.recent_messages[0].body, "新しい場面の質問です。");
+  assert.equal(actualInput.current_context, "現在は新しい場面");
+  assert.match(actualInput.candidate_rules.find((rule) => rule.rule_id === "answer").criteria, /新しい場面/u);
+  assert.equal(actualInput.recent_messages[0].body, "新しい場面の質問です。");
 });
 
 test("一入力fixtureは本番resolverで分岐と抽出を確かめ、副作用を実行しない", async () => {

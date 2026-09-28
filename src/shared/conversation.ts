@@ -22,6 +22,14 @@ export type TalkReviewSelection = {
   selector?: "typesafe";
   model?: string;
   probabilities?: Record<string, number>;
+  // Jevの閾値未満でLLMへ回した場合の、最初の判定。最終判定は上のdecision等に入る。
+  escalatedFrom?: {
+    selector: "typesafe";
+    model?: string;
+    decision?: { rule_id: string; confidence: number; reason_code: string };
+    probabilities?: Record<string, number>;
+    fallbackReason: string;
+  };
 };
 
 export type SemanticRuleSelector = (input: {

@@ -106,6 +106,9 @@ Parameters:
   TypesafeGameOverMinConfidence:
     Type: String
     Default: ""
+  TypesafeLowConfidenceFallback:
+    Type: String
+    Default: ""
   ReservedConcurrency:
     Type: Number
     Default: 5
@@ -216,6 +219,7 @@ Resources:
           TYPESAFE_MODEL: !Ref TypesafeModel
           TYPESAFE_MIN_CONFIDENCE: !Ref TypesafeMinConfidence
           TYPESAFE_GAME_OVER_MIN_CONFIDENCE: !Ref TypesafeGameOverMinConfidence
+          TYPESAFE_LOW_CONFIDENCE_FALLBACK: !Ref TypesafeLowConfidenceFallback
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref AppTable

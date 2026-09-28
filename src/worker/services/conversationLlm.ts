@@ -18,9 +18,10 @@ import { runTalkFlowMatchExtractionSamples } from "../product/llmMatchExtraction
 import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../product/talkFlowTypesafeSelection.ts";
 import { canonicalLlmJson, llmRequestHashes, type LlmProviderEnv, type StructuredOutputProvider } from "../providers/structuredOutput.ts";
 import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../providers/typesafe.ts";
+import type { ProviderUsageObserver } from "../providers/providerUsage.ts";
 
 type RecentMessage = { speaker: string; body: string };
-export type TalkSelectorContext = { talkId: string; kind: "sms" | "chat" | "search_agent"; fromId: string };
+export type TalkSelectorContext = { talkId: string; kind: "sms" | "chat" | "search_agent"; fromId: string; onUsage?: ProviderUsageObserver };
 
 function talkFlowPromptInput(input: Parameters<SemanticRuleSelector>[0], context: TalkSelectorContext): TalkFlowLlmPromptInput {
   return {
@@ -58,7 +59,8 @@ export function semanticRuleSelector(
       instructions: messages[0]?.content ?? "",
       input: JSON.parse(messages[1]?.content ?? "{}") as Record<string, unknown>,
       schema,
-      observation
+      observation,
+      onUsage: context.onUsage
     });
     if (!result.ok) {
       return { ok: false, error: result.error === "provider_error" ? "provider_error" : "provider_invalid" };
@@ -105,7 +107,7 @@ export function typesafeRuleSelector(
       source: "talk_flow", taskId: "talk_rule_selection", talkId: context.talkId, fromId: context.fromId,
       inputHash: hashes.inputHash.slice(0, 12), promptHash: hashes.promptHash.slice(0, 12), schemaHash: hashes.schemaHash.slice(0, 12)
     };
-    const response = await requestTypesafeSystemOne(config, request, observation);
+    const response = await requestTypesafeSystemOne(config, request, observation, context.onUsage);
     if (!response.ok) return response;
     const answer = typesafeTalkRuleDecision(response.payload, promptInput);
     if (!answer) {

@@ -1,10 +1,7 @@
 import { renderTemplate } from "../../src/shared/condition.ts";
-import { evaluateConditionExpression } from "../../src/shared/conditionExpression.ts";
-import { buildTalkFlowLlmPromptInputForTurn } from "../../src/worker/product/talkFlowLlmSelection.ts";
-import { renderTalkRuleCriteria } from "../../src/worker/services/talkResolver.ts";
 
 // 選択中の原本から作る。別シナリオの生成済みsingletonを試験文脈へ混ぜない。
-export function talkTestContext(scenario, { talkId, from, input, stateValues: overrides = {}, recentMessages = [] }) {
+export function talkTestContext(scenario, { talkId, from, stateValues: overrides = {}, recentMessages = [] }) {
   const talk = scenario.talks.find((item) => item.id === talkId);
   if (!talk) throw new Error(`talkが存在しません: ${talkId}`);
   const fromId = from.includes("::") ? from : `${talkId}::${from}`;
@@ -29,17 +26,5 @@ export function talkTestContext(scenario, { talkId, from, input, stateValues: ov
       seen.add(key);
       return true;
     });
-  const rules = renderTalkRuleCriteria(talk.rules, stateValues);
-  const context = buildTalkFlowLlmPromptInputForTurn({
-    talkId: talk.id,
-    kind: talk.kind,
-    fromId,
-    playerInput: input,
-    recentMessages: combinedMessages,
-    commonRules: rules.filter((rule) => rule.from === "*"),
-    nodeRules: rules.filter((rule) => rule.from === fromId),
-    stateValues,
-    evaluateCond: evaluateConditionExpression
-  });
-  return { talk, fromId, stateValues, recentMessages: combinedMessages, context };
+  return { talk, fromId, stateValues, recentMessages: combinedMessages };
 }

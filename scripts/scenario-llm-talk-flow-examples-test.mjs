@@ -8,15 +8,13 @@ import {
   talkFlowLlmResponseSchema,
   talkFlowLlmRuleSelectionMaxTokens
 } from "../src/worker/product/talkFlowLlmSelection.ts";
-import { buildTypesafeTalkRuleRequest, typesafeTalkRuleDecision } from "../src/worker/product/talkFlowTypesafeSelection.ts";
-import { requestTypesafeSystemOne, resolveTypesafeConfig } from "../src/worker/providers/typesafe.ts";
+import { buildTypesafeTalkRuleRequest } from "../src/worker/product/talkFlowTypesafeSelection.ts";
 import { evaluateConditionExpression } from "../src/shared/conditionExpression.ts";
-import { renderTalkRuleCriteria, talkRuleSelectorKind } from "../src/worker/services/talkResolver.ts";
+import { createTalkRuleSelector, renderTalkRuleCriteria, resolveScenarioTalkSelection, talkRuleSelectorKind } from "../src/worker/services/talkResolver.ts";
 import { talkTestContext } from "./lib/talk-test-context.mjs";
 import { sameRuleOutcome } from "./lib/talk-rule-outcome.mjs";
 import { selectDeterministicRule } from "../src/shared/talkCriteria.ts";
 import { buildStructuredOutputBody, createStructuredOutputProvider, resolveStructuredOutputConfig } from "../src/worker/providers/structuredOutput.ts";
-import { semanticRuleSelector } from "../src/worker/services/conversationLlm.ts";
 import { talkCaseEvaluationConfig } from "./lib/talk-case-runner.mjs";
 
 const loadedScenario = loadAndValidateScenario().worker;
@@ -114,49 +112,40 @@ function typesafeSelected() {
   return kind === "typesafe";
 }
 
-// 本番と同じrequest・再試行・閾値でJevを呼び、検証用に確率分布とmodel版を返す。
-async function callLiveTypesafe(input, testCase) {
-  const config = resolveTypesafeConfig(process.env);
-  if (!config.ok) throw new Error(`TYPESAFE設定: ${config.reason}`);
-  const response = await requestTypesafeSystemOne(config, buildTypesafeTalkRuleRequest(input, config.model));
-  const answer = response.ok ? typesafeTalkRuleDecision(response.payload, input) : null;
-  if (!answer) {
-    const status = !response.ok && response.httpStatus ? ` http=${response.httpStatus}` : "";
-    throw new Error(`${testCase.id}: TypeSafe API error: ${response.ok ? "provider_invalid" : response.error}${status}`);
+// 合否と費用を分けて集計する。異なるprovider/modelのtokenを一つの費用へ合算しない。
+function summarizeUsage(results, failures) {
+  const rows = [...results, ...failures];
+  const calls = rows.flatMap(row => row.providerCalls ?? []);
+  const groups = new Map();
+  for (const call of calls) {
+    const key = JSON.stringify([call.provider, call.stage, call.model]);
+    if (!groups.has(key)) groups.set(key, {
+      provider: call.provider, stage: call.stage, model: call.model, calls: 0, attempts: 0, retries: 0,
+      tokens: Object.fromEntries(["inputTokens", "outputTokens", "totalTokens", "cachedTokens"]
+        .map(name => [name, { reportedTotal: null, unreportedAttempts: 0 }]))
+    });
+    const group = groups.get(key);
+    group.calls += 1;
+    group.attempts += call.attempts;
+    group.retries += Math.max(0, call.attempts - 1);
+    for (const [name, token] of Object.entries(group.tokens)) {
+      const value = call.usage[name];
+      if (value !== null) token.reportedTotal = (token.reportedTotal ?? 0) + value;
+      // retryするのは使用量を受け取れなかった通信だけ。最終応答以外は不明として残す。
+      token.unreportedAttempts += call.attempts - (value === null ? 0 : 1);
+    }
+  }
+  for (const group of groups.values()) for (const token of Object.values(group.tokens)) {
+    const reportedAttempts = group.attempts - token.unreportedAttempts;
+    token.reportedAverage = reportedAttempts ? Math.round(token.reportedTotal / reportedAttempts * 10) / 10 : null;
   }
   return {
-    decision: answer.decision,
-    usage: { inputTokens: answer.inputTokens },
-    model: answer.model,
-    probabilities: answer.probabilities,
-    thresholds: { minConfidence: config.minConfidence, minGameOverConfidence: config.minGameOverConfidence }
-  };
-}
-
-function average(values) {
-  const numbers = values.filter((value) => typeof value === "number");
-  if (numbers.length === 0) {
-    return null;
-  }
-  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
-}
-
-function summarizeUsage(results) {
-  const inputAverage = average(results.map((result) => result.inputTokens));
-  const outputAverage = average(results.map((result) => result.outputTokens));
-  const totalAverage = average(results.map((result) => result.totalTokens));
-  const cachedAverage = average(results.map((result) => result.cachedTokens));
-  const cachedTotal = results.reduce(
-    (sum, result) => sum + (typeof result.cachedTokens === "number" ? result.cachedTokens : 0),
-    0
-  );
-  return {
-    calls: results.length,
-    inputTokensAvg: inputAverage === null ? null : Math.round(inputAverage * 10) / 10,
-    outputTokensAvg: outputAverage === null ? null : Math.round(outputAverage * 10) / 10,
-    totalTokensAvg: totalAverage === null ? null : Math.round(totalAverage * 10) / 10,
-    cachedTokensAvg: cachedAverage === null ? null : Math.round(cachedAverage * 10) / 10,
-    cachedTokensTotal: cachedTotal
+    cases: rows.length,
+    aiSelectionCases: rows.filter(row => row.providerCalls?.length).length,
+    fallbackCases: rows.filter(row => row.providerCalls?.some(call => call.stage === "llm_fallback")).length,
+    providerCalls: calls.length,
+    httpAttempts: calls.reduce((sum, call) => sum + call.attempts, 0),
+    providers: [...groups.values()]
   };
 }
 
@@ -193,6 +182,7 @@ function shouldAbortRun(error) {
   const message = error instanceof Error ? error.message : String(error);
   return (
     failFast ||
+    error?.errorCode === "provider_unavailable" ||
     message.includes("LLM_API_KEY") ||
     message.includes("TYPESAFE設定") ||
     message.includes("LLM_TALK_SELECTOR設定") ||
@@ -228,7 +218,6 @@ function failureRow(testCase, error) {
 }
 
 function fullFailureRow(testCase, error) {
-  const promptInput = buildPromptInput(testCase);
   return {
     id: testCase.id,
     row: testCase.row,
@@ -252,11 +241,13 @@ function fullFailureRow(testCase, error) {
             afterGuardLabel: error.afterGuardLabel ?? null,
             decision: error.rawDecision ?? null,
             ...(error.model ? { model: error.model } : {}),
+            ...(error.escalatedFrom ? { escalatedFrom: error.escalatedFrom } : {}),
             ...(error.probabilities ? { probabilities: error.probabilities } : {})
           }
         : null,
     error: failureMessage(error),
-    promptInput
+    ...(error.providerCalls ? { providerCalls: error.providerCalls } : {}),
+    promptInput: error.promptInput ?? null
   };
 }
 
@@ -277,7 +268,7 @@ function writeReportFile({ status, selectedCases, results, failures, detailedFai
       retries
     },
     summary: summarizeRun(selectedCases.length, results, failures),
-    usage: live && !dryRun ? summarizeUsage(results) : null,
+    usage: live && !dryRun ? summarizeUsage(results, detailedFailures) : null,
     results,
     failures: detailedFailures,
     runtimeError: runtimeError ? failureMessage(runtimeError) : null
@@ -686,31 +677,6 @@ function nodeById(talk, fromId) {
   return node;
 }
 
-function buildPromptInput(testCase) {
-  const { context } = talkTestContext(loadedScenario, {
-    talkId: testCase.talkId,
-    from: testCase.fromId,
-    input: testCase.input,
-    stateValues: testCase.stateValues
-  });
-  assert.ok(context, `LLM 入力 context が作れません: ${testCase.id}`);
-  if (testCase.regexCriteria) {
-    assert.equal(
-      selectDeterministicRule(context.activeRules, testCase.input)?.id,
-      testCase.expectedRuleId,
-      `正規表現 criteria が期待 rule を選びません: ${testCase.id}`
-    );
-    assert.equal(
-      context.input.rules.some((rule) => rule.id === testCase.expectedRuleId),
-      false,
-      `正規表現 criteria の rule が LLM 候補に残っています: ${testCase.id}`
-    );
-  } else {
-    assert.ok(context.input.rules.some((rule) => rule.id === testCase.expectedRuleId), `期待 rule が候補にありません: ${testCase.id}`);
-  }
-  return context.input;
-}
-
 function activeRuntimeRuleById(testCase, ruleId) {
   const talk = talkById(testCase.talkId);
   const node = nodeById(talk, testCase.fromId);
@@ -845,50 +811,8 @@ function mockDecisionFor(testCase) {
   };
 }
 
-async function callLiveLlm(input, testCase) {
-  if (typesafeSelected()) return callLiveTypesafe(input, testCase);
-  const provider = createStructuredOutputProvider(process.env, { retries });
-  assert.ok(provider, "LLM_API_KEYとLLM_MODELを設定してください。");
-  let completion;
-  const selected = await semanticRuleSelector({
-    ...provider,
-    async completeJson(request) {
-      completion = await provider.completeJson(request);
-      return completion;
-    }
-  }, { talkId: input.talkId, kind: input.kind, fromId: input.fromId })(input);
-  if (!selected.ok) {
-    const status = completion?.httpStatus ? ` http=${completion.httpStatus}` : "";
-    throw new Error(`${testCase.id}: LLM API error: ${selected.error}${status}`);
-  }
-  const usage = completion?.usage;
-  return {
-    decision: selected.reviewSelection.decision,
-    model: completion?.model,
-    usage: usage ? {
-      inputTokens: usage.promptTokens, outputTokens: usage.completionTokens,
-      totalTokens: usage.totalTokens, cachedTokens: usage.cachedTokens
-    } : null
-  };
-}
-
-async function runCase(testCase) {
-  const input = buildPromptInput(testCase);
-  assertPromptDoesNotLeakImplementationDetails(input, !testCase.regexCriteria);
-
-  if (testCase.regexCriteria) {
-    return {
-      id: testCase.id,
-      row: testCase.row,
-      talk: testCase.talkId,
-      from: testCase.fromId,
-      expected: testCase.expectedLabel,
-      mode: testCase.expectedMode,
-      confidence: null,
-      regex: true
-    };
-  }
-
+function assertAndShowPrompt(input, testCase) {
+  assertPromptDoesNotLeakImplementationDetails(input);
   const schema = talkFlowLlmResponseSchema(input.rules.map((rule) => rule.id));
   assert.deepEqual(schema.properties.rule_id.enum, input.rules.map((rule) => rule.id));
   assert.equal(schema.additionalProperties, false);
@@ -905,71 +829,78 @@ async function runCase(testCase) {
         }, resolveStructuredOutputConfig({ ...process.env, LLM_MODEL: process.env.LLM_MODEL || "<model>" })), null, 2));
   }
 
-  const expectedRule = input.rules.find((rule) => rule.id === testCase.expectedRuleId);
-  assert.ok(expectedRule, `期待 rule が候補に存在しません: ${testCase.id}`);
+  assert.ok(input.rules.some(rule => rule.id === testCase.expectedRuleId), `期待 rule が候補に存在しません: ${testCase.id}`);
+}
 
-  if (dryRun) {
-    return {
-      id: testCase.id,
-      row: testCase.row,
-      talk: testCase.talkId,
-      from: testCase.fromId,
-      expected: testCase.expectedLabel,
-      mode: expectedRule.mode || "advance",
-      confidence: null,
-      dryRun: true
-    };
-  }
-
-  const liveResult = live ? await callLiveLlm(input, testCase) : null;
-  const rawDecision = liveResult?.decision ?? mockDecisionFor(testCase);
-  if (!isEquivalentExpectedOutcome(testCase, rawDecision.rule_id)) {
-    const actualRule = input.rules.find((rule) => rule.id === rawDecision.rule_id);
-    const error = new Error(`${testCase.id}: LLM が期待 rule_id を選びませんでした`);
-    error.actualRuleId = rawDecision.rule_id;
-    error.actualLabel = actualRule ? ruleLabel(actualRule) : null;
-    error.rawDecision = rawDecision;
-    error.probabilities = liveResult?.probabilities;
-    error.model = liveResult?.model;
-    throw error;
-  }
-
-  const selected = selectTalkFlowRuleFromLlmDecision(rawDecision, input, liveResult?.thresholds);
-  if (!isEquivalentExpectedOutcome(testCase, selected.ruleId)) {
-    const actualRule = input.rules.find((rule) => rule.id === rawDecision.rule_id);
-    const afterGuardRule = input.rules.find((rule) => rule.id === selected.ruleId);
-    const error = new Error(`${testCase.id}: confidence / schema guard 後の選択が期待と違います`);
-    error.actualRuleId = rawDecision.rule_id;
-    error.actualLabel = actualRule ? ruleLabel(actualRule) : null;
-    error.afterGuardRuleId = selected.ruleId;
-    error.afterGuardLabel = afterGuardRule ? ruleLabel(afterGuardRule) : null;
-    error.rawDecision = rawDecision;
-    error.probabilities = liveResult?.probabilities;
-    error.model = liveResult?.model;
-    throw error;
-  }
-  const selectedRule = input.rules.find((rule) => rule.id === selected.ruleId);
-  assert.ok(selectedRule, `選択 rule が候補に存在しません: ${testCase.id}`);
-
-  return {
-    id: testCase.id,
-    row: testCase.row,
-    talk: testCase.talkId,
-    from: testCase.fromId,
-    expected: testCase.expectedLabel,
-    mode: selectedRule.mode || "advance",
-    confidence: rawDecision.confidence,
-    ...(liveResult?.model ? { model: liveResult.model } : {}),
-    ...(liveResult?.probabilities ? { probabilities: liveResult.probabilities } : {}),
-    ...(liveResult?.usage
-      ? {
-          inputTokens: liveResult.usage.inputTokens,
-          outputTokens: liveResult.usage.outputTokens,
-          totalTokens: liveResult.usage.totalTokens,
-          cachedTokens: liveResult.usage.cachedTokens
+async function runCase(testCase) {
+  const providerCalls = [];
+  let promptInput;
+  try {
+    const { talk, fromId, stateValues, recentMessages } = talkTestContext(loadedScenario, {
+      talkId: testCase.talkId, from: testCase.fromId, stateValues: testCase.stateValues
+    });
+    // 候補順・cond・match/secret優先・AI不要時の分岐を、本番の入口に委ねる。
+    const selected = await resolveScenarioTalkSelection({
+      env: {}, llmEnabled: loadedScenario.features.llm, talk, from: fromId,
+      playerInput: testCase.input, stateValues, recentMessages,
+      async semanticSelector(input) {
+        promptInput = input;
+        assertAndShowPrompt(input, testCase);
+        if (!live || dryRun) {
+          const mock = selectTalkFlowRuleFromLlmDecision(mockDecisionFor(testCase), input);
+          return { ok: true, ruleId: mock.ruleId, reviewSelection: { ...mock, finalRuleId: mock.ruleId } };
         }
-      : {})
-  };
+        typesafeSelected(); // env読込みとCLI固有の--retries制約だけを確認する。
+        const provider = createStructuredOutputProvider(process.env, { retries });
+        const selector = createTalkRuleSelector(process.env, provider, {
+          talkId: talk.id, kind: talk.kind, fromId,
+          onUsage(usage) {
+            const stage = usage.provider === "typesafe" ? "jev"
+              : providerCalls.some(call => call.provider === "typesafe") ? "llm_fallback" : "llm";
+            providerCalls.push({ ...usage, stage });
+          }
+        });
+        return selector ? selector(input) : { ok: false, error: "provider_unavailable" };
+      }
+    });
+    const lastCall = providerCalls.at(-1);
+    if (!selected.ok) {
+      const httpStatus = selected.httpStatus ?? lastCall?.httpStatus;
+      const status = httpStatus ? ` http=${httpStatus}` : "";
+      throw Object.assign(new Error(`${testCase.id}: 選択 error: ${selected.error}${status}`), { errorCode: selected.error });
+    }
+    const { decision, probabilities, escalatedFrom } = selected.reviewSelection;
+    if (testCase.regexCriteria) {
+      assert.equal(selected.rule.id, testCase.expectedRuleId, `match/secretが期待 rule を選びません: ${testCase.id}`);
+    }
+    const rawMismatch = decision && !isEquivalentExpectedOutcome(testCase, decision.rule_id);
+    if (rawMismatch || !isEquivalentExpectedOutcome(testCase, selected.rule.id)) {
+      const actualRuleId = decision?.rule_id ?? selected.rule.id;
+      const actualRule = activeRuntimeRuleById(testCase, actualRuleId);
+      throw Object.assign(new Error(`${testCase.id}: ${rawMismatch
+        ? "LLM が期待 rule_id を選びませんでした"
+        : "本番の選択処理（優先順位・confidence / schema guard）後の選択が期待と違います"}`), {
+        actualRuleId, actualLabel: actualRule ? ruleLabel(actualRule) : null,
+        afterGuardRuleId: selected.rule.id, afterGuardLabel: ruleLabel(selected.rule),
+        rawDecision: decision, probabilities, escalatedFrom, model: lastCall?.model
+      });
+    }
+    return {
+      id: testCase.id, row: testCase.row, talk: testCase.talkId, from: testCase.fromId,
+      expected: testCase.expectedLabel, mode: selected.rule.mode || "advance", source: selected.source,
+      confidence: dryRun ? null : decision?.confidence ?? null,
+      ...(dryRun ? { dryRun: true } : {}),
+      ...(testCase.regexCriteria ? { regex: true } : {}),
+      ...(!promptInput && selected.source === "default" ? { noAiCandidates: true } : {}),
+      ...(lastCall ? { model: lastCall.model, ...lastCall.usage } : {}),
+      ...(probabilities ? { probabilities } : {}),
+      ...(escalatedFrom ? { escalatedFrom } : {}),
+      ...(live && !dryRun ? { providerCalls } : {})
+    };
+  } catch (error) {
+    // 失敗後に別経路で候補を作り直さず、実際に判定へ渡した入力と使用量を残す。
+    throw Object.assign(error, { providerCalls, promptInput });
+  }
 }
 
 const selectedCases = allExampleCases()
@@ -1004,7 +935,18 @@ try {
     console.table(failures);
   }
   if (live && !dryRun) {
-    console.table([summarizeUsage(results)]);
+    const { providers, ...counts } = summarizeUsage(results, detailedFailures);
+    console.table([counts]);
+    console.table(providers.map(row => ({
+      provider: row.provider, stage: row.stage, model: row.model,
+      calls: row.calls, attempts: row.attempts, retries: row.retries,
+      inputTokens: row.tokens.inputTokens.reportedTotal ?? "不明",
+      inputTokensAvg: row.tokens.inputTokens.reportedAverage ?? "不明",
+      inputUnreportedAttempts: row.tokens.inputTokens.unreportedAttempts,
+      outputTokens: row.tokens.outputTokens.reportedTotal ?? "不明",
+      outputTokensAvg: row.tokens.outputTokens.reportedAverage ?? "不明",
+      outputUnreportedAttempts: row.tokens.outputTokens.unreportedAttempts
+    })));
   }
   writeReportFile({
     status: failures.length > 0 ? "failed" : "passed",
@@ -1021,9 +963,9 @@ try {
 
   console.log(
     dryRun
-      ? `LLM talk_flow example dry run passed (${results.length} planned calls)`
+      ? `LLM talk_flow example dry run passed (${results.length} planned cases)`
       : live
-        ? `LLM talk_flow example live tests passed (${results.length} calls)`
+        ? `LLM talk_flow example live tests passed (${results.length} cases)`
         : "LLM talk_flow example mock tests passed"
   );
 } catch (error) {
