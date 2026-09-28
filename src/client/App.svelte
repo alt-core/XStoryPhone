@@ -1339,6 +1339,11 @@
   }
 
   function syncPhoneHistoryContent(appId: AppId, contentId: string) {
+    // 会話の履歴は表示を正とする。別会話の遅い開封応答で戻り先を上書きしない。
+    if ((appId === "messages" || appId === "chat")
+      && (displayedTalkTarget?.appId !== appId || displayedTalkTarget.contentId !== contentId)) {
+      return;
+    }
     const current = phoneHistoryStateFrom(window.history.state, phoneHistoryScope);
     if (current?.route.kind === "app" && current.route.appId === appId) {
       replaceCurrentPhoneRoute({ kind: "app", appId, contentId });
@@ -2864,6 +2869,8 @@
     }
 
     displayedTalkTarget = { appId, contentId };
+    // 開封通信の完了や同一要求の省略に関係なく、今見ている会話を戻り先にする。
+    if (activeAppId === appId) syncPhoneHistoryContent(appId, contentId);
   }
 
   function openNotification(notificationId: string) {
