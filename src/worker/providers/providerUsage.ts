@@ -11,8 +11,9 @@ export type ProviderUsage = {
   model: string;
   attempts: number;
   httpStatus?: number;
-  // 最終応答の報告値。それ以前の再試行対象は本文未取得のため、使用量は不明。
+  // 最終応答の報告値。再試行前に報告された分もattemptUsagesへ残す。
   usage: ReportedTokenUsage;
+  attemptUsages: ReportedTokenUsage[];
 };
 export type ProviderUsageObserver = (usage: ProviderUsage) => void;
 

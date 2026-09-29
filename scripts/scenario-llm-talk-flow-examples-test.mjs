@@ -129,10 +129,11 @@ function summarizeUsage(results, failures) {
     group.attempts += call.attempts;
     group.retries += Math.max(0, call.attempts - 1);
     for (const [name, token] of Object.entries(group.tokens)) {
-      const value = call.usage[name];
-      if (value !== null) token.reportedTotal = (token.reportedTotal ?? 0) + value;
-      // retryするのは使用量を受け取れなかった通信だけ。最終応答以外は不明として残す。
-      token.unreportedAttempts += call.attempts - (value === null ? 0 : 1);
+      for (const usage of call.attemptUsages) {
+        const value = usage[name];
+        if (value === null) token.unreportedAttempts += 1;
+        else token.reportedTotal = (token.reportedTotal ?? 0) + value;
+      }
     }
   }
   for (const group of groups.values()) for (const token of Object.values(group.tokens)) {

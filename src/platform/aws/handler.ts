@@ -10,6 +10,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { handle } from "hono/aws-lambda";
 import { createApp } from "../../server/app";
+import type { AppDependencies } from "../../server/store";
 import { DynamoStore, type DynamoTransport } from "./dynamoStore";
 
 const commands = {
@@ -34,7 +35,7 @@ const transport: DynamoTransport = {
 const tableName = process.env.TABLE_NAME?.trim();
 if (!tableName) throw new Error("TABLE_NAMEが設定されていません。");
 
-const app = createApp({
+const dependencies: AppDependencies = {
   store: new DynamoStore(transport, tableName),
   config: {
     appEnv: process.env.APP_ENV,
@@ -66,10 +67,19 @@ const app = createApp({
       TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,
       TYPESAFE_MODEL: process.env.TYPESAFE_MODEL,
       TYPESAFE_MIN_CONFIDENCE: process.env.TYPESAFE_MIN_CONFIDENCE,
+      TYPESAFE_ADVANCE_MIN_CONFIDENCE: process.env.TYPESAFE_ADVANCE_MIN_CONFIDENCE,
       TYPESAFE_GAME_OVER_MIN_CONFIDENCE: process.env.TYPESAFE_GAME_OVER_MIN_CONFIDENCE,
       TYPESAFE_LOW_CONFIDENCE_FALLBACK: process.env.TYPESAFE_LOW_CONFIDENCE_FALLBACK
     }
   }
-});
+};
 
-export const handler = handle(app);
+export const handler: ReturnType<typeof handle> = (event, context) => {
+  // HTTP APIの30秒とLambdaの残り時間を守り、保存・応答に3秒の余裕を残す。
+  // 要求ごとに複製し、並行実行や次のinvocationへ締切を持ち越さない。
+  const requestDeadlineMs = Date.now() + Math.max(0, Math.min(30_000, context?.getRemainingTimeInMillis() ?? 30_000) - 3_000);
+  return handle(createApp({
+    ...dependencies,
+    config: { ...dependencies.config, llm: { ...dependencies.config.llm, requestDeadlineMs } }
+  }))(event, context);
+};

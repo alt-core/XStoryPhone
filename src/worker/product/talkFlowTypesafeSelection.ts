@@ -53,21 +53,27 @@ function record(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-export function typesafeTalkRuleDecision(payload: unknown, input: TalkFlowLlmPromptInput): TypesafeTalkRuleAnswer | null {
+type TypesafeTalkRuleResult =
+  | ({ ok: true } & TypesafeTalkRuleAnswer)
+  | { ok: false; reason: "invalid_shape" | "unknown_choice" | "invalid_confidence" | "invalid_probabilities" | "choice_not_maximum" };
+
+export function typesafeTalkRuleDecision(payload: unknown, input: TalkFlowLlmPromptInput): TypesafeTalkRuleResult {
   const body = record(payload);
   const answer = record(record(body?.answers)?.rule);
   const probabilities = record(answer?.probabilities);
   const ruleIds = new Set(input.rules.map((rule) => rule.id));
   const choice = answer?.choice;
   const confidence = answer?.confidence;
-  if (!answer || answer.type !== "choice" || !probabilities) return null;
-  if (typeof choice !== "string" || !ruleIds.has(choice)) return null;
-  if (!validProbability(confidence)) return null;
+  // 応答本文を記録せず原因を追えるよう、拒否した条件だけを返す。
+  if (!answer || answer.type !== "choice" || !probabilities) return { ok: false, reason: "invalid_shape" };
+  if (typeof choice !== "string" || !ruleIds.has(choice)) return { ok: false, reason: "unknown_choice" };
+  if (!validProbability(confidence)) return { ok: false, reason: "invalid_confidence" };
   // 壊れた分布でgame over候補などを採らないよう、全候補の確率と最大値のchoiceを確かめる。
-  if (![...ruleIds].every((id) => validProbability(probabilities[id]))) return null;
-  if ([...ruleIds].some((id) => (probabilities[id] as number) > (probabilities[choice] as number))) return null;
+  if (![...ruleIds].every((id) => validProbability(probabilities[id]))) return { ok: false, reason: "invalid_probabilities" };
+  if ([...ruleIds].some((id) => (probabilities[id] as number) > (probabilities[choice] as number))) return { ok: false, reason: "choice_not_maximum" };
   const usage = record(body?.usage);
   return {
+    ok: true,
     decision: {
       rule_id: choice,
       confidence,

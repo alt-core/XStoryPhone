@@ -13,7 +13,7 @@ export function talkRuleSelectorKind(env: LlmProviderEnv): "openai-compatible" |
   return selector === "openai-compatible" || selector === "typesafe" ? selector : null;
 }
 
-const typesafeLowConfidenceReasons = new Set(["low_confidence", "low_game_over_confidence"]);
+const typesafeLowConfidenceReasons = new Set(["low_confidence", "low_advance_confidence", "low_game_over_confidence"]);
 
 // Jevの閾値未満だけを既存のLLM判定へ回す。確信度の高いdefault選択や通信失敗は回さない。
 function typesafeWithLlmFallback(env: LlmProviderEnv, provider: StructuredOutputProvider | null, context: TalkSelectorContext): SemanticRuleSelector {

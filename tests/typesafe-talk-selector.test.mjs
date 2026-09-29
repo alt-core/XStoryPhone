@@ -35,7 +35,7 @@ async function withFetch(responses, run) {
     requests.push({ url, init, body: JSON.parse(init.body) });
     const next = responses[Math.min(requests.length - 1, responses.length - 1)];
     if (next instanceof Error) throw next;
-    return next instanceof Response ? next : Response.json(next);
+    return next instanceof Response ? next.clone() : Response.json(next);
   };
   try {
     return await run(requests);
@@ -61,6 +61,7 @@ test("Jevのrequestは候補をChoiceの選択肢にし、defaultを「どれで
 
 test("Jevの応答は候補内のchoiceと0〜1のconfidenceだけを有効とし、reason_codeはdefaultかどうかを表す", () => {
   assert.deepEqual(typesafeTalkRuleDecision(answer("agree", 0.8, { agree: 0.8, end: 0.05, default: 0.15, unknown: 1 }), promptInput), {
+    ok: true,
     decision: { rule_id: "agree", confidence: 0.8, reason_code: "matched_intent" },
     probabilities: { agree: 0.8, end: 0.05, default: 0.15 },
     model: "jev-1.13.0",
@@ -81,7 +82,7 @@ test("Jevの応答は候補内のchoiceと0〜1のconfidenceだけを有効と�
     { answers: {} },
     null
   ]) {
-    assert.equal(typesafeTalkRuleDecision(invalid, promptInput), null);
+    assert.equal(typesafeTalkRuleDecision(invalid, promptInput).ok, false);
   }
 });
 
@@ -116,7 +117,7 @@ test("Jev selectorは既存の閾値関数でdefault退避とgame over抑止を�
   });
 });
 
-test("Jevの通信は一時的な失敗だけ1回再試行し、認証や入力の誤りは再試行しない", async () => {
+test("Jevの通信は一時的な失敗を1回、不正応答を2回再試行し、認証や入力の誤りは再試行しない", async () => {
   for (const [first, calls] of [
     [new Response("busy", { status: 429 }), 2],
     [new Response("overloaded", { status: 529 }), 2],
@@ -136,7 +137,7 @@ test("Jevの通信は一時的な失敗だけ1回再試行し、認証や入力�
   });
   await withFetch([new Response("not json", { status: 200 })], async (requests) => {
     assert.deepEqual(await typesafeRuleSelector(env)(selectorInput), { ok: false, error: "provider_invalid" });
-    assert.equal(requests.length, 1);
+    assert.equal(requests.length, 3);
   });
   await withFetch([answer("missing", 0.9)], async () => {
     assert.deepEqual(await typesafeRuleSelector(env)(selectorInput), { ok: false, error: "provider_invalid" });
@@ -184,6 +185,33 @@ test("Jevのlogは既存のLLM用変数に従い、API keyを出さない", asyn
   assert.equal(lines.some((line) => line.includes("typesafe-secret-key")), false);
 });
 
+test("Jevの検証拒否理由と3回の試行を通常ログに残し、入力・応答本文を出さない", async (t) => {
+  const events = [];
+  t.mock.method(console, "log", line => events.push(JSON.parse(line)));
+  const cases = [
+    [null, "invalid_shape"],
+    [answer("非公開の応答", 1), "unknown_choice"],
+    [answer("agree", 2), "invalid_confidence"],
+    [answer("agree", 0.9, { agree: 0.9 }), "invalid_probabilities"],
+    [answer("end", 0.9, { agree: 0.9, end: 0.1, default: 0 }), "choice_not_maximum"],
+    [new Response("非公開の応答", { status: 200 }), "invalid_json"]
+  ];
+  for (const [payload, reason] of cases) {
+    await withFetch([payload], async () => {
+      const result = await typesafeRuleSelector({ ...env, LLM_ANALYTICS_ENABLED: "true" })({ ...selectorInput, playerInput: "非公開の入力" });
+      assert.deepEqual(result, { ok: false, error: "provider_invalid" });
+      const usage = events.at(-1);
+      assert.equal(usage.event, "llm_usage");
+      assert.equal(usage.failureReason, reason);
+      assert.equal(usage.attempts, 3);
+      assert.equal(usage.retries, 2);
+      assert.deepEqual(usage.attemptDetails.map(attempt => [attempt.httpStatus, attempt.error]), Array(3).fill([200, reason]));
+    });
+  }
+  const logs = JSON.stringify(events);
+  for (const secret of ["typesafe-secret-key", "非公開の入力", "非公開の応答", "player_input", "providerPayload"]) assert.ok(!logs.includes(secret));
+});
+
 test("Jevの設定誤りは通信せずprovider_unavailableにし、既存LLMへ戻さない", async () => {
   const originalError = console.error;
   const errors = [];
@@ -214,7 +242,7 @@ test("Jevの設定誤りは通信せずprovider_unavailableにし、既存LLMへ
   assert.equal(errors.some((line) => line.includes("typesafe-secret-key")), false);
 });
 
-test("Jevの閾値未満だけを既存LLMへ回し、最初の判定と最終判定を監修記録に残す", async () => {
+test("Jevの閾値未満を既存LLMへ回し、最初の判定と最終判定を監修記録に残す", async () => {
   const fallbackEnv = { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" };
   const context = { talkId: "talk", kind: "sms", fromId: "start" };
   const llmRequests = [];
@@ -269,6 +297,89 @@ test("Jevの閾値未満だけを既存LLMへ回し、最初の判定と最終�
     assert.equal(failed.error, "provider_error");
   });
   assert.equal(llmRequests.length, before);
+});
+
+test("HTTP200のJev不正応答は2回再試行しても不正なら従来のエラーにし、LLMへ回さない", async () => {
+  const fallbackEnv = { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" };
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  for (const payload of [
+    answer("missing", 0.9),
+    answer("end", 1, { agree: 0.9, end: 0.1, default: 0 }),
+    answer("end", 1, { end: 1 }),
+    answer("end", 1.5),
+    { answers: {} },
+    new Response("非公開の不正JSON", { status: 200 })
+  ]) {
+    const provider = { id: "fake", async completeJson() { assert.fail("不正応答をLLMへ回さない"); } };
+    await withFetch([payload], async (requests) => {
+      const result = await createTalkRuleSelector(fallbackEnv, provider, context)(selectorInput);
+      assert.deepEqual(result, { ok: false, error: "provider_invalid" });
+      assert.equal(requests.length, 3, "初回と再試行2回まで");
+      assert.ok(requests.every(request => request.url === "https://api.typesafe.ai/v1/systemone"));
+      assert.deepEqual(requests.map(request => request.body), Array(3).fill(requests[0].body), "候補・入力・文脈を変えずに再試行する");
+    });
+  }
+});
+
+test("Jevが2回目・3回目で正常応答すればその結果を使い、閾値未満だけ既存LLMへ回す", async () => {
+  const fallbackEnv = { ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" };
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  for (const failures of [1, 2]) for (const confidence of [0.5, 0.9]) {
+    let calls = 0;
+    const provider = { id: "fake", async completeJson() {
+      calls++;
+      return { ok: true, value: { rule_id: "end", confidence: 0.8, reason_code: "matched_intent" } };
+    } };
+    const invalid = [new Response("not json", { status: 200 }), answer("end", 1, {})];
+    await withFetch([...invalid.slice(0, failures), answer("agree", confidence)], async (requests) => {
+      const result = await createTalkRuleSelector(fallbackEnv, provider, context)(selectorInput);
+      assert.equal(requests.length, failures + 1);
+      assert.equal(result.ok, true);
+      assert.equal(calls, confidence < 0.6 ? 1 : 0);
+      if (confidence < 0.6) {
+        assert.equal(result.ruleId, "default");
+        assert.equal(result.reviewSelection.fallbackReason, "low_game_over_confidence");
+        assert.equal(result.reviewSelection.escalatedFrom.fallbackReason, "low_confidence");
+      } else {
+        assert.equal(result.ruleId, "agree");
+        assert.equal(result.reviewSelection.selector, "typesafe");
+        assert.equal(result.reviewSelection.escalatedFrom, undefined);
+      }
+    });
+  }
+});
+
+test("不正応答の再試行はdefault設定でも行い、認証・通信失敗を別providerで隠さない", async () => {
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  const provider = { id: "fake", async completeJson() { assert.fail("LLMへ回さない"); } };
+  await withFetch([answer("missing", 1)], async (requests) => {
+    assert.deepEqual(await createTalkRuleSelector(env, provider, context)(selectorInput), { ok: false, error: "provider_invalid" });
+    assert.equal(requests.length, 3);
+  });
+  for (const status of [401, 403, 422, 503]) {
+    // 再試行でも新しいResponseを渡し、本文の二重消費を避ける。
+    await withFetch([new Response("denied", { status }), new Response("denied", { status })], async (requests) => {
+      const result = await createTalkRuleSelector({ ...env, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" }, provider, context)(selectorInput);
+      assert.deepEqual(result, { ok: false, error: "provider_error", httpStatus: status });
+      assert.equal(requests.length, status === 503 ? 2 : 1);
+    });
+  }
+});
+
+test("不正応答と通信失敗が混在しても再試行を重ねず、途中の認証失敗で停止する", async () => {
+  const invalid = answer("missing", 0.9);
+  for (const [responses, expected] of [
+    [[new Response("busy", { status: 503 }), invalid, invalid], { ok: false, error: "provider_invalid" }],
+    [[invalid, new Response("busy", { status: 503 })], { ok: false, error: "provider_error", httpStatus: 503 }],
+    [[invalid, invalid, new TypeError("network unavailable")], { ok: false, error: "provider_error" }],
+    [[invalid, new Response("unauthorized", { status: 401 })], { ok: false, error: "provider_error", httpStatus: 401 }]
+  ]) {
+    await withFetch(responses, async (requests) => {
+      const result = await typesafeRuleSelector(env)(selectorInput);
+      assert.deepEqual(result, expected);
+      assert.equal(requests.length, responses.length);
+    });
+  }
 });
 
 test("LLMへ回す設定の誤りは、迷った入力を待たずに最初のai判定で明示する", async () => {
@@ -396,4 +507,75 @@ test("Jevのcase評価は401/403で後続caseを止め、ほかのHTTP失敗と�
       });
     }
   }
+});
+
+test("進むruleだけの閾値は環境変数で設定し、stayとgame overには別の閾値を使う", async () => {
+  const advanceRules = [
+    { ...baseRule, id: "agree", intent: "同意", criteria: "提案に同意した" },
+    { ...baseRule, id: "wait", order: 2, intent: "保留", criteria: "少し待ってほしいと言った", mode: "stay" },
+    { ...baseRule, id: "end", order: 3, intent: "終了", criteria: "会話の終了を明言した", mode: "game_over" },
+    { ...baseRule, id: "default", order: 4, isDefault: true, type: "default", criteria: "相手は返事を待っている", mode: "stay" }
+  ];
+  const input = { ...selectorInput, rules: advanceRules.map(({ id, from, criteria, intent, mode, isDefault }) => ({ id, from, criteria, intent, mode, isDefault })) };
+  const reply = (choice, confidence) => answer(choice, confidence, { agree: 0, wait: 0, end: 0, default: 0, [choice]: confidence });
+  const tuned = { ...env, TYPESAFE_MIN_CONFIDENCE: "0.6", TYPESAFE_ADVANCE_MIN_CONFIDENCE: "0.8" };
+  assert.equal(resolveTypesafeConfig(env).minAdvanceConfidence, resolveTypesafeConfig(env).minConfidence, "未設定なら通常の閾値と同じ");
+  assert.equal(resolveTypesafeConfig({ ...env, TYPESAFE_MIN_CONFIDENCE: "0.5" }).minAdvanceConfidence, 0.5);
+  assert.equal(resolveTypesafeConfig(tuned).minAdvanceConfidence, 0.8);
+  for (const invalid of [{ ...env, TYPESAFE_ADVANCE_MIN_CONFIDENCE: "high" }, { ...env, TYPESAFE_ADVANCE_MIN_CONFIDENCE: "2" }, { ...tuned, TYPESAFE_ADVANCE_MIN_CONFIDENCE: "0.5" }]) {
+    const config = resolveTypesafeConfig(invalid);
+    assert.equal(config.ok, false);
+    assert.match(config.reason, /TYPESAFE_ADVANCE_MIN_CONFIDENCE/u);
+  }
+  // 進むruleは0.8未満でdefaultへ退避し、stayは通常の閾値0.6で採用、game overは専用の0.9で判定する。
+  for (const [choice, confidence, expectedRuleId, fallbackReason] of [
+    ["agree", 0.79, "default", "low_advance_confidence"],
+    ["agree", 0.8, "agree", undefined],
+    ["wait", 0.61, "wait", undefined],
+    ["wait", 0.59, "default", "low_confidence"],
+    ["end", 0.85, "default", "low_game_over_confidence"],
+    ["end", 0.9, "end", undefined],
+    ["default", 0.7, "default", undefined]
+  ]) {
+    await withFetch([reply(choice, confidence)], async () => {
+      const selected = await typesafeRuleSelector(tuned)(input);
+      assert.equal(selected.ruleId, expectedRuleId, `${choice} ${confidence}`);
+      assert.equal(selected.reviewSelection.fallbackReason, fallbackReason, `${choice} ${confidence}`);
+    });
+  }
+  // 進む閾値未満だけをLLMへ回し、stayの採用は回さない。
+  const llmRequests = [];
+  const provider = { id: "fake", async completeJson(request) {
+    llmRequests.push(request);
+    return { ok: true, value: { rule_id: "agree", confidence: 0.8, reason_code: "matched_intent" }, raw: "{}" };
+  } };
+  const context = { talkId: "talk", kind: "sms", fromId: "start" };
+  const escalating = { ...tuned, TYPESAFE_LOW_CONFIDENCE_FALLBACK: "llm" };
+  await withFetch([reply("agree", 0.7)], async () => {
+    const selected = await createTalkRuleSelector(escalating, provider, context)(input);
+    assert.equal(selected.ruleId, "agree");
+    assert.equal(selected.reviewSelection.escalatedFrom.fallbackReason, "low_advance_confidence");
+  });
+  assert.equal(llmRequests.length, 1);
+  await withFetch([reply("wait", 0.7)], async () => {
+    const selected = await createTalkRuleSelector(escalating, provider, context)(input);
+    assert.equal(selected.ruleId, "wait");
+    assert.equal(selected.reviewSelection.escalatedFrom, undefined);
+  });
+  assert.equal(llmRequests.length, 1);
+});
+
+test("再試行後が通信失敗でも、先行する不正応答の既知の使用量を失わない", async (t) => {
+  const logs = [], usage = [];
+  t.mock.method(console, "log", line => logs.push(JSON.parse(line)));
+  await withFetch([answer("missing", 0.9), new Response("denied", { status: 401 })], async () => {
+    const selected = await typesafeRuleSelector({ ...env, LLM_ANALYTICS_ENABLED: "true" }, {
+      talkId: "talk", kind: "sms", fromId: "start", onUsage: value => usage.push(value)
+    })(selectorInput);
+    assert.deepEqual(selected, { ok: false, error: "provider_error", httpStatus: 401 });
+  });
+  assert.equal(usage.length, 1, "provider呼出し一件の中で試行を記録する");
+  assert.equal(usage[0].attempts, 2);
+  assert.deepEqual(usage[0].attemptUsages.map(item => item.inputTokens), [321, null]);
+  assert.equal(logs.at(-1).usage.inputTokens, 321);
 });

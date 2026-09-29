@@ -253,6 +253,7 @@ LLM_TALK_SELECTOR=typesafe
 TYPESAFE_API_KEY=...
 TYPESAFE_MODEL=jev-1.13.0              # 任意。既定値
 TYPESAFE_MIN_CONFIDENCE=0.65           # 任意。既定値
+TYPESAFE_ADVANCE_MIN_CONFIDENCE=0.65    # 任意。既定はTYPESAFE_MIN_CONFIDENCEと同じ
 TYPESAFE_GAME_OVER_MIN_CONFIDENCE=0.9  # 任意。既定値
 TYPESAFE_LOW_CONFIDENCE_FALLBACK=default  # 任意。default（既定）/ llm
 ```
@@ -261,13 +262,14 @@ TYPESAFE_LOW_CONFIDENCE_FALLBACK=default  # 任意。default（既定）/ llm
 - rule選択だけなら`LLM_API_KEY`は不要です。AI抽出を持つruleが選ばれた時にLLM providerがなければ、既存と同じ`llm_unavailable`になります。
 - keyがない、`LLM_TALK_SELECTOR`が未知の値、閾値が0〜1の数値でない、game over用の閾値が通常の閾値より小さい場合は、通信せず`llm_unavailable`にします。既存のLLMへ黙って戻しません。
 - 閾値はJevの`confidence`へ適用し、判定規則は既存のLLM経路と同じです。通常の閾値未満ならdefaultへ戻し、`game_over`のruleはgame over用の閾値以上の時だけ選びます。
-- `TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`にすると、閾値で採用されなかった結果（通常の閾値未満、またはgame over用の閾値未満）だけを、上の`LLM_*`によるrule選択へ回します。回した先の結果は既存LLMの閾値で判定し、そこでも確信度が低ければdefaultへ戻ります。Jevが閾値以上でdefaultを選んだ場合や、Jevの通信・応答形式の失敗は回しません。`LLM_API_KEY`と`LLM_MODEL`がなければ、迷った入力を待たずに最初のai判定で`llm_unavailable`にします。
+- `TYPESAFE_ADVANCE_MIN_CONFIDENCE`は、default以外の進むrule（`mode`が空欄のもの）だけに課す閾値です。通常の閾値以上にします。留まるruleは通常の閾値のまま、`game_over`はgame over用の閾値のままです。誤って進む判定は誤って留まる判定より体験に響くので、留まる判定を安く保ったまま、進む判定だけを厳しくして`llm`へ回す（下記）使い方を想定しています。閾値未満の退避理由は`low_advance_confidence`です。
+- `TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`にすると、閾値で採用されなかった結果（通常・進むrule用・game over用のいずれかの閾値未満）だけを、上の`LLM_*`によるrule選択へ回します。回した先の結果は既存LLMの閾値で判定し、そこでも確信度が低ければdefaultへ戻ります。Jevが閾値以上でdefaultを選んだ場合や、Jevの通信・応答形式の失敗は回しません。`LLM_API_KEY`と`LLM_MODEL`がなければ、迷った入力を待たずに最初のai判定で`llm_unavailable`にします。
 - `jev-latest`のような別名は新版へ自動で移り、調整した閾値の前提が変わります。閾値を調整したら`TYPESAFE_MODEL`を版IDで固定してください。
 - Jevの主な学習言語は英語で、日本語の精度は下がると公開されています。作品のexampleと会話caseを実APIで確認してから使ってください。[分岐の選択だけを評価する](authoring-tests.md#分岐の選択だけを評価する)手順では、`--selection-only`で抽出用LLMを呼ばずに同じ入力を比較できます。テンプレートのある地点はcaseの`stateValues`で実際の場面を再現してください。
 - LLMに判断させるまでもない事前条件(特定の添付IDが必要、など)は、criteriaではなく`cond`に書きます。`cond`は`player_input`を参照でき、通らないruleは候補になりません。
 - プレイヤー入力と直近の会話はTypeSafeへ送られます。公開時は、実際の送信先に合わせてプライバシーポリシーを更新してください。
 
-通信は既存のLLMと同じく、通信例外と408・429・5xxだけを250ms後に1回再試行します。1試行のtimeoutは10秒です。`LLM_ANALYTICS_ENABLED` / `LLM_DEBUG_LOGS`のlogには`provider:"typesafe"`が付きます。監修試行の記録には、選択結果とhashに加えて、`selector`、応答したmodel版、全候補の確率分布が残ります。LLMへ回した場合は、最終判定が既存LLMの記録になり、最初のJevの判定・確率分布・回した理由を`escalatedFrom`へ残します。
+通信例外と408・429・5xxは、初回失敗時だけ250ms後に1回再試行します。JSON構文や候補・確率の検証に失敗した応答は、250ms間隔で最大2回再試行します（初回を含め合計3試行まで）。不正応答のままなら既存のエラーへ戻し、LLMへは回しません。1試行のtimeoutは10秒で、要求共通の締切がある場合は残り時間も上限になります。`LLM_ANALYTICS_ENABLED` / `LLM_DEBUG_LOGS`のlogには`provider:"typesafe"`が付き、通常ログにも試行ごとの固定の拒否理由を記録します。監修試行の記録には、選択結果とhashに加えて、`selector`、応答したmodel版、全候補の確率分布が残ります。LLMへ回した場合は、最終判定が既存LLMの記録になり、最初のJevの判定・確率分布・回した理由を`escalatedFrom`へ残します。
 
 ### hook LLMの入力・出力制約
 

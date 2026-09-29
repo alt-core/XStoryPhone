@@ -49,6 +49,8 @@ export type StructuredOutputProvider = {
 };
 
 export type LlmProviderEnv = {
+  // プラットフォームが要求開始時に渡す絶対時刻。環境変数ではなく要求内だけで共有する。
+  requestDeadlineMs?: number;
   LLM_API_KEY?: string;
   LLM_MODEL?: string;
   LLM_BASE_URL?: string;
@@ -70,6 +72,7 @@ export type LlmProviderEnv = {
   TYPESAFE_API_KEY?: string;
   TYPESAFE_MODEL?: string;
   TYPESAFE_MIN_CONFIDENCE?: string;
+  TYPESAFE_ADVANCE_MIN_CONFIDENCE?: string;
   TYPESAFE_GAME_OVER_MIN_CONFIDENCE?: string;
   TYPESAFE_LOW_CONFIDENCE_FALLBACK?: string;
 };
@@ -230,6 +233,8 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
       const body = JSON.stringify(buildStructuredOutputBody(request, config));
       const startedAt = Date.now();
       const attempts: Array<{ attempt: number; httpStatus?: number; error?: string; durationMs: number; usage?: ReturnType<typeof usageFromPayload> }> = [];
+      const remainingMs = () => Number.isFinite(env.requestDeadlineMs) ? env.requestDeadlineMs! - Date.now() : Infinity;
+      let failureReason: string | undefined;
       const hashes = await llmRequestHashes(JSON.stringify(request.input), request.instructions, request.schema);
       const finish = async (result: StructuredOutputResult, payload?: unknown) => {
         const summary = {
@@ -240,6 +245,8 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
           outcome: result.ok ? "ready" : result.error,
           attempts: attempts.length,
           retries: Math.max(0, attempts.length - 1),
+          attemptDetails: attempts.map(({ attempt, httpStatus, error, durationMs }) => ({ attempt, httpStatus, error, durationMs })),
+          ...(!result.ok ? { failureReason: failureReason ?? attempts[attempts.length - 1]?.error ?? result.error } : {}),
           durationMs: Date.now() - startedAt,
           usage: attempts.reduce((sum, attempt) => ({
             promptTokens: sum.promptTokens + (attempt.usage?.promptTokens ?? 0),
@@ -265,7 +272,9 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
           model: cleanText(payload && typeof payload === "object" ? (payload as { model?: unknown }).model : undefined) || requestModel,
           attempts: attempts.length,
           httpStatus: attempts[attempts.length - 1]?.httpStatus,
-          usage: reportedTokenUsage(payload, "openai-compatible")
+          usage: reportedTokenUsage(payload, "openai-compatible"),
+          // このproviderの再試行対象は本文未取得の通信のみ。既知の値は最終応答に限る。
+          attemptUsages: attempts.map((_, index) => reportedTokenUsage(index === attempts.length - 1 ? payload : undefined, "openai-compatible"))
         });
         return result.ok ? {
           ...result,
@@ -274,9 +283,14 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
         } : result;
       };
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const availableMs = Math.min(timeoutForRequest, remainingMs());
+        if (availableMs <= 0) {
+          failureReason = "request_deadline";
+          return finish({ ok: false, error: "provider_error" });
+        }
         const attemptStartedAt = Date.now();
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutForRequest);
+        const timeoutId = setTimeout(() => controller.abort(), availableMs);
         let response: Response;
         try {
           response = await fetch(completionUrl(baseUrl), {
@@ -290,8 +304,8 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
           });
         } catch {
           clearTimeout(timeoutId);
-          attempts.push({ attempt: attempt + 1, error: "network_error", durationMs: Date.now() - attemptStartedAt });
-          if (attempt + 1 < maxAttempts) {
+          attempts.push({ attempt: attempt + 1, error: controller.signal.aborted ? "timeout" : "network_error", durationMs: Date.now() - attemptStartedAt });
+          if (attempt + 1 < maxAttempts && remainingMs() > 250) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
@@ -300,7 +314,7 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
         if (!response.ok) {
           clearTimeout(timeoutId);
           attempts.push({ attempt: attempt + 1, httpStatus: response.status, error: "http_error", durationMs: Date.now() - attemptStartedAt });
-          if (attempt + 1 < maxAttempts && retryableStatus(response.status)) {
+          if (attempt + 1 < maxAttempts && retryableStatus(response.status) && remainingMs() > 250) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
@@ -311,8 +325,8 @@ export function createStructuredOutputProvider(env: LlmProviderEnv, options: { r
           payload = await response.json();
         } catch (error) {
           clearTimeout(timeoutId);
-          attempts.push({ attempt: attempt + 1, httpStatus: response.status, error: error instanceof SyntaxError ? "invalid_json" : "response_error", durationMs: Date.now() - attemptStartedAt });
-          if (!(error instanceof SyntaxError) && attempt + 1 < maxAttempts) {
+          attempts.push({ attempt: attempt + 1, httpStatus: response.status, error: controller.signal.aborted ? "timeout" : error instanceof SyntaxError ? "invalid_json" : "response_error", durationMs: Date.now() - attemptStartedAt });
+          if (!(error instanceof SyntaxError) && attempt + 1 < maxAttempts && remainingMs() > 250) {
             await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }

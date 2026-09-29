@@ -374,10 +374,13 @@ export function selectTalkFlowRuleFromLlmDecision(
   input: TalkFlowLlmPromptInput,
   options: {
     minConfidence?: number;
+    // 進む（stayでもgame_overでもない）ruleだけに課す閾値。未指定なら通常の閾値と同じ。
+    minAdvanceConfidence?: number;
     minGameOverConfidence?: number;
   } = {}
 ): TalkFlowLlmSelectionResult {
   const minConfidence = options.minConfidence ?? talkFlowLlmDefaultThresholds.minConfidence;
+  const minAdvanceConfidence = options.minAdvanceConfidence ?? minConfidence;
   const minGameOverConfidence = options.minGameOverConfidence ?? talkFlowLlmDefaultThresholds.minGameOverConfidence;
   const decision = parseTalkFlowLlmDecision(rawDecision);
   if (!decision) {
@@ -395,6 +398,10 @@ export function selectTalkFlowRuleFromLlmDecision(
 
   if (selectedRule.mode === "game_over" && decision.confidence < minGameOverConfidence) {
     return { ruleId: input.defaultRuleId, accepted: false, fallbackReason: "low_game_over_confidence", decision };
+  }
+
+  if (selectedRule.mode === "" && !selectedRule.isDefault && decision.confidence < minAdvanceConfidence) {
+    return { ruleId: input.defaultRuleId, accepted: false, fallbackReason: "low_advance_confidence", decision };
   }
 
   return { ruleId: selectedRule.id, accepted: true, decision };

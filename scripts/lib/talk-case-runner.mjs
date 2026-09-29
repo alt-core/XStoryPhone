@@ -74,7 +74,8 @@ export function talkCaseEvaluationConfig({ live = false, env = {} } = {}) {
     const config = resolveTypesafeConfig(env);
     if (!config.ok) return { selector, configurationError: config.reason };
     return {
-      selector, model: config.model, thresholds: { minConfidence: config.minConfidence, minGameOverConfidence: config.minGameOverConfidence },
+      selector, model: config.model,
+      thresholds: { minConfidence: config.minConfidence, minAdvanceConfidence: config.minAdvanceConfidence, minGameOverConfidence: config.minGameOverConfidence },
       lowConfidenceFallback: config.lowConfidenceFallback,
       ...(config.lowConfidenceFallback === "llm" ? { fallbackModel: resolveStructuredOutputConfig(env).model } : {})
     };

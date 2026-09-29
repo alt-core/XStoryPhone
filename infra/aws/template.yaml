@@ -103,6 +103,9 @@ Parameters:
   TypesafeMinConfidence:
     Type: String
     Default: ""
+  TypesafeAdvanceMinConfidence:
+    Type: String
+    Default: ""
   TypesafeGameOverMinConfidence:
     Type: String
     Default: ""
@@ -218,6 +221,7 @@ Resources:
           TYPESAFE_API_KEY: !Ref TypesafeApiKey
           TYPESAFE_MODEL: !Ref TypesafeModel
           TYPESAFE_MIN_CONFIDENCE: !Ref TypesafeMinConfidence
+          TYPESAFE_ADVANCE_MIN_CONFIDENCE: !Ref TypesafeAdvanceMinConfidence
           TYPESAFE_GAME_OVER_MIN_CONFIDENCE: !Ref TypesafeGameOverMinConfidence
           TYPESAFE_LOW_CONFIDENCE_FALLBACK: !Ref TypesafeLowConfidenceFallback
       Policies:

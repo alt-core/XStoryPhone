@@ -47,6 +47,7 @@ function fixture(t) {
       if (variant === "retry" && counts[kind] === 1) return new Response("busy", {status:503});
       if (variant === "denied" && !jev) return new Response("denied", {status:403});
       if (jev) {
+        if (variant === "invalid_first" && counts.jev === 1) return Response.json({answers:{},usage:{input_tokens:321}});
         const entries = Object.entries(body.questions.rule.criteria);
         const fallback = entries.find(([,value]) => typeof value === "string")[0];
         const agree = entries.find(([,value]) => typeof value === "object" && value.intent === "協力を承諾")[0];
@@ -173,6 +174,17 @@ test("Jevと回付先LLMの使用量・実試行回数を別々に残し、再�
   }
   assert.match(result.stdout,/llm_fallback/u);
   assert.doesNotMatch(JSON.stringify(result.report),/test-key/u);
+});
+
+test("Jev不正応答の再試行前に受け取った使用量も集計し、未報告分と混同しない", t => {
+  const result = fixture(t).run("invalid_first");
+  assert.equal(result.status,0,result.stderr + result.stdout);
+  assert.equal(result.report.usage.providerCalls,4);
+  assert.equal(result.report.usage.httpAttempts,5);
+  const jev = result.report.usage.providers.find(row => row.stage === "jev");
+  assert.equal(jev.attempts,3);
+  assert.deepEqual(jev.tokens.inputTokens,{reportedTotal:963,unreportedAttempts:0,reportedAverage:321});
+  assert.deepEqual(jev.tokens.outputTokens,{reportedTotal:null,unreportedAttempts:3,reportedAverage:null});
 });
 
 test("期待不一致・途中失敗でも使用量を残し、認証拒否で後続exampleへ進まない", t => {

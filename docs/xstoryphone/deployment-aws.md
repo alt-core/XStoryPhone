@@ -114,13 +114,13 @@ export LLM_REASONING_EFFORT='low'              # 任意
 npm run deploy:aws:prod
 ```
 
-このリポジトリの `infra/aws/template.yaml` では、Lambdaの実行時間を30秒に設定しています。`LLM_TIMEOUT_MS` とprofileごとのtimeoutはLLMの1試行に対する制限であり、リクエスト全体の制限ではありません。既定の15秒を初回と1回の再試行で使い切ると、250msの待機も加わり30秒を超えます。会話のrule選択後にmatch抽出を行う経路では、抽出の初回2標本を並列実行し、合意できなければ最大3標本をさらに順次取得します。加えて同じリクエスト内のhookがLLMを呼ぶ場合もあります。
+このリポジトリの `infra/aws/template.yaml` では、Lambdaの実行時間を30秒に設定しています。AWS handlerは要求ごとに「30秒とLambda残り時間の小さい方から3秒を引いた時点」をLLM共通の締切とします。Jev、回付先のLLM、抽出、hookが同じ締切を使い、各試行は `LLM_TIMEOUT_MS`・profileなどの設定上限と残り時間の小さい方で打ち切ります。締切後は新しい通信を始めず、既存の再送可能なエラーに戻します。hookで明示したfallbackは従来どおりです。この内部値は環境変数ではなく、Cloudflareやローカルの制作試験には設定しません。
 
-再試行の待機、会話選択、複数標本のmatch抽出、hook、保存などを含めたリクエスト全体を30秒以内に収める必要があります。1試行を10秒以下へ設定しても、成功応答が重なるだけで全体が30秒を超えることがあり、完了の保証にはなりません。LLMを使う作品は必要な経路を実環境で確認し、作品側の処理と各timeoutを調整してください。この注意は本リポジトリのLambda設定に基づくもので、AWS全体の上限を示すものではありません。
+3秒は保存・応答のための余裕であり、DBの遅延や作品側の独自処理まで含めた完了保証ではありません。match抽出は初回2標本を並列実行し、必要なら追加標本を順次取得するため、LLMを使う作品は必要な経路を実環境で確認してください。この締切は本リポジトリのAWS構成に合わせた値で、AWS全体の上限を示すものではありません。
 
 hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。
 
-会話のrule選択にJevを使う場合は、`LLM_TALK_SELECTOR=typesafe` と `TYPESAFE_API_KEY` を環境変数で渡します。`TYPESAFE_MODEL`、`TYPESAFE_MIN_CONFIDENCE`、`TYPESAFE_GAME_OVER_MIN_CONFIDENCE`、`TYPESAFE_LOW_CONFIDENCE_FALLBACK` は任意です。`TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`では、LLMの設定も渡します。確信度の低い入力だけはJevとLLMの2回分の待ち時間になります。API keyはCloudFormation上で非表示にします。Jevの1試行は10秒で打ち切ります。意味は[会話エンジン](conversation.md#rule選択にjevを使う)を参照してください。
+会話のrule選択にJevを使う場合は、`LLM_TALK_SELECTOR=typesafe` と `TYPESAFE_API_KEY` を環境変数で渡します。`TYPESAFE_MODEL`、`TYPESAFE_MIN_CONFIDENCE`、`TYPESAFE_ADVANCE_MIN_CONFIDENCE`、`TYPESAFE_GAME_OVER_MIN_CONFIDENCE`、`TYPESAFE_LOW_CONFIDENCE_FALLBACK` は任意です。`TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`では、LLMの設定も渡します。確信度の低い入力だけはJevとLLMの2回分の待ち時間になります。API keyはCloudFormation上で非表示にします。Jevの1試行は10秒で打ち切ります。意味は[会話エンジン](conversation.md#rule選択にjevを使う)を参照してください。
 
 一つのeventで解決するhook LLM要求の上限は `LLM_HOOK_MAX_REQUESTS`（既定5）です。変更する場合はデプロイ時の環境変数へ設定します。通信retryやmatchの標本数とは別であり、上限内でもLambda全体の実行時間以内に収まるとは限りません。
 

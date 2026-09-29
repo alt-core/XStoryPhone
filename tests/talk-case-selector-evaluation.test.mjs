@@ -191,7 +191,9 @@ test("レポートの設定には解決済みmodelと閾値を含め、API key�
   const env = { LLM_TALK_SELECTOR: "typesafe", TYPESAFE_API_KEY: "secret-for-test", TYPESAFE_MIN_CONFIDENCE: "0.6" };
   const config = talkCaseEvaluationConfig({ live: true, env });
   assert.equal(config.model, "jev-1.13.0");
-  assert.deepEqual(config.thresholds, { minConfidence: 0.6, minGameOverConfidence: 0.9 });
+  assert.deepEqual(config.thresholds, { minConfidence: 0.6, minAdvanceConfidence: 0.6, minGameOverConfidence: 0.9 });
+  const advancing = talkCaseEvaluationConfig({ live: true, env: { ...env, TYPESAFE_ADVANCE_MIN_CONFIDENCE: "0.8" } });
+  assert.deepEqual(advancing.thresholds, { minConfidence: 0.6, minAdvanceConfidence: 0.8, minGameOverConfidence: 0.9 });
   assert.doesNotMatch(JSON.stringify(config), /secret-for-test/u);
   assert.equal(config.lowConfidenceFallback, "default");
   assert.equal(config.fallbackModel, undefined);

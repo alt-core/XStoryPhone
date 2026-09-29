@@ -49,7 +49,7 @@ live実行の使用量は、成功・期待不一致・途中失敗を含めて�
 | inputTokensAvg / outputTokensAvg | 報告された試行だけの平均。未報告試行を0として割らない |
 | inputUnreportedAttempts / outputUnreportedAttempts | token数を受け取れていないHTTP試行数 |
 
-JSON reportでは各成功・失敗ケースの`providerCalls`に内訳、`usage.providers`に集計を残します。集計の`tokens`は入力・出力・合計・cache別に`reportedTotal`、`reportedAverage`、`unreportedAttempts`を持ちます。未報告値はnullで、0とは区別します。再試行前の通信失敗などがある合計は、報告された分だけの値であり、請求総量の保証ではありません。provider間でtokenや料金を合算しません。成功行の直下にあるinputTokens等は最終provider分なので、Jev分も含めた比較には内訳を使ってください。
+JSON reportでは各成功・失敗ケースの`providerCalls`に内訳、`usage.providers`に集計を残します。各呼出しの`attemptUsages`は試行ごとの報告値で、Jevの不正応答を再試行した場合も、取得済みのtoken数を合計へ含めます。集計の`tokens`は入力・出力・合計・cache別に`reportedTotal`、`reportedAverage`、`unreportedAttempts`を持ちます。未報告値はnullで、0とは区別します。再試行前の通信失敗などがある合計は、報告された分だけの値であり、請求総量の保証ではありません。provider間でtokenや料金を合算しません。成功行の直下にあるinputTokens等は最終providerの最終応答分なので、Jevや再試行分も含めた比較には内訳を使ってください。
 
 既定のmockではLLMの期待応答を与えるため、自然文を実LLMが正しく分類することまでは検証しません。また、このコマンドはrule選択の確認であり、後続の抽出値・hook・プレイ全体を実行するものではありません。
 

@@ -107,15 +107,19 @@ export function typesafeRuleSelector(
       source: "talk_flow", taskId: "talk_rule_selection", talkId: context.talkId, fromId: context.fromId,
       inputHash: hashes.inputHash.slice(0, 12), promptHash: hashes.promptHash.slice(0, 12), schemaHash: hashes.schemaHash.slice(0, 12)
     };
-    const response = await requestTypesafeSystemOne(config, request, observation, context.onUsage);
+    const response = await requestTypesafeSystemOne(config, request, observation, context.onUsage, (payload) => {
+      const checked = typesafeTalkRuleDecision(payload, promptInput);
+      return checked.ok ? undefined : checked.reason;
+    });
     if (!response.ok) return response;
     const answer = typesafeTalkRuleDecision(response.payload, promptInput);
-    if (!answer) {
-      if (config.analytics) console.log(JSON.stringify({ event: "llm_result", provider: "typesafe", ...observation, status: "invalid_response" }));
+    if (!answer.ok) {
+      if (config.analytics) console.log(JSON.stringify({ event: "llm_result", provider: "typesafe", ...observation, status: "invalid_response", validationFailureReason: answer.reason }));
       return { ok: false, error: "provider_invalid" };
     }
     const selected = selectTalkFlowRuleFromLlmDecision(answer.decision, promptInput, {
       minConfidence: config.minConfidence,
+      minAdvanceConfidence: config.minAdvanceConfidence,
       minGameOverConfidence: config.minGameOverConfidence
     });
     if (config.analytics) {
