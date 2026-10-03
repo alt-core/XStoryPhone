@@ -23,6 +23,10 @@ export function assistantNoticeTriggers(notice: AssistantNotice, appId?: string)
   return [...(appId ? [`${notice}:${appId}`] : []), notice, ...(notice === "app_unavailable" ? ["blocked_link"] : [])];
 }
 
+export function hasAssistantCandidate(messages: readonly AssistantMessage[], trigger: string) {
+  return messages.some(message => message.trigger === trigger && message.weight > 0);
+}
+
 export function selectAssistantMessage<T extends AssistantMessage>(messages: readonly T[], triggers: readonly string[], random = Math.random): T | undefined {
   for (const trigger of triggers) {
     const candidates = messages.filter(message => message.trigger === trigger && message.weight > 0);

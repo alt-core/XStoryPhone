@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { Image, X } from "@lucide/svelte";
+  import { Image, Play, X } from "@lucide/svelte";
   import type { PhotoItem } from "../scenario-runtime/types";
   import AudioPlaybackButton from "../system/AudioPlaybackButton.svelte";
   import ContentTags from "../system/ContentTags.svelte";
@@ -9,32 +9,68 @@
   import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import { resourceUrl } from "../system/resourceUrls";
+  import AppDetailBar from "./AppDetailBar.svelte";
+  import AppListHeader from "./AppListHeader.svelte";
   import AppShell from "./AppShell.svelte";
+
+  const STILL_VIDEO_FALLBACK_IMAGE = "/system/audio-only-video-thumbnail.png";
+  const ZOOM_TAP_TOLERANCE_PX = 6;
 
   export let photos: PhotoItem[] = [];
   export let focusContentId = "";
   export let focusContentRequestId = 0;
+  export let onNavigate: (contentId: string) => void = () => {};
   export let onContentOpen: (contentId: string) => void = () => {};
+  export let onDisplayedContentChange: (contentId: string) => void = () => {};
   export let onBlockedContentOpen: (contentId: string) => void = () => {};
 
-  const selectionScrollGuard = 36;
+  // 空なら一覧。Appの表示指定は要求ごとに1回だけ適用する。
+  let openPhotoId = "";
+  let lastOpenedPhotoId = "";
+  let appliedFocusRequestId: number | undefined;
+  let lastReportedDisplayedContentId: string | undefined;
+  let gridElement: HTMLDivElement | undefined;
+  let gridScrollTop = 0;
 
-  let selectedPhotoId = photos[0]?.id ?? "";
-  let lastReportedContentId = "";
-  let lastAppliedFocusContentId = "";
-  let photoGrid: HTMLDivElement;
-  let photoButtons: Record<string, HTMLButtonElement> = {};
-  let selectionScrollToken = 0;
-  let enlargedPhotoId = "";
-  let lastAppliedFocusContentRequestId = focusContentRequestId;
-  let lightboxFrame: HTMLDivElement;
-  let lightboxFrameWidth = 0;
-  let lightboxFrameHeight = 0;
-  let lightboxImageRatio = 1;
-  let lightboxOffsetX = 0;
-  let lightboxPointerId: number | null = null;
-  let lightboxDragStartX = 0;
-  let lightboxDragStartOffsetX = 0;
+  let zoomed = false;
+  let zoomFrame: HTMLButtonElement | undefined;
+  let zoomImage: HTMLImageElement | undefined;
+  let zoomFrameWidth = 0;
+  let zoomFrameHeight = 0;
+  let zoomNaturalWidth = 0;
+  let zoomNaturalHeight = 0;
+  let zoomOffsetX = 0;
+  let zoomOffsetY = 0;
+  let zoomPointerId: number | null = null;
+  let zoomDragStartX = 0;
+  let zoomDragStartY = 0;
+  let zoomDragStartOffsetX = 0;
+  let zoomDragStartOffsetY = 0;
+  let zoomDragDistance = 0;
+
+  $: applyFocus(focusContentId, focusContentRequestId);
+  $: openPhoto = openPhotoId ? photos.find((photo) => photo.id === openPhotoId) : undefined;
+  // condで消えた項目を表示し続けない。
+  $: if (openPhotoId && (!openPhoto || openPhoto.corrupted)) {
+    showList();
+  }
+  $: reportDisplayedContent(openPhoto && !openPhoto.corrupted ? photoContentId(openPhoto) : "");
+  $: if (zoomed && !canZoom(openPhoto)) {
+    closeZoom();
+  }
+  // 縦横の一方を枠いっぱいにし、他方をはみ出させる。
+  $: zoomScale = zoomNaturalWidth && zoomNaturalHeight && zoomFrameWidth && zoomFrameHeight
+    ? Math.max(zoomFrameWidth / zoomNaturalWidth, zoomFrameHeight / zoomNaturalHeight)
+    : 0;
+  $: zoomImageWidth = zoomNaturalWidth * zoomScale;
+  $: zoomImageHeight = zoomNaturalHeight * zoomScale;
+  $: zoomMaxOffsetX = Math.max(0, (zoomImageWidth - zoomFrameWidth) / 2);
+  $: zoomMaxOffsetY = Math.max(0, (zoomImageHeight - zoomFrameHeight) / 2);
+  $: zoomPannable = zoomMaxOffsetX > 1 || zoomMaxOffsetY > 1;
+
+  function photoContentId(photo: PhotoItem) {
+    return photo.contentId ?? photo.id;
+  }
 
   function isStillVideoContent(photo: PhotoItem | undefined) {
     return photo?.mediaKind === "still_video" && Boolean(photo.audioUrl);
@@ -48,7 +84,7 @@
     return isStillVideoContent(photo) || isNativeVideoContent(photo);
   }
 
-  function canEnlargePhoto(photo: PhotoItem | undefined): photo is PhotoItem & { imageUrl: string } {
+  function canZoom(photo: PhotoItem | undefined): photo is PhotoItem & { imageUrl: string } {
     return Boolean(photo && !photo.corrupted && photo.imageUrl && !isVideoContent(photo));
   }
 
@@ -56,101 +92,66 @@
     return photo.title ?? (isVideoContent(photo) ? "動画" : "写真");
   }
 
-  function photoCorruptionNoiseStyle(photo: PhotoItem) {
-    return corruptionNoiseStyle(photo.contentId ?? photo.id);
-  }
-
-  function trackPhotoButton(node: HTMLButtonElement, photoId: string) {
-    photoButtons[photoId] = node;
-
-    return {
-      update(nextPhotoId: string) {
-        if (nextPhotoId === photoId) {
-          return;
-        }
-        if (photoButtons[photoId] === node) {
-          delete photoButtons[photoId];
-        }
-        photoId = nextPhotoId;
-        photoButtons[photoId] = node;
-      },
-      destroy() {
-        if (photoButtons[photoId] === node) {
-          delete photoButtons[photoId];
-        }
-      }
-    };
-  }
-
-  function keepSelectedPhotoVisible(photoId: string) {
-    const token = ++selectionScrollToken;
-
-    void tick().then(() => {
-      if (token !== selectionScrollToken || selectedPhotoId !== photoId) {
-        return;
-      }
-
-      const button = photoButtons[photoId];
-      if (!photoGrid || !button) {
-        return;
-      }
-
-      const cursorTop = button.offsetTop;
-      const cursorBottom = cursorTop + button.offsetHeight;
-      const visibleTop = photoGrid.scrollTop + selectionScrollGuard;
-      const visibleBottom = photoGrid.scrollTop + photoGrid.clientHeight - selectionScrollGuard;
-      const maxScrollTop = Math.max(0, photoGrid.scrollHeight - photoGrid.clientHeight);
-      let nextScrollTop = photoGrid.scrollTop;
-
-      if (cursorTop < visibleTop) {
-        nextScrollTop = cursorTop - selectionScrollGuard;
-      } else if (cursorBottom > visibleBottom) {
-        nextScrollTop = cursorBottom - photoGrid.clientHeight + selectionScrollGuard;
-      }
-
-      photoGrid.scrollTo({ top: Math.min(Math.max(0, nextScrollTop), maxScrollTop), behavior: "auto" });
-    });
-  }
-
-  $: if (!focusContentId) {
-    lastAppliedFocusContentId = "";
-    lastAppliedFocusContentRequestId = focusContentRequestId;
-  } else if (focusContentId !== lastAppliedFocusContentId || focusContentRequestId !== lastAppliedFocusContentRequestId) {
-    const requestChanged = focusContentRequestId !== lastAppliedFocusContentRequestId;
-    if (requestChanged) {
-      closeExpandedPhoto();
+  function applyFocus(contentId: string, requestId: number) {
+    if (requestId === appliedFocusRequestId) {
+      return;
     }
-    const focused = photos.find((photo) => photo.contentId === focusContentId || photo.id === focusContentId);
-    if (focused) {
-      lastAppliedFocusContentId = focusContentId;
-      lastAppliedFocusContentRequestId = focusContentRequestId;
-      selectedPhotoId = focused.id;
-      keepSelectedPhotoVisible(focused.id);
-      if (focused.corrupted) {
-        onBlockedContentOpen(focused.contentId ?? focused.id);
-      }
+    appliedFocusRequestId = requestId;
+    const focused = contentId ? photos.find((photo) => photo.contentId === contentId || photo.id === contentId) : undefined;
+    if (!focused || focused.corrupted) {
+      showList();
+      if (focused) onBlockedContentOpen(photoContentId(focused));
+      return;
     }
+    enterPhoto(focused);
   }
-  $: selectedPhoto = photos.find((photo) => photo.id === selectedPhotoId) ?? photos[0];
-  $: selectedPhotoContentId = selectedPhoto && !selectedPhoto.corrupted ? selectedPhoto.contentId ?? selectedPhoto.id : "";
-  $: enlargedPhoto = photos.find((photo) => photo.id === enlargedPhotoId);
-  $: lightboxMaxOffsetX = Math.max(0, (lightboxFrameHeight * lightboxImageRatio - lightboxFrameWidth) / 2);
-  $: lightboxPannable = lightboxMaxOffsetX > 1;
-  $: lightboxPanValue = lightboxMaxOffsetX > 0 ? Math.round((lightboxOffsetX / lightboxMaxOffsetX) * 100) : 0;
-  $: if (enlargedPhotoId) {
-    void tick().then(syncLightboxMetrics);
+
+  // 詳細に入るたびに開封を報告する。一覧を挟んだ同じ項目の再表示も1回の開封。
+  function enterPhoto(photo: PhotoItem) {
+    closeZoom();
+    openPhotoId = photo.id;
+    lastOpenedPhotoId = photo.id;
+    onContentOpen(photoContentId(photo));
   }
-  $: if (selectedPhotoContentId && selectedPhotoContentId !== lastReportedContentId) {
-    lastReportedContentId = selectedPhotoContentId;
-    onContentOpen(selectedPhotoContentId);
+
+  function showList() {
+    closeZoom();
+    if (!openPhotoId) {
+      return;
+    }
+    openPhotoId = "";
+    void restoreGridPosition();
+  }
+
+  async function restoreGridPosition() {
+    await tick();
+    if (!gridElement) {
+      return;
+    }
+    gridElement.scrollTop = gridScrollTop;
+    gridElement.querySelector(`[data-photo-id="${CSS.escape(lastOpenedPhotoId)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  function reportDisplayedContent(contentId: string) {
+    if (contentId === lastReportedDisplayedContentId) {
+      return;
+    }
+    lastReportedDisplayedContentId = contentId;
+    onDisplayedContentChange(contentId);
   }
 
   function selectPhoto(photo: PhotoItem) {
-    selectedPhotoId = photo.id;
-    keepSelectedPhotoVisible(photo.id);
     if (photo.corrupted) {
-      onBlockedContentOpen(photo.contentId ?? photo.id);
+      onBlockedContentOpen(photoContentId(photo));
+      return;
     }
+    onNavigate(photoContentId(photo));
+    enterPhoto(photo);
+  }
+
+  function returnToList() {
+    onNavigate("");
+    showList();
   }
 
   function notifyMediaPlaybackComplete(photo: PhotoItem) {
@@ -168,107 +169,117 @@
     );
   }
 
-  function openExpandedPhoto(photo: PhotoItem | undefined) {
-    if (!canEnlargePhoto(photo)) {
+  function openZoom() {
+    if (!canZoom(openPhoto)) {
       return;
     }
-    resetLightboxPan();
-    enlargedPhotoId = photo.id;
+    zoomNaturalWidth = 0;
+    zoomNaturalHeight = 0;
+    zoomOffsetX = 0;
+    zoomOffsetY = 0;
+    zoomPointerId = null;
+    zoomed = true;
+    void tick().then(() => {
+      // 読み込み済みの画像ではloadが先に済んでいることがある。
+      if (zoomImage?.complete && zoomImage.naturalWidth) {
+        zoomNaturalWidth = zoomImage.naturalWidth;
+        zoomNaturalHeight = zoomImage.naturalHeight;
+      }
+      syncZoomFrame();
+      zoomFrame?.focus({ preventScroll: true });
+    });
   }
 
-  function closeExpandedPhoto() {
-    enlargedPhotoId = "";
-    resetLightboxPan();
+  function closeZoom() {
+    zoomed = false;
+    zoomPointerId = null;
   }
 
-  function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && enlargedPhotoId) {
-      closeExpandedPhoto();
-    }
-  }
-
-  function handleWindowResize() {
-    if (!enlargedPhotoId) {
+  function syncZoomFrame() {
+    if (!zoomFrame) {
       return;
     }
-    syncLightboxMetrics();
+    zoomFrameWidth = zoomFrame.clientWidth;
+    zoomFrameHeight = zoomFrame.clientHeight;
+    void tick().then(() => setZoomOffset(zoomOffsetX, zoomOffsetY));
   }
 
-  function resetLightboxPan() {
-    lightboxFrameWidth = 0;
-    lightboxFrameHeight = 0;
-    lightboxImageRatio = 1;
-    lightboxOffsetX = 0;
-    lightboxPointerId = null;
-  }
-
-  function syncLightboxMetrics() {
-    if (!lightboxFrame) {
-      return;
-    }
-    lightboxFrameWidth = lightboxFrame.clientWidth;
-    lightboxFrameHeight = lightboxFrame.clientHeight;
-    setLightboxOffset(lightboxOffsetX);
-  }
-
-  function currentLightboxMaxOffsetX() {
-    return Math.max(0, (lightboxFrameHeight * lightboxImageRatio - lightboxFrameWidth) / 2);
-  }
-
-  function setLightboxOffset(nextOffsetX: number) {
-    const maxOffsetX = currentLightboxMaxOffsetX();
-    lightboxOffsetX = Math.min(maxOffsetX, Math.max(-maxOffsetX, nextOffsetX));
-  }
-
-  function updateLightboxImageRatio(event: Event) {
+  function handleZoomImageLoad(event: Event) {
     const image = event.currentTarget as HTMLImageElement;
-    lightboxImageRatio = image.naturalHeight > 0 ? image.naturalWidth / image.naturalHeight : 1;
-    syncLightboxMetrics();
+    zoomNaturalWidth = image.naturalWidth;
+    zoomNaturalHeight = image.naturalHeight;
+    syncZoomFrame();
   }
 
-  function startLightboxDrag(event: PointerEvent) {
-    syncLightboxMetrics();
-    if (currentLightboxMaxOffsetX() <= 1) {
-      return;
-    }
-    lightboxPointerId = event.pointerId;
-    lightboxDragStartX = event.clientX;
-    lightboxDragStartOffsetX = lightboxOffsetX;
+  function clampZoomOffset(value: number, max: number) {
+    return Math.min(max, Math.max(-max, value)) || 0;
+  }
+
+  function setZoomOffset(nextX: number, nextY: number) {
+    zoomOffsetX = clampZoomOffset(nextX, zoomMaxOffsetX);
+    zoomOffsetY = clampZoomOffset(nextY, zoomMaxOffsetY);
+  }
+
+  function startZoomDrag(event: PointerEvent) {
+    zoomPointerId = event.pointerId;
+    zoomDragStartX = event.clientX;
+    zoomDragStartY = event.clientY;
+    zoomDragStartOffsetX = zoomOffsetX;
+    zoomDragStartOffsetY = zoomOffsetY;
+    zoomDragDistance = 0;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     event.preventDefault();
   }
 
-  function dragLightbox(event: PointerEvent) {
-    if (lightboxPointerId !== event.pointerId) {
+  function dragZoom(event: PointerEvent) {
+    if (zoomPointerId !== event.pointerId) {
       return;
     }
-    setLightboxOffset(lightboxDragStartOffsetX + event.clientX - lightboxDragStartX);
+    const deltaX = event.clientX - zoomDragStartX;
+    const deltaY = event.clientY - zoomDragStartY;
+    zoomDragDistance = Math.max(zoomDragDistance, Math.hypot(deltaX, deltaY));
+    setZoomOffset(zoomDragStartOffsetX + deltaX, zoomDragStartOffsetY + deltaY);
     event.preventDefault();
   }
 
-  function stopLightboxDrag(event: PointerEvent) {
-    if (lightboxPointerId !== event.pointerId) {
+  function endZoomDrag(event: PointerEvent) {
+    if (zoomPointerId !== event.pointerId) {
       return;
     }
-    if ((event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) {
-      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    const target = event.currentTarget as HTMLElement;
+    if (target.hasPointerCapture(event.pointerId)) {
+      target.releasePointerCapture(event.pointerId);
     }
-    lightboxPointerId = null;
+    zoomPointerId = null;
   }
 
-  function handleLightboxKeydown(event: KeyboardEvent) {
-    if (!lightboxPannable) {
-      return;
+  // 動かさずに離したタップ(とEnter・Space)は全体表示へ戻す。
+  function handleZoomClick() {
+    if (zoomDragDistance < ZOOM_TAP_TOLERANCE_PX) {
+      closeZoom();
     }
-    const step = Math.max(24, lightboxFrameWidth * 0.12);
+    zoomDragDistance = 0;
+  }
+
+  // 閉じるボタンなどへフォーカスが移っても、Escapeで拡大表示を閉じる。
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (zoomed && event.key === "Escape") {
+      closeZoom();
+      event.preventDefault();
+    }
+  }
+
+  function handleZoomKeydown(event: KeyboardEvent) {
+    const stepX = Math.max(24, zoomFrameWidth * 0.12);
+    const stepY = Math.max(24, zoomFrameHeight * 0.12);
     if (event.key === "ArrowLeft") {
-      setLightboxOffset(lightboxOffsetX + step);
+      setZoomOffset(zoomOffsetX + stepX, zoomOffsetY);
     } else if (event.key === "ArrowRight") {
-      setLightboxOffset(lightboxOffsetX - step);
-    } else if (event.key === "Home") {
-      setLightboxOffset(lightboxMaxOffsetX);
-    } else if (event.key === "End") {
-      setLightboxOffset(-lightboxMaxOffsetX);
+      setZoomOffset(zoomOffsetX - stepX, zoomOffsetY);
+    } else if (event.key === "ArrowUp") {
+      setZoomOffset(zoomOffsetX, zoomOffsetY + stepY);
+    } else if (event.key === "ArrowDown") {
+      setZoomOffset(zoomOffsetX, zoomOffsetY - stepY);
     } else {
       return;
     }
@@ -276,192 +287,272 @@
   }
 </script>
 
-<svelte:window on:keydown={handleWindowKeydown} on:resize={handleWindowResize} />
+<svelte:window on:keydown={handleWindowKeydown} on:resize={() => zoomed && syncZoomFrame()} />
 
 <AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d">
-  <div class="photo-layout">
-    {#if selectedPhoto}
-      <section class="photo-view" aria-label={photoLabel(selectedPhoto)} title={photoLabel(selectedPhoto)}>
-        <div class="photo-display" class:native-video={isNativeVideoContent(selectedPhoto)}>
-          {#if selectedPhoto.corrupted}
-            <div class="photo-error-panel" style={photoCorruptionNoiseStyle(selectedPhoto)}>
-              <span class="repair-label">&lt;ERROR コンテンツへのリンクが破損しています&gt;</span>
-            </div>
-          {:else if isNativeVideoContent(selectedPhoto)}
-            <div class="native-video-frame">
-              <VideoPlayback
-                src={selectedPhoto.videoUrl ?? ""}
-                poster={selectedPhoto.imageUrl ?? ""}
-                label={photoLabel(selectedPhoto)}
-                onComplete={() => notifyMediaPlaybackComplete(selectedPhoto)}
-              />
-            </div>
-          {:else if canEnlargePhoto(selectedPhoto)}
-            <button
-              class="photo-expand-button"
-              type="button"
-              title="拡大表示"
-              aria-label={`${photoLabel(selectedPhoto)}を拡大表示`}
-              on:click={() => openExpandedPhoto(selectedPhoto)}
-            >
-              <span class="photo-art large hasImage">
-                <img src={resourceUrl(selectedPhoto.imageUrl ?? "")} alt="" />
-              </span>
-            </button>
-          {:else}
-            <div class="photo-art large" class:hasImage={Boolean(selectedPhoto.imageUrl)} class:video-art={isVideoContent(selectedPhoto)}>
-              {#if selectedPhoto.imageUrl}
-                {#if isVideoContent(selectedPhoto)}
-                  <VideoStillFrame src={selectedPhoto.imageUrl} square />
-                {:else}
-                  <img src={resourceUrl(selectedPhoto.imageUrl)} alt="" />
-                {/if}
-              {:else}
-                <span class="land-mark"></span>
-              {/if}
+  <div class="album-app">
+    {#if openPhoto && !openPhoto.corrupted}
+      <section class="photo-detail" class:with-tag-row={Boolean(openPhoto.title && openPhoto.tags?.length)} aria-label={photoLabel(openPhoto)}>
+        {#if openPhoto.title}
+          <AppDetailBar listLabel="アルバム一覧" title={openPhoto.title} onList={returnToList} />
+          {#if openPhoto.tags?.length}
+            <div class="detail-tags">
+              <ContentTags tags={openPhoto.tags} />
             </div>
           {/if}
+        {:else}
+          <AppDetailBar listLabel="アルバム一覧" onList={returnToList}>
+            <div class="bar-tags">
+              <ContentTags tags={openPhoto.tags ?? []} />
+            </div>
+          </AppDetailBar>
+        {/if}
 
-          {#if !selectedPhoto.corrupted && (selectedPhoto.tags?.length || isVideoContent(selectedPhoto))}
-            <div class="photo-lower-overlay">
-              {#if selectedPhoto.tags?.length}
-                <ContentTags tags={selectedPhoto.tags} overlay />
-              {/if}
-              {#if isStillVideoContent(selectedPhoto)}
-                <div class="video-playback-overlay">
-                  <AudioPlaybackButton
-                    playbackId={`album-video:${selectedPhoto.id}`}
-                    src={selectedPhoto.audioUrl ?? ""}
-                    label="再生"
-                    onComplete={() => notifyMediaPlaybackComplete(selectedPhoto)}
-                  />
-                </div>
-              {/if}
+        <div class="media-stage" class:native-video={isNativeVideoContent(openPhoto)}>
+          {#if isNativeVideoContent(openPhoto)}
+            <div class="native-video-frame">
+              <VideoPlayback
+                src={openPhoto.videoUrl ?? ""}
+                poster={openPhoto.imageUrl ?? ""}
+                label={photoLabel(openPhoto)}
+                onComplete={() => openPhoto && notifyMediaPlaybackComplete(openPhoto)}
+              />
+            </div>
+          {:else if isStillVideoContent(openPhoto)}
+            <div class="still-video">
+              <img src={resourceUrl(openPhoto.imageUrl || STILL_VIDEO_FALLBACK_IMAGE)} alt="" />
+              <div class="still-video-control">
+                <AudioPlaybackButton
+                  playbackId={`album-video:${openPhoto.id}`}
+                  src={openPhoto.audioUrl ?? ""}
+                  label="再生"
+                  onComplete={() => openPhoto && notifyMediaPlaybackComplete(openPhoto)}
+                />
+              </div>
+            </div>
+          {:else if canZoom(openPhoto)}
+            <button class="zoom-trigger" type="button" aria-label={`${photoLabel(openPhoto)}を拡大表示`} title="拡大表示" on:click={openZoom}>
+              <img src={resourceUrl(openPhoto.imageUrl)} alt="" />
+            </button>
+          {:else}
+            <div class="photo-placeholder" aria-hidden="true">
+              <Image size={38} strokeWidth={1.6} />
             </div>
           {/if}
         </div>
       </section>
     {:else}
-      <section class="photo-view" aria-label="アルバムは空です">
-        <div class="photo-empty" role="status">
-          <Image size={34} strokeWidth={1.7} />
-          <span>写真や動画はありません</span>
-        </div>
+      <section class="photo-library" aria-label="アルバム一覧">
+        <AppListHeader title="アルバム" caption={`${photos.length}件`} />
+        {#if photos.length}
+          <ScrollHint enabled={photos.length > 12} step={180}>
+            <div class="photo-grid" bind:this={gridElement} on:scroll={() => (gridScrollTop = gridElement?.scrollTop ?? 0)}>
+              {#each photos as photo (photo.id)}
+                <button
+                  data-photo-id={photo.id}
+                  class:recent={photo.id === lastOpenedPhotoId && !photo.corrupted}
+                  class:corrupted={photo.corrupted}
+                  style={photo.corrupted ? corruptionNoiseStyle(photoContentId(photo)) : ""}
+                  type="button"
+                  title={photo.corrupted ? undefined : photoLabel(photo)}
+                  aria-label={photo.corrupted ? "破損した項目" : photoLabel(photo)}
+                  on:click={() => selectPhoto(photo)}
+                >
+                  {#if photo.corrupted}
+                    <span class="tile-noise" aria-hidden="true"></span>
+                  {:else if isVideoContent(photo)}
+                    <VideoStillFrame src={photo.imageUrl} square compact />
+                    <span class="tile-badge" aria-hidden="true"><Play size={10} strokeWidth={2.6} fill="currentColor" /></span>
+                  {:else if photo.imageUrl}
+                    <img src={resourceUrl(photo.imageUrl)} alt="" loading="lazy" />
+                  {:else}
+                    <span class="tile-placeholder" aria-hidden="true"><Image size={20} strokeWidth={1.7} /></span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          </ScrollHint>
+        {:else}
+          <div class="photo-empty" role="status">
+            <Image size={30} strokeWidth={1.7} />
+            <span>写真や動画はありません</span>
+          </div>
+        {/if}
       </section>
     {/if}
-
-    <div class="library-head">
-      <span><Image size={15} strokeWidth={2.1} /> ライブラリ</span>
-      <strong>{photos.length}</strong>
-    </div>
-
-    <ScrollHint enabled={photos.length > 3} step={118}>
-      <div class="photo-grid" class:scrolling={photos.length > 3} bind:this={photoGrid}>
-        {#each photos as photo}
-          <button
-            use:trackPhotoButton={photo.id}
-            class:active={photo.id === selectedPhoto?.id}
-            type="button"
-            title={photoLabel(photo)}
-            aria-label={photoLabel(photo)}
-            on:click={() => selectPhoto(photo)}
-          >
-            <span
-              class="photo-art"
-              class:hasImage={Boolean(photo.imageUrl) && !photo.corrupted}
-              class:corrupted={photo.corrupted}
-              style={photo.corrupted ? photoCorruptionNoiseStyle(photo) : ""}
-            >
-              {#if isVideoContent(photo) && !photo.corrupted}
-                <VideoStillFrame src={photo.imageUrl} square compact />
-              {:else if photo.imageUrl && !photo.corrupted}
-                <img src={resourceUrl(photo.imageUrl)} alt="" />
-              {:else if !photo.corrupted}
-                <span class="land-mark"></span>
-              {/if}
-            </span>
-          </button>
-        {/each}
-      </div>
-    </ScrollHint>
   </div>
 
   <svelte:fragment slot="overlay">
-    {#if enlargedPhoto && canEnlargePhoto(enlargedPhoto)}
-      <div class="photo-lightbox" role="presentation">
-        <button class="photo-lightbox-scrim" type="button" aria-label="閉じる" on:click={closeExpandedPhoto}></button>
-        <div class="photo-lightbox-dialog" role="dialog" aria-modal="true" aria-label={`${photoLabel(enlargedPhoto)}の拡大表示`}>
-          <button class="photo-lightbox-close" type="button" aria-label="閉じる" title="閉じる" on:click={closeExpandedPhoto}>
-            <X size={18} strokeWidth={2.3} />
-          </button>
-          <div
-            class="photo-lightbox-frame"
-            class:pannable={lightboxPannable}
-            class:dragging={lightboxPointerId !== null}
-            role="slider"
-            aria-label={`${photoLabel(enlargedPhoto)}の表示位置`}
-            aria-orientation="horizontal"
-            aria-valuemin="-100"
-            aria-valuemax="100"
-            aria-valuenow={lightboxPanValue}
-            tabindex={lightboxPannable ? 0 : -1}
-            bind:this={lightboxFrame}
-            on:pointerdown={startLightboxDrag}
-            on:pointermove={dragLightbox}
-            on:pointerup={stopLightboxDrag}
-            on:pointercancel={stopLightboxDrag}
-            on:keydown={handleLightboxKeydown}
-          >
-            <img
-              src={resourceUrl(enlargedPhoto.imageUrl ?? "")}
-              alt=""
-              draggable="false"
-              style={`--lightbox-offset-x: ${lightboxOffsetX}px`}
-              on:load={updateLightboxImageRatio}
-            />
-          </div>
-        </div>
+    {#if zoomed && canZoom(openPhoto)}
+      <div class="photo-zoom" role="dialog" aria-modal="true" aria-label={`${photoLabel(openPhoto)}の拡大表示`}>
+        <button
+          class="zoom-frame"
+          class:pannable={zoomPannable}
+          class:dragging={zoomPointerId !== null}
+          type="button"
+          aria-label="全体表示へ戻る。ドラッグや矢印キーで表示位置を動かせます"
+          bind:this={zoomFrame}
+          on:pointerdown={startZoomDrag}
+          on:pointermove={dragZoom}
+          on:pointerup={endZoomDrag}
+          on:pointercancel={endZoomDrag}
+          on:click={handleZoomClick}
+          on:keydown={handleZoomKeydown}
+        >
+          <img
+            bind:this={zoomImage}
+            src={resourceUrl(openPhoto.imageUrl)}
+            alt=""
+            draggable="false"
+            style={zoomScale
+              ? `width: ${zoomImageWidth}px; height: ${zoomImageHeight}px; transform: translate(calc(-50% + ${zoomOffsetX}px), calc(-50% + ${zoomOffsetY}px));`
+              : "visibility: hidden;"}
+            on:load={handleZoomImageLoad}
+          />
+        </button>
+        <button class="zoom-close" type="button" aria-label="閉じる" title="閉じる" on:click={closeZoom}>
+          <X size={18} strokeWidth={2.3} />
+        </button>
       </div>
     {/if}
   </svelte:fragment>
 </AppShell>
 
 <style>
-  .photo-layout {
-    display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    gap: 10px;
-    min-height: 0;
-    height: 100%;
-    padding: 14px 14px 78px;
-    overflow: hidden;
-  }
-
-  .photo-layout :global(.scroll-hint-shell) {
-    min-height: 0;
-    height: 100%;
-  }
-
-  .photo-view {
-    display: grid;
-    gap: 10px;
-  }
-
-  .photo-display {
+  .album-app {
     position: relative;
-    min-width: 0;
-    --content-tag-accent: #f0b35d;
+    min-height: 0;
+    height: 100%;
+    padding: 8px 12px 42px;
   }
 
-  .photo-lower-overlay {
-    position: absolute;
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
-    z-index: 3;
+  .photo-library,
+  .photo-detail {
     display: grid;
-    gap: 6px;
+    min-height: 0;
+    height: 100%;
+    animation: view-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .photo-library {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .photo-library :global(.scroll-hint-shell) {
+    min-height: 0;
+    height: 100%;
+  }
+
+  /* overflow: hiddenのタイルは行の高さを決められないため、行をタイルの高さに固定してスクロールさせる。 */
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: max-content;
+    align-content: start;
+    gap: 4px;
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    padding-bottom: 12px;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    scroll-padding: 8px 0;
+  }
+
+  .photo-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .photo-grid button {
+    position: relative;
+    display: block;
     min-width: 0;
+    aspect-ratio: 1;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    cursor: pointer;
+    scroll-margin: 8px 0;
+    transition: transform 120ms ease, filter 140ms ease;
+  }
+
+  .photo-grid button:active {
+    transform: scale(0.97);
+    filter: brightness(0.92);
+  }
+
+  .photo-grid button:focus-visible {
+    outline: 2px solid rgba(240, 179, 93, 0.9);
+    outline-offset: 2px;
+  }
+
+  .photo-grid button.recent::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 2px solid #f0b35d;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+  }
+
+  .photo-grid img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .photo-grid :global(.video-still-frame) {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .tile-badge {
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgba(4, 8, 12, 0.62);
+    color: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(8px);
+  }
+
+  .tile-placeholder {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(145deg, #2f4357, #6c7b8c);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .photo-grid button.corrupted {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.32)),
+      var(--corruption-noise, url("/system/album-corruption-noise-01.webp")) center / cover no-repeat,
+      #03080d;
+    filter: saturate(0.86) contrast(1.1);
+    cursor: default;
+  }
+
+  .tile-noise {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.12) 0 1px, transparent 1px 6px);
+    mix-blend-mode: screen;
+    opacity: 0.14;
   }
 
   .photo-empty {
@@ -469,395 +560,227 @@
     place-content: center;
     justify-items: center;
     gap: 10px;
-    aspect-ratio: 1 / 1;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--ap-border);
     border-radius: var(--ap-radius-panel);
-    background: rgba(8, 13, 19, 0.32);
-    color: rgba(255, 255, 255, 0.48);
-    font-size: 0.76rem;
+    background:
+      radial-gradient(circle at 50% 32%, rgba(240, 179, 93, 0.14), transparent 40%),
+      rgba(255, 255, 255, 0.035);
+    color: var(--ap-text-soft);
+    font-size: 0.78rem;
     font-weight: 700;
   }
 
-  .photo-art {
-    position: relative;
-    display: block;
-    aspect-ratio: 1 / 1;
-    overflow: hidden;
-    border-radius: var(--ap-radius-card);
-    background:
-      linear-gradient(145deg, #2f4357, #8290a0),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.18));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 14px 28px rgba(0, 0, 0, 0.2);
+  .photo-empty :global(svg) {
+    color: #f6c98a;
   }
 
-  .photo-art::before {
-    content: "";
-    position: absolute;
-    left: -15%;
-    right: -15%;
-    bottom: -10%;
-    height: 46%;
-    border-radius: 50% 50% 0 0;
-    background: color-mix(in srgb, #d6e7f6 86%, white 4%);
-    opacity: 0.84;
+  .photo-detail {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
   }
 
-  .photo-art::after {
-    content: "";
-    position: absolute;
-    top: 14%;
-    right: 16%;
-    width: 22%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.72);
-    box-shadow: 0 0 28px rgba(255, 255, 255, 0.4);
+  .photo-detail.with-tag-row {
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
-  .land-mark {
-    position: absolute;
-    left: 16%;
-    bottom: 20%;
-    width: 72%;
-    height: 16%;
-    border-radius: 999px;
-    background: rgba(15, 18, 24, 0.26);
-    transform: rotate(-5deg);
-  }
-
-  .photo-art.large {
-    aspect-ratio: 1 / 1;
-    border-radius: var(--ap-radius-panel);
-  }
-
-  .photo-expand-button {
-    display: block;
-    width: 100%;
+  .detail-tags,
+  .bar-tags {
     min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: var(--ap-radius-panel);
-    background: transparent;
-    color: inherit;
-    cursor: zoom-in;
-    text-align: inherit;
+    --content-tag-accent: #f0b35d;
   }
 
-  .photo-expand-button:focus-visible {
-    outline: 2px solid rgba(240, 179, 93, 0.9);
-    outline-offset: 3px;
+  .detail-tags {
+    padding: 0 2px;
   }
 
-  .photo-error-panel {
+  .bar-tags {
+    flex: 1 1 auto;
+  }
+
+  /* 表示枠の大きさを子の上限(max-height: 100%)の基準にし、縦長の画像も全体を収める。 */
+  .media-stage {
     position: relative;
     display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
-    aspect-ratio: 1 / 1;
-    border: 1px solid rgba(255, 214, 104, 0.34);
-    border-radius: var(--ap-radius-panel);
+    min-height: 0;
     overflow: hidden;
+    border-radius: 18px;
     background:
-      linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.58)),
-      var(--corruption-noise, url("/system/album-corruption-noise-01.webp")) center / cover no-repeat,
-      #03080d;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.12),
-      inset 0 -20px 38px rgba(0, 0, 0, 0.4);
+      radial-gradient(circle at 50% 42%, rgba(240, 179, 93, 0.08), transparent 58%),
+      rgba(3, 6, 10, 0.55);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
 
-  .photo-error-panel::before,
-  .photo-error-panel::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-  }
-
-  .photo-error-panel::before {
-    background:
-      linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent),
-      repeating-linear-gradient(
-        0deg,
-        rgba(255, 255, 255, 0.1) 0 1px,
-        transparent 1px 6px
-      );
-    mix-blend-mode: screen;
-    opacity: 0.2;
-  }
-
-  .photo-error-panel::after {
-    inset: auto 0 0;
-    height: 38%;
-    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.48));
-  }
-
-  .photo-art.hasImage {
-    background: #111821;
-  }
-
-  .photo-art.hasImage::before,
-  .photo-art.hasImage::after {
-    display: none;
-  }
-
-  .photo-art img {
-    display: block;
+  .zoom-trigger {
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-  }
-
-  .photo-art :global(.video-still-frame) {
-    width: 100%;
-    height: 100%;
-    border-radius: var(--ap-radius-card);
-  }
-
-  .photo-art.large :global(.video-still-frame) {
+    min-height: 0;
+    padding: 10px;
     border: 0;
-    border-radius: var(--ap-radius-panel);
-    box-shadow: none;
+    background: transparent;
+    cursor: zoom-in;
   }
 
-  .native-video-frame {
+  .zoom-trigger:focus-visible {
+    outline: 2px solid rgba(240, 179, 93, 0.88);
+    outline-offset: -4px;
+    border-radius: 18px;
+  }
+
+  .zoom-trigger img,
+  .still-video img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 12px;
+    box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
+  }
+
+  .still-video {
+    position: relative;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
     width: 100%;
     height: 100%;
-    overflow: hidden;
-    border-radius: var(--ap-radius-panel);
-    background: #03070b;
+    min-height: 0;
+    padding: 10px 10px 64px;
   }
 
-  .native-video-frame :global(.video-playback) {
-    height: 100%;
-    aspect-ratio: auto;
-  }
-
-  .photo-display.native-video .photo-lower-overlay {
-    bottom: 50px;
-  }
-
-  .video-playback-overlay {
+  .still-video-control {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
     color: rgba(255, 255, 255, 0.92);
   }
 
-  .video-playback-overlay :global(.audio-playback-button) {
+  .still-video-control :global(.audio-playback-button) {
     border-color: rgba(255, 255, 255, 0.18);
     background: rgba(4, 8, 12, 0.64);
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
     backdrop-filter: blur(10px);
   }
 
-  .library-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    color: rgba(255, 255, 255, 0.68);
-    font-size: 0.72rem;
-    font-weight: 760;
-  }
-
-  .library-head span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .library-head strong {
-    color: #fff;
-  }
-
-  .photo-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .photo-grid.scrolling {
-    min-height: 0;
-    height: 100%;
-    overflow: auto;
-    overscroll-behavior: contain;
-    padding-bottom: 12px;
-    scroll-padding: 36px 0;
-    scrollbar-width: none;
-    mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 20px), rgba(0, 0, 0, 0.18));
-  }
-
-  .photo-grid.scrolling::-webkit-scrollbar {
-    display: none;
-  }
-
-  .photo-grid button {
-    position: relative;
-    display: grid;
-    min-width: 0;
-    aspect-ratio: 1;
-    box-sizing: border-box;
-    padding: 4px;
-    border: 0;
-    border-radius: calc(var(--ap-radius-card) + 5px);
-    background: transparent;
-    color: #fff;
-    cursor: pointer;
-    text-align: left;
-    scroll-margin: 36px 0;
-  }
-
-  .photo-grid button::after {
-    content: "";
-    position: absolute;
-    inset: 1px;
-    border: 2px solid transparent;
-    border-radius: calc(var(--ap-radius-card) + 5px);
-    pointer-events: none;
-  }
-
-  .photo-grid button.active::after {
-    border-color: #f0b35d;
-    box-shadow:
-      0 0 0 1px rgba(240, 179, 93, 0.22),
-      0 0 18px rgba(240, 179, 93, 0.16);
-  }
-
-  .photo-art.corrupted {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.32)),
-      var(--corruption-noise, url("/system/album-corruption-noise-01.webp")) center / cover no-repeat,
-      #03080d;
-    filter: saturate(0.86) contrast(1.1);
-  }
-
-  .photo-art.corrupted::before {
-    inset: 0;
-    height: auto;
-    border-radius: inherit;
-    background:
-      repeating-linear-gradient(
-        0deg,
-        rgba(255, 255, 255, 0.12) 0 1px,
-        transparent 1px 6px
-      );
-    mix-blend-mode: screen;
-    opacity: 0.12;
-  }
-
-  .photo-art.corrupted::after {
-    display: block;
-    inset: auto 0 0;
-    width: auto;
-    height: 42%;
-    border-radius: 0;
-    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.42));
-    box-shadow: none;
-  }
-
-  .repair-label {
-    z-index: 2;
-    width: min(86%, 280px);
-    padding: 10px 11px;
-    border: 1px solid rgba(255, 214, 104, 0.36);
-    border-radius: 8px;
-    background: rgba(4, 4, 2, 0.86);
-    color: rgba(255, 226, 122, 0.96);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 0.7rem;
-    font-weight: 760;
-    line-height: 1.45;
-    text-align: left;
-    box-shadow: 0 12px 22px rgba(0, 0, 0, 0.34);
-  }
-
-  .photo-lightbox {
-    position: absolute;
-    inset: 0;
-    z-index: 42;
+  .native-video-frame {
     display: grid;
     place-items: center;
-    padding: 12px 12px 78px;
-  }
-
-  .photo-lightbox-scrim {
-    position: absolute;
-    inset: 0;
-    border: 0;
-    background:
-      radial-gradient(circle at 50% 35%, rgba(240, 179, 93, 0.16), transparent 42%),
-      rgba(3, 6, 10, 0.78);
-    cursor: zoom-out;
-    backdrop-filter: blur(12px);
-  }
-
-  .photo-lightbox-dialog {
-    position: relative;
-    z-index: 1;
-    display: grid;
-    grid-template-rows: 36px minmax(0, 1fr);
-    gap: 10px;
     width: 100%;
     height: 100%;
     min-height: 0;
+    background: #03070b;
   }
 
-  .photo-lightbox-close {
-    justify-self: end;
+  .native-video-frame :global(.video-playback) {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: 0;
+  }
+
+  .photo-placeholder {
+    display: grid;
+    place-items: center;
+    width: min(70%, 240px);
+    aspect-ratio: 1;
+    border-radius: 16px;
+    background: linear-gradient(145deg, #2f4357, #6c7b8c);
+    color: rgba(255, 255, 255, 0.72);
+  }
+
+  .photo-zoom {
+    position: absolute;
+    inset: 0;
+    z-index: 42;
+    background: #000;
+    animation: zoom-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  /* 拡大はホームボタンとナビの上で止め、画像の下端を隠さない。 */
+  .zoom-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: block;
+    width: 100%;
+    height: calc(100% - 78px);
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-out;
+    touch-action: none;
+    user-select: none;
+    outline: none;
+  }
+
+  .zoom-frame.pannable {
+    cursor: grab;
+  }
+
+  .zoom-frame.dragging {
+    cursor: grabbing;
+  }
+
+  .zoom-frame img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: block;
+    max-width: none;
+    max-height: none;
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  .zoom-close {
+    position: absolute;
+    top: max(12px, env(safe-area-inset-top));
+    right: 12px;
+    z-index: 1;
     display: grid;
     place-items: center;
     width: 36px;
     height: 36px;
     padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(12, 16, 22, 0.56);
+    color: rgba(255, 255, 255, 0.92);
     cursor: pointer;
-    box-shadow: var(--ap-shadow-inset);
-    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(14px);
   }
 
-  .photo-lightbox-close:focus-visible {
+  .zoom-close:focus-visible {
     outline: 2px solid rgba(240, 179, 93, 0.88);
     outline-offset: 2px;
   }
 
-  .photo-lightbox-frame {
-    position: relative;
-    display: grid;
-    place-items: center;
-    min-height: 0;
-    overflow: hidden;
-    border: 1px solid rgba(240, 179, 93, 0.16);
-    border-radius: 18px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.16)),
-      rgba(7, 10, 15, 0.88);
-    box-shadow:
-      var(--ap-shadow-inset),
-      0 24px 48px rgba(0, 0, 0, 0.46);
-    touch-action: none;
-    user-select: none;
+  @keyframes view-in {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
-  .photo-lightbox-frame.pannable {
-    cursor: grab;
-  }
+  @keyframes zoom-in {
+    from {
+      opacity: 0;
+    }
 
-  .photo-lightbox-frame.dragging {
-    cursor: grabbing;
-  }
-
-  .photo-lightbox-frame img {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    display: block;
-    width: auto;
-    height: 100%;
-    max-width: none;
-    max-height: 100%;
-    transform: translateX(calc(-50% + var(--lightbox-offset-x, 0px)));
-    will-change: transform;
-    pointer-events: none;
+    to {
+      opacity: 1;
+    }
   }
 </style>

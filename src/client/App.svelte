@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import ProjectStage from "../project/ProjectStage.svelte";
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
   import { formatStoryDateCompact } from "../shared/storyDate";
@@ -63,8 +63,11 @@
     phoneHistoryStateFrom,
     pushPhoneHistoryRoute,
     replacePhoneHistoryRoute,
+    samePhoneHistoryRoute,
+    type BrowserPageHistory,
     type PhoneHistoryRoute
   } from "./system/phoneHistory";
+  import { browserPageAtStart, browserTabContentId, initialBrowserPage } from "./system/browserPages.ts";
   import { localPlayerMemoryKey, playerSessionChanged } from "./system/playerSession";
   import AllClearOverlay from "./system/AllClearOverlay.svelte";
   import GameOverOverlay from "./system/GameOverOverlay.svelte";
@@ -86,7 +89,7 @@
     clearAlbumAssistantStateForPhotoDraft,
     selectAssistantSurfaceMessage
   } from "./system/albumAssistantUiState";
-  import { assistantNoticeTriggers, selectAssistantMessage, type AssistantNotice } from "../shared/assistantMessages";
+  import { assistantNoticeTriggers, hasAssistantCandidate, selectAssistantMessage, type AssistantNotice } from "../shared/assistantMessages";
   import {
     clearTranscriptStorage,
     loadPlayerState,
@@ -211,6 +214,13 @@
     messages: "メッセージ",
     chat: "チャット"
   };
+  // 一覧と詳細を持つアプリ。ホームから開くと、前者は一覧、後者は前回または先頭の項目から始まる。
+  const LIST_START_APP_IDS: readonly AppId[] = ["notes", "mail", "photos", "phone"];
+  const DETAIL_START_APP_IDS: readonly AppId[] = ["messages", "chat", "browser"];
+  type DisplayedContent = {
+    appId: AppId;
+    contentId: string;
+  };
 
   const persistedUiState = loadUiState();
   const browserPlayerMarker = playerMode !== "server" ? loadBrowserPlayerMarker() : undefined;
@@ -266,6 +276,8 @@
   let appModalOpen = false;
   let composerPhotoDraftByApp: Partial<Record<AppId, boolean>> = {};
   let displayedTalkTarget: DisplayedTalkTarget | null = null;
+  let displayedContent: DisplayedContent | null = null;
+  let browserPages: Record<string, BrowserPageHistory> = {};
   let temporaryTalkBackLink: TemporaryTalkBackLink | null = null;
   let locallySuppressedNotificationIds: string[] = [];
   let seenNotificationIds: string[] = [];
@@ -341,6 +353,9 @@
   };
   $: if (displayedTalkTarget && activeAppId !== displayedTalkTarget.appId) {
     displayedTalkTarget = null;
+  }
+  $: if (displayedContent && activeAppId !== displayedContent.appId) {
+    displayedContent = null;
   }
   $: syncDisplayedTalkNotificationSuppression(playerState?.visibleDeviceState.notifications ?? [], displayedTalkTarget);
   $: deviceState = applyLocalTalkReadCursors(
@@ -688,6 +703,12 @@
       stressContent: qaStressContent
     });
     applyPlayerState(qaState, { force: true });
+    // 表示確認の状態は起動後に届くため、その状態で開く画面を指定し直す。
+    await tick();
+    if (activeAppId) {
+      focusedContentId = qaFocusContentId || appStartContentId(activeAppId);
+      focusedContentRequestId += 1;
+    }
     if (qaView === "all-clear") {
       const targetItem = qaState.visibleDeviceState.radioItems?.find((item) => item.form);
       allClearTarget = targetItem ? { appId: "radio", contentId: targetItem.id } : null;
@@ -1301,9 +1322,33 @@
   }
 
   function currentPhoneRoute(): PhoneHistoryRoute {
-    return activeAppId
-      ? { kind: "app", appId: activeAppId, ...(focusedContentId ? { contentId: focusedContentId } : {}) }
-      : { kind: "home" };
+    return activeAppId ? appRoute(activeAppId, focusedContentId) : { kind: "home" };
+  }
+
+  function isListDetailApp(appId: AppId) {
+    return LIST_START_APP_IDS.includes(appId) || DETAIL_START_APP_IDS.includes(appId);
+  }
+
+  function browserTabFor(contentId: string) {
+    return deviceState.browserTabs.find((tab) => browserTabContentId(tab) === contentId);
+  }
+
+  // 履歴の段には、その画面を復元できる情報を記録する。ブラウザーはタブ内のページ履歴も含める。
+  function appRoute(appId: AppId, contentId = ""): PhoneHistoryRoute {
+    if (!contentId) {
+      return { kind: "app", appId };
+    }
+    const tab = appId === "browser" ? browserTabFor(contentId) : undefined;
+    const page = appId === "browser" ? browserPages[contentId] ?? (tab && initialBrowserPage(tab)) : undefined;
+    return { kind: "app", appId, contentId, ...(page ? { page } : {}) };
+  }
+
+  function setBrowserPage(contentId: string, page: BrowserPageHistory) {
+    browserPages = { ...browserPages, [contentId]: page };
+  }
+
+  function currentHistoryRoute() {
+    return phoneHistoryStateFrom(window.history.state, phoneHistoryScope)?.route ?? null;
   }
 
   function initializePhoneHistory() {
@@ -1338,15 +1383,15 @@
     replacePhoneHistoryRoute(window.history, phoneHistoryScope, route);
   }
 
+  // 表示が操作以外で変わった時だけ、現在の段を表示に合わせる。開封通信の応答では履歴を書かない。
   function syncPhoneHistoryContent(appId: AppId, contentId: string) {
-    // 会話の履歴は表示を正とする。別会話の遅い開封応答で戻り先を上書きしない。
-    if ((appId === "messages" || appId === "chat")
-      && (displayedTalkTarget?.appId !== appId || displayedTalkTarget.contentId !== contentId)) {
+    const current = currentHistoryRoute();
+    if (current?.kind !== "app" || current.appId !== appId) {
       return;
     }
-    const current = phoneHistoryStateFrom(window.history.state, phoneHistoryScope);
-    if (current?.route.kind === "app" && current.route.appId === appId) {
-      replaceCurrentPhoneRoute({ kind: "app", appId, contentId });
+    const next = appRoute(appId, contentId);
+    if (!samePhoneHistoryRoute(current, next)) {
+      replaceCurrentPhoneRoute(next);
     }
   }
 
@@ -1368,8 +1413,8 @@
       && !globalErrorVisible;
   }
 
-  function clearPhoneRoute() {
-    requestSearchAgentClose();
+  function clearPhoneRoute(closeSearchAgent = true) {
+    if (closeSearchAgent) requestSearchAgentClose();
     activeAppId = null;
     focusedContentId = "";
     focusedTalkHistoryRepairId = "";
@@ -1409,12 +1454,14 @@
       if (!await refreshPlayerStateWithRetry(sessionToken, "AP-STATE") || navigationId !== phoneHistoryNavigationId) {
         return;
       }
-      clearPhoneRoute();
+      clearPhoneRoute(false);
       return;
     }
 
     if (!route.contentId) {
-      if (!await refreshPlayerStateWithRetry(sessionToken, "AP-STATE") || navigationId !== phoneHistoryNavigationId) {
+      // 一覧は手元の状態で表示でき、戻る操作のたびに通信を待たせない。
+      if (!isListDetailApp(route.appId)
+        && (!await refreshPlayerStateWithRetry(sessionToken, "AP-STATE") || navigationId !== phoneHistoryNavigationId)) {
         return;
       }
       const app = apps.find((item) => item.id === route.appId && item.available);
@@ -1426,22 +1473,38 @@
       return;
     }
 
+    // 同じタブ内のページ移動は項目を開き直さない。
+    if (
+      route.appId === "browser"
+      && route.page
+      && activeAppId === "browser"
+      && displayedContent?.appId === "browser"
+      && displayedContent.contentId === route.contentId
+    ) {
+      setBrowserPage(route.contentId, route.page);
+      return;
+    }
+
     const opened = await openPhoneHistoryContent(route.appId, route.contentId, navigationId);
     if (navigationId !== phoneHistoryNavigationId) {
       return;
     }
     if (!opened && !globalErrorVisible) {
-      fallbackPhoneHistoryToHome();
+      fallbackPhoneHistoryToApp(route.appId);
       return;
     }
     if (!opened) {
       return;
+    }
+    if (route.page) {
+      setBrowserPage(route.contentId, route.page);
     }
     focusOpenedContent(route.appId, route.contentId, false);
   }
 
   async function openPhoneHistoryContent(appId: AppId, contentId: string, navigationId: number) {
     for (let attempt = 0; ; attempt += 1) {
+      if (navigationId !== phoneHistoryNavigationId) return false;
       while (inFlightContentOpenKeys.includes(contentOpenKey(appId, contentId))) {
         if (navigationId !== phoneHistoryNavigationId) {
           return false;
@@ -1449,12 +1512,14 @@
         await waitMs(50);
       }
 
+      // 待機中に次の操作が始まった場合は、取り消した項目のhookを新たに実行しない。
+      if (navigationId !== phoneHistoryNavigationId) return false;
+
       try {
         return await handleContentOpen(appId, contentId, {
           ignoreSuppression: true,
           skipRemember: true,
-          throwOnRetryableError: true,
-          historyRestore: true
+          throwOnRetryableError: true
         });
       } catch (error) {
         if (navigationId !== phoneHistoryNavigationId) {
@@ -1470,8 +1535,18 @@
   }
 
   function fallbackPhoneHistoryToHome() {
-    clearPhoneRoute();
+    clearPhoneRoute(false);
     replaceCurrentPhoneRoute({ kind: "home" });
+  }
+
+  // 後から開けなくなった項目の段へ戻った時は、アプリが使えればその一覧へ移る。
+  function fallbackPhoneHistoryToApp(appId: AppId) {
+    if (!isListDetailApp(appId) || !apps.some((item) => item.id === appId && item.available)) {
+      fallbackPhoneHistoryToHome();
+      return;
+    }
+    focusAppContent(appId, "", false);
+    replaceCurrentPhoneRoute(appRoute(appId));
   }
 
   function rememberAppContent(appId: AppId, contentId: string) {
@@ -1534,7 +1609,8 @@
   }
 
   function focusAppContent(appId: AppId, contentId: string, addHistory = true) {
-    requestSearchAgentClose();
+    // 復元はpopの開始時に閉じ済み。完了時に後続の明示遷移を取り消さない。
+    if (addHistory) requestSearchAgentClose();
     shadeOpen = false;
     focusedContentId = contentId;
     focusedTalkHistoryRepairId = "";
@@ -1544,13 +1620,62 @@
     activeAppId = appId;
     trackEvent({ name: "app_open", appId });
     if (addHistory) {
-      pushCurrentPhoneRoute({ kind: "app", appId, ...(contentId ? { contentId } : {}) });
+      pushCurrentPhoneRoute(appRoute(appId, contentId));
     }
   }
 
+  // Appが開封済みの項目を表示する。表示側の報告を1回だけ省く。
+  // 外からの操作(addHistory)でブラウザーのタブを開いた時は、そのタブの最初のページへ移る。
+  // 履歴の復元では、呼び出し側が当時のページ履歴を設定済み。
   function focusOpenedContent(appId: AppId, contentId: string, addHistory = true) {
+    const tab = appId === "browser" && addHistory ? browserTabFor(contentId) : undefined;
+    const startPage = tab && browserPageAtStart(browserPages[contentId], tab);
+    if (startPage) {
+      setBrowserPage(contentId, startPage);
+    }
     focusAppContent(appId, contentId, addHistory);
     suppressNextContentOpenReport(appId, contentId);
+  }
+
+  // 一覧詳細アプリ内の操作(一覧から詳細、詳細から一覧)を履歴に積む。
+  // 先行する外からの遷移や履歴の復元より、利用者の最後の操作を優先する。
+  function handleAppNavigate(appId: AppId, contentId: string) {
+    if (activeAppId !== appId) {
+      return;
+    }
+    contentNavigationRequestId += 1;
+    suppressedContentOpenKeys = [];
+    pushCurrentPhoneRoute(appRoute(appId, contentId));
+  }
+
+  function handleDisplayedContentChange(appId: AppId, contentId: string) {
+    displayedContent = { appId, contentId };
+    if (activeAppId === appId) {
+      syncPhoneHistoryContent(appId, contentId);
+    }
+  }
+
+  // タブ内のページ移動。リンクとアプリ内の戻るボタンは履歴に積み、読み込み結果の補正は置き換える。
+  function handleBrowserPageNavigate(contentId: string, page: BrowserPageHistory, mode: "push" | "replace") {
+    setBrowserPage(contentId, page);
+    if (activeAppId !== "browser") {
+      return;
+    }
+    if (mode === "push") {
+      contentNavigationRequestId += 1;
+      pushCurrentPhoneRoute(appRoute("browser", contentId));
+      return;
+    }
+    const current = currentHistoryRoute();
+    if (current?.kind === "app" && current.appId === "browser" && current.contentId === contentId) {
+      replaceCurrentPhoneRoute(appRoute("browser", contentId));
+    }
+  }
+
+  // 破損項目は開かず、ノイズと案内だけを出す。全アプリ共通。
+  function handleBlockedContentTap(appId: AppId, contentId: string) {
+    triggerNoise();
+    recordBlockedContentLink(appId, contentId);
   }
 
   function showTalkBackLink(sourceAppId: TalkBackLinkAppId | null, targetAppId: AppId) {
@@ -1660,6 +1785,8 @@
     transientAssistantMessage = undefined;
     appModalOpen = false;
     displayedTalkTarget = null;
+    displayedContent = null;
+    browserPages = {};
     temporaryTalkBackLink = null;
     locallySuppressedNotificationIds = [];
     notificationToast = null;
@@ -1918,6 +2045,7 @@
     });
     if (sessionChanged) {
       displayedTalkTarget = null;
+      browserPages = {};
       locallySuppressedNotificationIds = [];
     }
     applyPlayerState(result.playerState, { force: sessionChanged });
@@ -2505,17 +2633,34 @@
     requestSearchAgentClose();
     activeAppId = app.id;
     trackEvent({ name: "app_open", appId: app.id });
-    pushCurrentPhoneRoute({
-      kind: "app",
-      appId: app.id,
-      ...(focusContentId ? { contentId: focusContentId } : {})
-    });
+    pushCurrentPhoneRoute(appRoute(app.id, focusContentId));
 
     return true;
   }
 
+  // ホームから開いた時の表示。一覧始まりのアプリは一覧(空)、詳細始まりのアプリは前回の項目、
+  // なければ先頭の項目。開けない項目しかなければ一覧にする。
+  function appStartContentId(appId: AppId) {
+    if (LIST_START_APP_IDS.includes(appId)) {
+      return "";
+    }
+    const last = uiState.lastContentByAppId[appId] ?? "";
+    if (!DETAIL_START_APP_IDS.includes(appId)) {
+      return last;
+    }
+    const items: Array<{ id: string; contentId?: string; corrupted?: boolean; url?: string }> = appId === "messages"
+      ? deviceState.messages
+      : appId === "chat"
+        ? deviceState.chatThreads
+        : deviceState.browserTabs;
+    const openable = (item: (typeof items)[number] | undefined) => item && !item.corrupted && (appId !== "browser" || item.url);
+    const lastItem = items.find((item) => item.id === last || item.contentId === last);
+    const start = openable(lastItem) ? lastItem : openable(items[0]) ? items[0] : undefined;
+    return start ? start.contentId ?? start.id : "";
+  }
+
   function openApp(app: AppCatalogItem) {
-    if (beginAppSession(app, uiState.lastContentByAppId[app.id] ?? "") && app.initialState && app.initialState !== "normal") {
+    if (beginAppSession(app, appStartContentId(app.id)) && app.initialState && app.initialState !== "normal") {
       void handleContentOpen(app.id, app.id, { ignoreSuppression: true, skipRemember: true });
     }
   }
@@ -2644,8 +2789,6 @@
       skipRemember?: boolean;
       clearDisplayedTalkAfterApply?: boolean;
       throwOnRetryableError?: boolean;
-      historyRestore?: boolean;
-      skipHistorySync?: boolean;
       mediaContentIds?: string[];
     } = {}
   ) {
@@ -2663,7 +2806,6 @@
       if (options.rememberAfterAccepted && !options.skipRemember) {
         rememberAppContent(appId, contentId);
       }
-      if (!options.skipHistorySync) syncPhoneHistoryContent(appId, contentId);
       return true;
     }
 
@@ -2671,7 +2813,6 @@
       if (options.rememberAfterAccepted && !options.skipRemember) {
         rememberAppContent(appId, contentId);
       }
-      if (!options.skipHistorySync) syncPhoneHistoryContent(appId, contentId);
       return true;
     }
 
@@ -2679,9 +2820,6 @@
       return false;
     }
 
-    const contentNavigationId = options.historyRestore
-      ? phoneHistoryNavigationId
-      : ++phoneHistoryNavigationId;
     const sessionToken = uiState.sessionToken;
     inFlightContentOpenKeys = [...inFlightContentOpenKeys, key];
     const talkReadCursors = pendingTalkReadCursorPayload();
@@ -2720,9 +2858,6 @@
             }
             if (applied) {
               queueAlbumMediaAddedAssistant(appId, contentId, previousState, result.playerState);
-            }
-            if (!options.skipHistorySync && contentNavigationId === phoneHistoryNavigationId) {
-              syncPhoneHistoryContent(appId, contentId);
             }
             return true;
           }
@@ -2778,8 +2913,15 @@
       && pendingPresentationSequenceCount === 0;
     if (!canContinue()) return false;
     // 一件の重複・利用不能と、残りの開封処理を中断すべき状態を区別する。
+    syncPhoneHistoryContent("calendar", contentId);
     await handleContentOpen("calendar", contentId);
     return canContinue();
+  }
+
+  // 1画面アプリは表示中の項目の切り替えを報告する。履歴の段は表示に合わせて置き換える。
+  function handleSingleScreenContentOpen(appId: AppId, contentId: string) {
+    syncPhoneHistoryContent(appId, contentId);
+    void handleContentOpen(appId, contentId);
   }
 
   async function handleContentMediaObserved(appId: AppId, contentId: string | undefined, mediaContentIds: string[]) {
@@ -2857,6 +2999,7 @@
   }
 
   function handleDisplayedTalkChange(appId: DisplayedTalkTarget["appId"], contentId: string) {
+    handleDisplayedContentChange(appId, contentId);
     if (!contentId) {
       if (displayedTalkTarget?.appId === appId) {
         displayedTalkTarget = null;
@@ -2869,8 +3012,6 @@
     }
 
     displayedTalkTarget = { appId, contentId };
-    // 開封通信の完了や同一要求の省略に関係なく、今見ている会話を戻り先にする。
-    if (activeAppId === appId) syncPhoneHistoryContent(appId, contentId);
   }
 
   function openNotification(notificationId: string) {
@@ -2969,19 +3110,28 @@
       ignoreSuppression: true,
       rememberAfterAccepted: !historyTalkId,
       skipRemember: Boolean(historyTalkId),
-      skipHistorySync: Boolean(historyTalkId),
       clearDisplayedTalkAfterApply: displayedTalkTarget !== null && displayedTalkTarget.appId !== result.appId
     });
 
     if (opened && canNavigate()) {
-      focusOpenedContent(result.appId, historyTalkId || result.contentId);
+      if (result.targetKind === "app") {
+        // アプリ自体を開いた結果は、ホームから開いた時と同じ画面にする。
+        focusAppContent(result.appId, appStartContentId(result.appId));
+      } else {
+        focusOpenedContent(result.appId, historyTalkId || result.contentId);
+      }
       if (historyTalkId) {
         focusedTalkHistoryRepairId = result.contentId;
         rememberAppContent(result.appId, historyTalkId);
       }
       const parentWasRepaired = parentWasCorrupted
         && playerState?.visibleDeviceState.apps?.some((app) => app.id === result.appId && app.available && app.corrupted !== true);
-      if (result.repairable && (parentWasRepaired || (!targetWasRepaired && isSearchAgentResultAlreadyRepaired(result)))) {
+      // 開いた先の画面に案内の候補があれば、修復の案内よりそちらを優先する。
+      if (
+        result.repairable
+        && (parentWasRepaired || (!targetWasRepaired && isSearchAgentResultAlreadyRepaired(result)))
+        && !hasAssistantCandidate(playerState?.assistantMessages ?? [], `screen:${result.appId}`)
+      ) {
         showAssistantNotice(historyTalkId ? "history_repaired" : "repaired", result.appId);
       }
     }
@@ -3751,8 +3901,10 @@
               callLogs={deviceState.callLogs}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
+              onNavigate={(contentId) => handleAppNavigate("phone", contentId)}
+              onDisplayedContentChange={(contentId) => handleDisplayedContentChange("phone", contentId)}
               onContentOpen={(contentId) => void handleContentOpen("phone", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("phone", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("phone", contentId)}
               onNoise={openBlockedCallHistory}
             />
           {:else if activeApp?.id === "messages"}
@@ -3779,8 +3931,8 @@
             onVisibleMediaObserved={(contentId) => handleVisibleMediaObserved("messages", contentId)}
             onRead={(talkId, messageId) => void handleTalkRead(talkId, messageId)}
             onDisplayedThreadChange={(contentId) => handleDisplayedTalkChange("messages", contentId)}
-            onBlockedContentOpen={(contentId) => recordBlockedContentLink("messages", contentId)}
-            onNoise={triggerNoise}
+            onNavigate={(contentId) => handleAppNavigate("messages", contentId)}
+            onBlockedContentOpen={(contentId) => handleBlockedContentTap("messages", contentId)}
             onPickerOpenChange={(open) => (appModalOpen = open)}
             onPhotoDraftChange={(active) => setComposerPhotoDraftActive("messages", active)}
           />
@@ -3789,24 +3941,30 @@
               photos={deviceState.photos}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
+              onNavigate={(contentId) => handleAppNavigate("photos", contentId)}
+              onDisplayedContentChange={(contentId) => handleDisplayedContentChange("photos", contentId)}
               onContentOpen={(contentId) => void handleContentOpen("photos", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("photos", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("photos", contentId)}
             />
           {:else if activeApp?.id === "notes"}
             <NotesApp
               notes={deviceState.notes}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
+              onNavigate={(contentId) => handleAppNavigate("notes", contentId)}
+              onDisplayedContentChange={(contentId) => handleDisplayedContentChange("notes", contentId)}
               onContentOpen={(contentId) => void handleContentOpen("notes", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("notes", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("notes", contentId)}
             />
           {:else if activeApp?.id === "mail"}
             <MailApp
               mails={deviceState.mails}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
+              onNavigate={(contentId) => handleAppNavigate("mail", contentId)}
+              onDisplayedContentChange={(contentId) => handleDisplayedContentChange("mail", contentId)}
               onContentOpen={(contentId) => void handleContentOpen("mail", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("mail", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("mail", contentId)}
             />
           {:else if activeApp?.id === "calendar"}
             <CalendarApp
@@ -3837,8 +3995,8 @@
               onRefresh={refreshRadioAudio}
               onShareContent={handleRadioShareContent}
               onSubmitRadioForm={handleSubmitRadioForm}
-              onContentOpen={(contentId) => void handleContentOpen("radio", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("radio", contentId)}
+              onContentOpen={(contentId) => handleSingleScreenContentOpen("radio", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("radio", contentId)}
               onNoise={triggerNoise}
               onModalOpenChange={(open) => (appModalOpen = open)}
             />
@@ -3868,18 +4026,22 @@
             onVisibleMediaObserved={(contentId) => handleVisibleMediaObserved("chat", contentId)}
             onRead={(talkId, messageId) => void handleTalkRead(talkId, messageId)}
             onDisplayedThreadChange={(contentId) => handleDisplayedTalkChange("chat", contentId)}
-            onBlockedContentOpen={(contentId) => recordBlockedContentLink("chat", contentId)}
-            onNoise={triggerNoise}
+            onNavigate={(contentId) => handleAppNavigate("chat", contentId)}
+            onBlockedContentOpen={(contentId) => handleBlockedContentTap("chat", contentId)}
             onPickerOpenChange={(open) => (appModalOpen = open)}
             onPhotoDraftChange={(active) => setComposerPhotoDraftActive("chat", active)}
             />
           {:else if activeApp?.id === "browser"}
             <BrowserApp
               tabs={deviceState.browserTabs}
+              pages={browserPages}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
+              onNavigate={(contentId) => handleAppNavigate("browser", contentId)}
+              onNavigatePage={handleBrowserPageNavigate}
+              onDisplayedContentChange={(contentId) => handleDisplayedContentChange("browser", contentId)}
               onContentOpen={(contentId) => void handleContentOpen("browser", contentId)}
-              onBlockedContentOpen={(contentId) => recordBlockedContentLink("browser", contentId)}
+              onBlockedContentOpen={(contentId) => handleBlockedContentTap("browser", contentId)}
               onNoise={triggerNoise}
             />
           {:else if activeApp && isProjectAppId(activeApp.id)}
@@ -3889,7 +4051,7 @@
               context={projectStageContext}
               focusContentId={focusedContentId}
               focusContentRequestId={focusedContentRequestId}
-              onContentOpen={(contentId) => void handleContentOpen(activeApp.id, contentId)}
+              onContentOpen={(contentId) => handleSingleScreenContentOpen(activeApp.id, contentId)}
               onBlockedContentOpen={(contentId) => recordBlockedContentLink(activeApp.id, contentId)}
               onNoise={triggerNoise}
             />

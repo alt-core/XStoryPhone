@@ -1,6 +1,6 @@
 <script lang="ts">
   import { afterUpdate, beforeUpdate, onDestroy } from "svelte";
-  import { FileImage, ImagePlus, List, MessageCircle, Radio, Send, Video, X } from "@lucide/svelte";
+  import { FileImage, ImagePlus, MessageCircle, Radio, Send, Video, X } from "@lucide/svelte";
   import LockedAttachmentContents from "./LockedAttachmentContents.svelte";
   import TalkMediaAttachment from "./TalkMediaAttachment.svelte";
   import type { AppId, LockedAttachment, MessageAttachment, MessageThread, PendingShareDraft, PhotoItem, TalkInputState } from "../scenario-runtime/types";
@@ -18,6 +18,8 @@
     shouldQueueTalkMessage,
     type TalkDelayMessage as DelayedMessage
   } from "../system/talkMessageDelay";
+  import AppListButton from "./AppListButton.svelte";
+  import AppListHeader from "./AppListHeader.svelte";
   import AppShell from "./AppShell.svelte";
   import BrokenTalkHistory from "./BrokenTalkHistory.svelte";
   import {
@@ -25,7 +27,8 @@
     isConversationNearBottom,
     rememberConversationScrollForLink,
     restoreConversationScrollAfterTick,
-    scrollConversationToBottomAfterTick
+    scrollConversationToBottomAfterTick,
+    scrollMessageToTop
   } from "./conversationScrollMemory";
   import PhotoMessagePicker from "./PhotoMessagePicker.svelte";
   import { createTalkDrafts, restoreFailedTalkDraft } from "./talkDrafts.ts";
@@ -67,8 +70,8 @@
   export let onPhotoDraftChange: (active: boolean) => void = () => {};
   export let onRead: (talkId: string, messageId: string) => void | Promise<void> = () => {};
   export let onDisplayedThreadChange: (contentId: string) => void = () => {};
+  export let onNavigate: (contentId: string) => void = () => {};
   export let onBlockedContentOpen: (contentId: string) => void = () => {};
-  export let onNoise: () => void = () => {};
   export let replyDelayAnchorsByThread: Record<string, ReplyDelayAnchor> = {};
   export let focusContentId = "";
   export let focusContentRequestId = 0;
@@ -77,7 +80,8 @@
   export let initialDateLabel = "今日";
 
   let selectedThreadId = threads[0]?.id ?? "";
-  let pickerOpen = !selectedThreadId;
+  // 会話一覧。初期表示はAppの指定(applyFocus)で決まる。
+  let pickerOpen = true;
   let photoPickerOpen = false;
   const draftForThread = createTalkDrafts();
   let composer = draftForThread(selectedThreadId);
@@ -86,11 +90,12 @@
   let lastHistorySignature = "";
   let lastHistoryThreadId = "";
   let historyWasNearBottomBeforeUpdate = true;
-  let lastReportedContentId = "";
+  // 会話に入るたびにentrySerialを進め、一覧を挟んだ同じ会話の再表示も1回の開封として報告する。
+  let entrySerial = 0;
+  let lastReportedEntryKey = "";
   let lastReportedMediaOpenKey = "";
   let lastReportedVisibleMediaOpenKey = "";
-  let lastAppliedFocusContentId = "";
-  let lastAppliedFocusContentRequestId = focusContentRequestId;
+  let appliedFocusRequestId: number | undefined;
   let pendingHistoryRepairId = "";
   let pendingAttachmentContentId = "";
   let trackedThreadId = "";
@@ -103,41 +108,22 @@
   let scheduledMessageId = "";
   let pendingRead: { talkId: string; messageId: string } | null = null;
   let lastReportedReadKey = "";
-  let lastReportedDisplayedContentId = "";
+  let lastReportedDisplayedContentId: string | undefined;
   let seenMessageIdsByThread: SeenMessageIdsByThread = {};
   let loadedDelayMemoryKey: string | undefined = undefined;
   let lastAppliedShareDraftRequestId = 0;
   let lastReportedPhotoDraftActive = false;
 
   $: syncSeenMessageMemory(delayMemoryKey);
+  // condで消えた会話を表示し続けず、一覧へ戻す。
   $: if (threads.length && !threads.some((thread) => thread.id === selectedThreadId)) {
     selectedThreadId = threads[0].id;
+    pickerOpen = true;
   }
   $: if (initialShareDraft && initialShareDraft.requestId !== lastAppliedShareDraftRequestId) {
     applyInitialShareDraft(initialShareDraft);
   }
-  $: if (!focusContentId) {
-    lastAppliedFocusContentId = "";
-    lastAppliedFocusContentRequestId = focusContentRequestId;
-    pendingHistoryRepairId = "";
-    pendingAttachmentContentId = "";
-  } else if (focusContentId !== lastAppliedFocusContentId || focusContentRequestId !== lastAppliedFocusContentRequestId) {
-    const focused = talkForFocusedContent(threads, focusContentId);
-    if (focused) {
-      lastAppliedFocusContentId = focusContentId;
-      lastAppliedFocusContentRequestId = focusContentRequestId;
-      selectedThreadId = focused.id;
-      pickerOpen = focused.corrupted === true;
-      pendingHistoryRepairId = focused.corrupted ? "" : focusHistoryRepairId;
-      pendingAttachmentContentId = focused.id === focusContentId || focused.contentId === focusContentId ? "" : focusContentId;
-      lastHistorySignature = "";
-      lastHistoryThreadId = "";
-      if (focused.corrupted) {
-        onNoise();
-        onBlockedContentOpen(focused.contentId ?? focused.id);
-      }
-    }
-  }
+  $: applyFocus(focusContentId, focusContentRequestId);
   $: selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? threads[0];
   $: composer = draftForThread(selectedThreadId);
   $: hasOtherUnreadThread = threads.some((thread) => thread.id !== selectedThreadId && thread.unread && !thread.corrupted);
@@ -147,14 +133,15 @@
   $: selectedThreadMediaOpenKey = selectedThreadContentId && selectedThreadMediaSignature ? `${selectedThreadContentId}:${selectedThreadMediaSignature}` : "";
   $: selectedThreadVisibleMediaOpenKey =
     selectedThreadContentId && selectedThreadVisibleMediaSignature ? `${selectedThreadContentId}:${selectedThreadVisibleMediaSignature}` : "";
-  $: if (selectedThreadContentId && selectedThreadContentId !== lastReportedContentId) {
-    lastReportedContentId = selectedThreadContentId;
+  $: selectedThreadInput = selectedThread ? inputStateByThread[selectedThread.id] : undefined;
+  $: conversationVisible = Boolean(threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen);
+  $: entryKey = conversationVisible && selectedThreadContentId ? `${selectedThreadContentId}#${entrySerial}` : "";
+  $: if (entryKey && entryKey !== lastReportedEntryKey) {
+    lastReportedEntryKey = entryKey;
     lastReportedMediaOpenKey = selectedThreadMediaOpenKey;
     lastReportedVisibleMediaOpenKey = "";
     onContentOpen(selectedThreadContentId, mediaAttachmentContentIds(selectedThread?.messages ?? []));
   }
-  $: selectedThreadInput = selectedThread ? inputStateByThread[selectedThread.id] : undefined;
-  $: conversationVisible = Boolean(threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen);
   $: reportDisplayedThread(conversationVisible ? selectedThreadContentId : "");
   $: sendablePhotos = photos.filter((photo) => (photo.imageUrl || photo.audioUrl || photo.videoUrl) && !photo.corrupted);
   $: if (composer.photoId && !sendablePhotos.some((photo) => photo.id === composer.photoId)) {
@@ -201,7 +188,7 @@
   $: historySignature = selectedThread
     ? `${selectedThread.id}:${selectedThread.messages.length}:${latestMessageId}:${quickReplySignature}`
     : "";
-  $: if (!composerVisible && photoPickerOpen) {
+  $: if ((!composerVisible || !conversationVisible) && photoPickerOpen) {
     setPhotoPickerOpen(false);
   }
 
@@ -228,7 +215,7 @@
       const target = [...historyList.querySelectorAll<HTMLElement>("[data-attachment-content-id]")]
         .find((element) => element.dataset.attachmentContentId === pendingAttachmentContentId);
       if (target) {
-        historyList.scrollTop = Math.max(0, target.offsetTop - 8);
+        scrollMessageToTop(historyList, target);
         pendingAttachmentContentId = "";
         lastHistorySignature = historySignature;
         lastHistoryThreadId = selectedThread.id;
@@ -277,7 +264,7 @@
     const target = [...historyList.querySelectorAll<HTMLElement>("[data-history-repair-id]")]
       .find((element) => element.dataset.historyRepairId === repairId);
     if (!target) return false;
-    historyList.scrollTop = Math.max(0, target.offsetTop - 8);
+    scrollMessageToTop(historyList, target);
     return true;
   }
 
@@ -326,26 +313,65 @@
     onDisplayedThreadChange(contentId);
   }
 
+  // Appの表示指定は要求ごとに1回だけ適用する。空の指定は一覧。
+  function applyFocus(contentId: string, requestId: number) {
+    if (requestId === appliedFocusRequestId) {
+      return;
+    }
+    appliedFocusRequestId = requestId;
+    // 履歴復元や外からの表示指定でも、離れる会話の既読と写真選択を確定する。
+    flushPendingRead();
+    if (photoPickerOpen) setPhotoPickerOpen(false);
+    pendingHistoryRepairId = "";
+    pendingAttachmentContentId = "";
+    const focused = contentId ? talkForFocusedContent(threads, contentId) : undefined;
+    if (!focused) {
+      pickerOpen = true;
+      return;
+    }
+    focusThread(focused, contentId);
+  }
+
+  function focusThread(focused: MessageThread, contentId: string) {
+    if (focused.corrupted) {
+      pickerOpen = true;
+      onBlockedContentOpen(focused.contentId ?? focused.id);
+      return;
+    }
+    pendingHistoryRepairId = focusHistoryRepairId;
+    pendingAttachmentContentId = focused.id === contentId || focused.contentId === contentId ? "" : contentId;
+    lastHistorySignature = "";
+    lastHistoryThreadId = "";
+    enterThread(focused.id);
+  }
+
+  function enterThread(talkId: string) {
+    selectedThreadId = talkId;
+    pickerOpen = false;
+    setPhotoPickerOpen(false);
+    entrySerial += 1;
+  }
+
   function selectThread(talkId: string) {
     pendingAttachmentContentId = "";
     flushPendingRead();
     const thread = threads.find((item) => item.id === talkId);
-    if (thread?.corrupted) {
-      selectedThreadId = talkId;
-      pickerOpen = true;
+    if (!thread) {
+      return;
+    }
+    if (thread.corrupted) {
       setPhotoPickerOpen(false);
-      onNoise();
       onBlockedContentOpen(thread.contentId ?? thread.id);
       return;
     }
 
-    selectedThreadId = talkId;
-    pickerOpen = false;
-    setPhotoPickerOpen(false);
+    onNavigate(thread.contentId ?? thread.id);
+    enterThread(talkId);
   }
 
   function openThreadPicker() {
     flushPendingRead();
+    onNavigate("");
     pickerOpen = true;
   }
 
@@ -861,12 +887,7 @@
     {#if threads.length && selectedThread && !selectedThread.corrupted && !pickerOpen}
       <section class="conversation-screen" aria-label={`${selectedThread.contactName}との会話`}>
         <header class="conversation-bar">
-          <button class="icon-button" type="button" aria-label="会話一覧" title="会話一覧" on:click={openThreadPicker}>
-            <List size={18} strokeWidth={2.2} />
-            {#if hasOtherUnreadThread}
-              <span class="button-unread-dot" aria-hidden="true"></span>
-            {/if}
-          </button>
+          <AppListButton label="会話一覧" unread={hasOtherUnreadThread} onClick={openThreadPicker} />
           <UserAvatar name={selectedThread.contactName} src={threadAvatarUrl(selectedThread)} size={36} tone="messages" />
           <div class="title-copy">
             <h3>{selectedThread.contactName}</h3>
@@ -882,7 +903,7 @@
                 {/each}
                 {#if visibleMessageIds.has(message.id)}
                   {#if index === 0 || messageDateLabel(selectedThread.messages, index - 1) !== messageDateLabel(selectedThread.messages, index)}
-                    <div class="day-chip">{messageDateLabel(selectedThread.messages, index)}</div>
+                    <div class="day-chip" data-day-separator>{messageDateLabel(selectedThread.messages, index)}</div>
                   {/if}
                   <article class:owner={message.sender === "owner"} data-history-repair-id={message.historyRepairId || undefined} data-attachment-content-id={message.attachment?.contentId || undefined}>
                     <MessageBody body={message.body} segments={message.segments} onOpenLink={(segmentIndex) => openMessageLink(message.id, segmentIndex)} />
@@ -994,12 +1015,7 @@
       </section>
     {:else if threads.length}
       <section class="thread-picker" aria-label="会話一覧">
-        <header class="picker-bar">
-          <div class="title-copy">
-            <h2>メッセージ</h2>
-            <span>{threads.length}件</span>
-          </div>
-        </header>
+        <AppListHeader title="メッセージ" caption={`${threads.length}件`} />
 
         <div class="thread-scroll">
           <ScrollHint enabled={threads.length > 7} step={82}>
@@ -1070,48 +1086,12 @@
     gap: 10px;
   }
 
-  .conversation-bar,
-  .picker-bar {
+  .conversation-bar {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
     align-items: center;
     gap: 9px;
     min-height: 46px;
-  }
-
-  .picker-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .icon-button {
-    position: relative;
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border: 1px solid var(--ap-border);
-    border-radius: var(--ap-radius-control);
-    background: var(--ap-surface-2);
-    color: #fff;
-    cursor: pointer;
-  }
-
-  .icon-button:active {
-    transform: translateY(1px);
-  }
-
-  .button-unread-dot {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 8px;
-    height: 8px;
-    border: 1px solid rgba(10, 14, 20, 0.92);
-    border-radius: 999px;
-    background: #ff4d5a;
-    box-shadow: 0 0 0 1px rgba(255, 77, 90, 0.26);
-    pointer-events: none;
   }
 
   .title-copy {
@@ -1120,7 +1100,6 @@
     gap: 2px;
   }
 
-  h2,
   h3 {
     margin: 0;
     overflow: hidden;
@@ -1129,22 +1108,10 @@
     white-space: nowrap;
   }
 
-  h2 {
-    font-size: 1.32rem;
-  }
-
   h3 {
     font-size: 1rem;
   }
 
-  .title-copy span {
-    overflow: hidden;
-    color: rgba(255, 255, 255, 0.54);
-    font-size: 0.66rem;
-    font-weight: 740;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 
   .history-area {
     display: grid;

@@ -15,5 +15,5 @@ export const demoProjectConstantsGenerated = {
   "device.lock_pin_length": 0,
   "player.access_code": "none",
   "talk.clock": "real",
-  "client.runtime_revision": "client_751f2611480524e6"
+  "client.runtime_revision": "client_1e63edd180836161"
 } as const;

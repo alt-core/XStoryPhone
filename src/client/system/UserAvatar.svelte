@@ -4,7 +4,7 @@
   export let name = "";
   export let src = "";
   export let size = 32;
-  export let tone: "messages" | "chat" | "neutral" = "neutral";
+  export let tone: "messages" | "chat" | "mail" | "neutral" = "neutral";
 
   let failedSrc = "";
 
@@ -50,6 +50,11 @@
   .user-avatar.chat {
     background: linear-gradient(145deg, #78cb8a, #378b4c);
     color: #06200d;
+  }
+
+  .user-avatar.mail {
+    background: linear-gradient(145deg, #bcc8ff, #6e7fd2);
+    color: #0b1233;
   }
 
   .user-avatar img {

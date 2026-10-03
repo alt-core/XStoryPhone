@@ -54,6 +54,13 @@ export function rememberConversationScrollForLink(appId: ConversationScrollAppId
   rememberConversationScroll(appId, threadId, element.scrollTop);
 }
 
+// 外から指定したメッセージを上端に表示する。直前に日付区切りがあれば、その日付から見せる。
+export function scrollMessageToTop(list: HTMLElement, message: HTMLElement) {
+  const previous = message.previousElementSibling as HTMLElement | null;
+  const anchor = previous?.hasAttribute("data-day-separator") ? previous : message;
+  list.scrollTop = Math.max(0, anchor.offsetTop - 8);
+}
+
 function applyScrollTop(element: HTMLElement | undefined, scrollTop: number) {
   if (!element) {
     return;

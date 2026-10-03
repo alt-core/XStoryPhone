@@ -8,6 +8,7 @@ import * as serverRuntime from "svelte/internal/server";
 import { render } from "svelte/server";
 import ts from "typescript";
 import { deviceViewFor } from "../src/client/system/deviceView.ts";
+import { hasAssistantCandidate } from "../src/shared/assistantMessages.ts";
 import { latestQuickReplyPlacement, resolvedTalkInputState } from "../src/client/system/talkInputState.ts";
 import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
@@ -64,7 +65,7 @@ test("検索結果から親だけを修復した場合も案内し、同じ結�
   const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), [
     "handleOpenSearchAgentResult", "isSearchAgentResultAlreadyRepaired"
   ], {
-    uiState: { sessionToken: "session" }, playerState: state, displayedTalkTarget: null,
+    uiState: { sessionToken: "session" }, playerState: state, displayedTalkTarget: null, hasAssistantCandidate,
     captureContentNavigation: () => () => true,
     handleContentOpen: async () => { state.visibleDeviceState.apps = [{ id: "chat", available: true, corrupted: false }]; return true; },
     focusOpenedContent() {}, showAssistantNotice: (...args) => messages.push(args)
@@ -74,6 +75,32 @@ test("検索結果から親だけを修復した場合も案内し、同じ結�
   assert.equal(messages.length, 1);
   assert.equal(await context.handleOpenSearchAgentResult(result), true);
   assert.equal(messages.length, 1);
+});
+
+test("修復の案内は、開いた先の画面に条件成立済みの案内候補があれば出さない", async () => {
+  for (const [label, assistantMessages, expected] of [
+    ["候補なし", [], 1],
+    ["別画面の候補", [{ id: "home", trigger: "screen:home", body: "", weight: 1 }], 1],
+    ["weight 0の候補", [{ id: "zero", trigger: "screen:notes", body: "", weight: 0 }], 1],
+    ["開いた先の候補", [{ id: "notes", trigger: "screen:notes", body: "", weight: 1 }], 0]
+  ]) {
+    for (const targetKind of ["content", "talk_history"]) {
+      const messages = [];
+      const state = { visibleDeviceState: { apps: [] }, contentStates: [], assistantMessages };
+      const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), [
+        "handleOpenSearchAgentResult", "isSearchAgentResultAlreadyRepaired"
+      ], {
+        uiState: { sessionToken: "session" }, playerState: state, displayedTalkTarget: null, hasAssistantCandidate,
+        captureContentNavigation: () => () => true,
+        handleContentOpen: async () => { state.contentStates = [{ contentId: "note", state: "repaired" }]; return true; },
+        focusOpenedContent() {}, rememberAppContent() {}, focusedTalkHistoryRepairId: "",
+        showAssistantNotice: (...args) => messages.push(args)
+      });
+      const result = { appId: "notes", contentId: "note", targetKind, targetTalkId: "talk", repairable: true };
+      assert.equal(await context.handleOpenSearchAgentResult(result), true);
+      assert.equal(messages.length, expected, `${label}/${targetKind}`);
+    }
+  }
 });
 
 function searchAgentHarness(props = {}, dependencies = {}) {

@@ -7,7 +7,8 @@ import * as serverRuntime from "svelte/internal/server";
 import { render } from "svelte/server";
 import ts from "typescript";
 import { pathnameKey, resolveResourceUrl, resolveStaticUrl } from "../src/shared/deploymentUrls.ts";
-import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
+import { browserAppHarness } from "./helpers/browser-app-harness.mjs";
+import { componentFunctionHarness } from "./helpers/component-script-harness.mjs";
 import { noticeTextSegments } from "../src/client/system/noticeText.ts";
 
 const staticBase = "/works/story/";
@@ -15,7 +16,6 @@ const staticOrigin = "https://site.example.test";
 const apiOrigin = "https://api.example.test";
 const resourceUrl = (url) => resolveResourceUrl(url, staticBase, apiOrigin);
 const staticUrl = (url) => resolveStaticUrl(url, staticBase);
-const browserFile = new URL("../src/client/apps/BrowserApp.svelte", import.meta.url);
 const radioFile = new URL("../src/client/apps/RadioApp.svelte", import.meta.url);
 
 function renderComponent(relative, props = {}, resolveUrl = resourceUrl) {
@@ -116,20 +116,23 @@ test("Browserは作品HTMLとallowedUrlsを同じ静的baseへ解決し、ペー
   const noisy = [];
   const tabs = [{ id: "first", title: "作品ページ", url: "/pages/first.html", allowedUrls: ["/pages/details.html"] }];
   const original = structuredClone(tabs);
-  const harness = componentScriptHarness(browserFile, { tabs, onNoise: () => noisy.push(true) }, {
-    URL, pathnameKey, window: { location: { origin: staticOrigin } }, resourceUrl, corruptionNoiseStyle: () => "",
+  const { harness, pageEvents } = browserAppHarness({ tabs, onNoise: () => noisy.push(true) }, {
+    resourceUrl, origin: staticOrigin,
     frame: { contentWindow: { location: { replace(url) { navigations.push(url); } } } }
   });
   assert.equal(harness.evaluate("frameSourceUrl"), "/works/story/pages/first.html");
   harness.evaluate("frameElement = frame;");
-  harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(`${staticOrigin}/works/story/pages/details.html#note`)});`);
+  harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(`${staticOrigin}/works/story/pages/details.html#note`)});`);
   assert.equal(navigations.at(-1), `${staticOrigin}/works/story/pages/details.html#note`);
+  assert.equal(harness.evaluate("canGoBack"), true);
   harness.evaluate("navigateBack();");
   assert.equal(navigations.at(-1), `${staticOrigin}/works/story/pages/first.html`);
-  harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(`${staticOrigin}/works/story/pages/blocked.html`)});`);
-  harness.evaluate('navigateWithinTab(selectedTab, "https://outside.example.test/works/story/pages/details.html");');
+  assert.equal(harness.evaluate("canGoBack"), false);
+  harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(`${staticOrigin}/works/story/pages/blocked.html`)});`);
+  harness.evaluate('navigateWithinTab(openTab, "https://outside.example.test/works/story/pages/details.html");');
   assert.equal(navigations.length, 2);
   assert.equal(noisy.length, 2);
+  assert.deepEqual(pageEvents.map((event) => [event.mode, event.page.index, event.page.urls.length]), [["push", 1, 2], ["push", 0, 2]]);
   assert.deepEqual(tabs, original);
 });
 
@@ -141,9 +144,9 @@ test("BrowserはページのDOM・title・相対リンクを読み、許可し�
     addEventListener(...args) { listenerEvents.push(args); }, removeEventListener() {}
   };
   const frame = { contentDocument: document, contentWindow: { location: { replace(url) { navigations.push(url); } } } };
-  const harness = componentScriptHarness(browserFile, {
+  const { harness } = browserAppHarness({
     tabs: [{ id: "first", title: "作品ページ", url: "/pages/first.html", allowedUrls: ["/pages/details.html"] }]
-  }, { URL, pathnameKey, window: { location: { origin: staticOrigin } }, resourceUrl, corruptionNoiseStyle: () => "", frame });
+  }, { resourceUrl, origin: staticOrigin, frame });
   harness.evaluate("frameElement = frame; handleFrameLoad();");
   assert.equal(harness.evaluate("pageTitle"), "ページから得た見出し");
   assert.equal(listenerEvents[0][0], "click");
@@ -156,23 +159,43 @@ test("BrowserはページのDOM・title・相対リンクを読み、許可し�
   assert.equal(navigations.at(-1), `${staticOrigin}/works/story/pages/details.html`);
 });
 
+test("Browserは静的baseやoriginの異なるloadではクリック捕捉を設置しない", () => {
+  const listenerEvents = [];
+  const document = {
+    location: { href: `${staticOrigin}/pages/first.html` }, title: "ページの題名",
+    addEventListener(...args) { listenerEvents.push(args); }, removeEventListener() {}
+  };
+  const frame = { contentDocument: document, contentWindow: { location: { replace() {} } } };
+  const browser = browserAppHarness({ tabs: [{ id: "first", title: "作品ページ", url: "/pages/first.html" }] }, {
+    resourceUrl, origin: staticOrigin, frame
+  });
+  browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+  assert.equal(listenerEvents.length, 0, "静的baseを付けていないpathは捕捉しない");
+  document.location.href = `https://outside.example.test${staticBase}pages/first.html`;
+  browser.harness.evaluate("handleFrameLoad();");
+  assert.equal(listenerEvents.length, 0, "同じpathでも別originは捕捉しない");
+  document.location.href = `${staticOrigin}${staticBase}pages/first.html`;
+  browser.harness.evaluate("handleFrameLoad();");
+  assert.equal(listenerEvents.length, 1, "許可したDocumentのloadなら捕捉する");
+  browser.harness.destroy();
+});
+
 test("Browserはbaseと同名の作品pathを保持し、DOM由来URLや戻る履歴へ再度baseを加えない", () => {
   const navigations = [];
   const tabs = [{ id: "first", title: "作品ページ", url: "/demo/first.html", allowedUrls: ["/demo/details.html"] }];
   const frame = { contentWindow: { location: { replace(url) { navigations.push(url); } } } };
-  const harness = componentScriptHarness(browserFile, { tabs }, {
-    URL, pathnameKey, window: { location: { origin: staticOrigin } }, frame,
-    resourceUrl: (url) => resolveResourceUrl(url, "/demo/", apiOrigin), corruptionNoiseStyle: () => ""
+  const { harness } = browserAppHarness({ tabs }, {
+    resourceUrl: (url) => resolveResourceUrl(url, "/demo/", apiOrigin), origin: staticOrigin, frame
   });
   assert.equal(harness.evaluate("frameSourceUrl"), "/demo/demo/first.html");
   harness.evaluate("frameElement = frame;");
-  harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(`${staticOrigin}/demo/demo/details.html`)});`);
+  harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(`${staticOrigin}/demo/demo/details.html`)});`);
   harness.evaluate("navigateBack();");
   assert.deepEqual(navigations, [
     `${staticOrigin}/demo/demo/details.html`, `${staticOrigin}/demo/demo/first.html`
   ]);
-  assert.equal(harness.evaluate("currentHistoryUrl(selectedTab)"), "/demo/demo/first.html");
-  assert.equal(harness.evaluate("browserUrlAllowed(selectedTab, '/demo/details.html')"), false);
+  assert.equal(harness.evaluate("openUrl"), "/demo/demo/first.html");
+  assert.equal(harness.evaluate("browserUrlAllowed(openTab, '/demo/details.html')"), false);
 });
 
 test("Browserは符号化表記だけが異なるloadやリンクで履歴を増やさず、元のURLへ戻る", () => {
@@ -186,24 +209,22 @@ test("Browserは符号化表記だけが異なるloadやリンクで履歴を増
       addEventListener() {}, removeEventListener() {}
     };
     const frame = { contentDocument: document, contentWindow: { location: { replace(url) { navigations.push(url); } } } };
-    const harness = componentScriptHarness(browserFile, {
+    const { harness, pageEvents } = browserAppHarness({
       tabs: [{ id: "first", title: "作品ページ", url: "/pages/first.html", allowedUrls: ["/pages/details.html"] }]
-    }, {
-      URL, pathnameKey, window: { location: { origin: staticOrigin } }, frame,
-      resourceUrl: (url) => resolveResourceUrl(url, base, apiOrigin), corruptionNoiseStyle: () => ""
-    });
+    }, { resourceUrl: (url) => resolveResourceUrl(url, base, apiOrigin), origin: staticOrigin, frame });
     harness.evaluate("frameElement = frame; handleFrameLoad();");
-    assert.equal(harness.evaluate("historiesByTabId.first.length"), 1);
+    assert.equal(pageEvents.length, 0, "表記だけが異なる読み込みで履歴の段を書き換えない");
+    assert.equal(harness.evaluate("openPage.urls.length"), 1);
     assert.equal(harness.evaluate("frameSourceUrl"), `${base}pages/first.html`);
-    harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(document.location.href)});`);
+    harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(document.location.href)});`);
     assert.equal(navigations.length, 0);
-    harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(`${staticOrigin}${loadedBase}pages/%64etails.html#note`)});`);
-    assert.equal(harness.evaluate("historiesByTabId.first.length"), 2);
+    harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(`${staticOrigin}${loadedBase}pages/%64etails.html#note`)});`);
+    assert.equal(harness.evaluate("openPage.urls.length"), 2);
     assert.equal(navigations.at(-1), `${staticOrigin}${loadedBase}pages/%64etails.html#note`);
     harness.evaluate("navigateBack(); handleFrameLoad();");
     assert.equal(navigations.at(-1), `${staticOrigin}${base}pages/first.html`);
-    assert.equal(harness.evaluate("historyIndexByTabId.first"), 0);
-    assert.equal(harness.evaluate("historiesByTabId.first.length"), 2);
+    assert.equal(harness.evaluate("openPage.index"), 0);
+    assert.equal(harness.evaluate("openPage.urls.length"), 2);
   }
 });
 
@@ -211,22 +232,22 @@ test("Browserのpath比較は符号化slash・query・hashを混同せず、不�
   const noisy = [];
   const navigations = [];
   const frame = { contentWindow: { location: { replace(url) { navigations.push(url); } } } };
-  const harness = componentScriptHarness(browserFile, {
+  const { harness } = browserAppHarness({
     tabs: [{ id: "first", title: "作品ページ", url: "/pages/first.html", allowedUrls: ["/pages/a%2Fb.html?x=%41"] }],
     onNoise: () => noisy.push(true)
-  }, { URL, pathnameKey, window: { location: { origin: staticOrigin } }, resourceUrl, corruptionNoiseStyle: () => "", frame });
+  }, { resourceUrl, origin: staticOrigin, frame });
   harness.evaluate("frameElement = frame;");
   for (const path of ["/pages/a/b.html?x=%41", "/pages/a%2fb.html?x=A", "/pages/%E0%A4%A", "http://["]) {
     const target = path.startsWith("http:") ? path : `${staticOrigin}${staticBase}${path.slice(1)}`;
-    harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(target)});`);
+    harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(target)});`);
   }
   assert.equal(navigations.length, 0);
   assert.equal(noisy.length, 4);
   for (const hash of ["#one", "#two"]) {
-    harness.evaluate(`navigateWithinTab(selectedTab, ${JSON.stringify(`${staticOrigin}${staticBase}pages/a%2fb.html?x=%41${hash}`)});`);
+    harness.evaluate(`navigateWithinTab(openTab, ${JSON.stringify(`${staticOrigin}${staticBase}pages/a%2fb.html?x=%41${hash}`)});`);
   }
   assert.equal(navigations.length, 2);
-  assert.equal(harness.evaluate("historiesByTabId.first.length"), 3);
+  assert.equal(harness.evaluate("openPage.urls.length"), 3);
 });
 
 test("Radioフォームのopaque sandboxとsource/requestId照合はAPI originから独立する", async () => {

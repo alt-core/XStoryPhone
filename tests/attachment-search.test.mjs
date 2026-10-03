@@ -149,7 +149,7 @@ test("複数roomの添付targetは該当threadを選び、通常thread指定・�
   assert.equal(talkForFocusedContent(threads, "missing"), undefined);
   for (const file of ["MessagesApp.svelte", "ChatApp.svelte"]) {
     const source = readFileSync(new URL(`../src/client/apps/${file}`, import.meta.url), "utf8");
-    assert.match(source, /talkForFocusedContent\(threads, focusContentId\)/);
+    assert.match(source, /talkForFocusedContent\(threads, contentId\)/);
     assert.match(source, /data-attachment-content-id=\{message\.attachment\?\.contentId/);
   }
 });

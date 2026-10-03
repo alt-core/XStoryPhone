@@ -2,9 +2,15 @@ import type { AppId } from "../scenario-runtime/types";
 import { isAppId } from "../../shared/appRegistry.ts";
 import { isMemoryStorage } from "./clientStorage.ts";
 
+// ブラウザーのタブ内ページ履歴。戻った時に表示とアプリ内の戻るボタンを当時のとおりに復元する。
+export type BrowserPageHistory = {
+  urls: string[];
+  index: number;
+};
+
 export type PhoneHistoryRoute =
   | { kind: "home" }
-  | { kind: "app"; appId: AppId; contentId?: string };
+  | { kind: "app"; appId: AppId; contentId?: string; page?: BrowserPageHistory };
 
 export type PhoneHistoryState = {
   owner: "xstoryphone";
@@ -18,16 +24,40 @@ export type PhoneHistoryState = {
 type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
 type PhoneHistoryMarker = Pick<PhoneHistoryState, "owner" | "version" | "scope" | "index">;
 
+export const BROWSER_PAGE_HISTORY_LIMIT = 50;
+const BROWSER_PAGE_URL_MAX_LENGTH = 2048;
+
 // 画面詳細は現在のページ・スコープだけで保持し、History APIには識別子だけ渡す。
 let memoryScope: string | undefined;
 const memoryStates = new Map<number, PhoneHistoryState>();
+
+function browserPageHistoryFrom(value: unknown): BrowserPageHistory | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const page = value as { urls?: unknown; index?: unknown };
+  if (
+    !Array.isArray(page.urls)
+    || page.urls.length === 0
+    || page.urls.length > BROWSER_PAGE_HISTORY_LIMIT
+    || !page.urls.every((url) => typeof url === "string" && url.trim() && url.length <= BROWSER_PAGE_URL_MAX_LENGTH)
+    || !Number.isInteger(page.index)
+    || (page.index as number) < 0
+    || (page.index as number) >= page.urls.length
+  ) {
+    return null;
+  }
+
+  return { urls: [...page.urls as string[]], index: page.index as number };
+}
 
 function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  const route = value as { kind?: unknown; appId?: unknown; contentId?: unknown };
+  const route = value as { kind?: unknown; appId?: unknown; contentId?: unknown; page?: unknown };
   if (route.kind === "home") {
     return { kind: "home" };
   }
@@ -37,11 +67,16 @@ function routeFrom(value: unknown): PhoneHistoryRoute | null {
   if (route.contentId !== undefined && (typeof route.contentId !== "string" || !route.contentId.trim())) {
     return null;
   }
+  const page = route.page === undefined ? undefined : browserPageHistoryFrom(route.page);
+  if (page === null || (page && (route.appId !== "browser" || route.contentId === undefined))) {
+    return null;
+  }
 
   return {
     kind: "app",
     appId: route.appId as AppId,
-    ...(typeof route.contentId === "string" ? { contentId: route.contentId } : {})
+    ...(typeof route.contentId === "string" ? { contentId: route.contentId } : {}),
+    ...(page ? { page } : {})
   };
 }
 
@@ -113,9 +148,23 @@ function writePhoneHistoryState(history: HistoryLike, next: PhoneHistoryState, m
   memoryStates.set(index, next);
 }
 
+function sameBrowserPageHistory(left: BrowserPageHistory | undefined, right: BrowserPageHistory | undefined) {
+  return left === right || Boolean(
+    left && right
+    && left.index === right.index
+    && left.urls.length === right.urls.length
+    && left.urls.every((url, index) => url === right.urls[index])
+  );
+}
+
 export function samePhoneHistoryRoute(left: PhoneHistoryRoute, right: PhoneHistoryRoute) {
   return left.kind === right.kind
-    && (left.kind === "home" || (right.kind === "app" && left.appId === right.appId && left.contentId === right.contentId));
+    && (left.kind === "home" || (
+      right.kind === "app"
+      && left.appId === right.appId
+      && left.contentId === right.contentId
+      && sameBrowserPageHistory(left.page, right.page)
+    ));
 }
 
 export function replacePhoneHistoryRoute(history: HistoryLike, scope: string, route: PhoneHistoryRoute) {

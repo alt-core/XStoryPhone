@@ -24,7 +24,7 @@ function composerHarness(app) {
   const parsed = ts.createSourceFile(`${app}.ts`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const names = new Set([
     "submitMessage", "sendQuickReply", "selectThread", "selectPhoto", "applyInitialShareDraft",
-    "matchesThreadId", "openThreadPicker", "openRoomPicker"
+    "matchesThreadId", "openThreadPicker", "openRoomPicker", "applyFocus", "focusThread", "enterThread"
   ]);
   const functions = parsed.statements.filter((statement) =>
     ts.isFunctionDeclaration(statement) && names.has(statement.name?.text));
@@ -32,7 +32,7 @@ function composerHarness(app) {
     .map((statement) => statement.getText(parsed));
   const selection = reactive.filter((statement) =>
     statement.startsWith("$: selectedThread =") || statement.startsWith("$: composer ="));
-  const notification = reactive.find((statement) => statement.includes("talkForFocusedContent(threads, focusContentId)"));
+  const notification = reactive.find((statement) => statement === "$: applyFocus(focusContentId, focusContentRequestId);");
   assert.equal(selection.length, 2);
   assert.ok(notification);
   const code = ts.transpileModule([
@@ -52,9 +52,9 @@ function composerHarness(app) {
     selectedThreadId: "A", selectedThread: undefined, composer: draftForThread("A"),
     draftForThread, restoreFailedTalkDraft, selectedThreadCanPost: true, sending: false,
     get selectedPhoto() { return this.composer.photoId ? { id: this.composer.photoId } : undefined; },
-    readDividerArmed: true, readDividerAfterMessageId: "", pickerOpen: false,
+    readDividerArmed: true, readDividerAfterMessageId: "", pickerOpen: false, photoPickerOpen: false,
     focusContentId: "", focusContentRequestId: 0, focusHistoryRepairId: "",
-    lastAppliedFocusContentId: "", lastAppliedFocusContentRequestId: 0,
+    appliedFocusRequestId: 0, entrySerial: 0, onNavigate() {},
     pendingHistoryRepairId: "", pendingAttachmentContentId: "", lastHistorySignature: "", lastHistoryThreadId: "",
     lastAppliedShareDraftRequestId: 0, authError: "", unlockError: "",
     flushPendingRead() {}, setPhotoPickerOpen() {}, onNoise() {}, onBlockedContentOpen() {},

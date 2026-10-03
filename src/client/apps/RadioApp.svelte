@@ -229,15 +229,18 @@
       return;
     }
 
+    // 破損した番組は選ばず、ノイズと案内だけを出す。
+    if (item.corrupted) {
+      onBlockedContentOpen(item.contentId ?? item.id);
+      return;
+    }
+
     if (item.id !== selectedItemId) {
       closeBroadcastModal();
       closeSharePicker();
     }
 
     selectedItemId = itemId;
-    if (item.corrupted) {
-      onBlockedContentOpen(item.contentId ?? item.id);
-    }
   }
 
   function showStationListNoise() {

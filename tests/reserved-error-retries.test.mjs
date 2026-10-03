@@ -14,6 +14,7 @@ function failureHarness(names, response) {
   let attempts = 0;
   let cleared = 0;
   let homeFallbacks = 0;
+  const appFallbacks = [];
   const request = async () => {
     attempts += 1;
     return typeof response === "function" ? response(attempts) : response;
@@ -36,7 +37,8 @@ function failureHarness(names, response) {
     waitMs: () => Promise.resolve(),
     enqueuePresentation(...args) { presentations.push(args); },
     focusOpenedContent(...args) { focused.push(args); },
-    fallbackPhoneHistoryToHome() { homeFallbacks += 1; }
+    fallbackPhoneHistoryToHome() { homeFallbacks += 1; },
+    fallbackPhoneHistoryToApp(appId) { appFallbacks.push(appId); }
   });
   // 認証・容量・失敗状態の分類は実関数を使い、破棄や画面描画の境界だけを観測する。
   context.applyPlayerState = (state) => {
@@ -53,7 +55,7 @@ function failureHarness(names, response) {
     context.globalErrorVisible = true;
   };
   return {
-    context, states, globalErrors, presentations, pendingSends, focused,
+    context, states, globalErrors, presentations, pendingSends, focused, appFallbacks,
     get attempts() { return attempts; }, get cleared() { return cleared; }, get homeFallbacks() { return homeFallbacks; }
   };
 }
@@ -116,7 +118,7 @@ test("コア到達通知の422予約語拒否は一度でAP-EVENTを出し、無
   }
 });
 
-test("content開封の422予約語拒否は一度でfalseを返し、履歴開封は通常のホーム復帰になる", async () => {
+test("content開封の422予約語拒否は一度でfalseを返し、履歴開封はそのアプリの一覧へ退避する", async () => {
   for (const historyRestore of [false, true]) {
     for (const error of ["wrong_password", ...reservedReasons]) {
       const playerState = { stateVersion: 2 };
@@ -133,7 +135,8 @@ test("content開封の422予約語拒否は一度でfalseを返し、履歴開�
       assert.equal(h.cleared, 0);
       assert.equal(h.context.uiState.sessionToken, "session");
       assert.equal(h.context.inFlightContentOpenKeys.length, 0);
-      assert.equal(h.homeFallbacks, historyRestore ? 1 : 0);
+      assert.equal(h.homeFallbacks, 0);
+      assert.deepEqual(h.appFallbacks, historyRestore ? ["notes"] : []);
       assert.deepEqual(h.focused, []);
       assert.deepEqual(h.globalErrors, []);
     }
@@ -161,6 +164,7 @@ for (const operation of retryOperations) {
       assert.equal(h.globalErrors.length, 1);
       assert.equal(h.globalErrors[0].supportCode, operation.supportCode);
       assert.equal(h.homeFallbacks, 0, "再試行枯渇の全画面エラーをホーム復帰で隠さない");
+      assert.deepEqual(h.appFallbacks, [], "再試行枯渇の全画面エラーを一覧への退避で隠さない");
     }
   });
 

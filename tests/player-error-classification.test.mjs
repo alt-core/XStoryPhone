@@ -32,7 +32,7 @@ function classificationHarness(overrides = {}) {
     isBrowserPlayerStorageError, localPlayerMemoryKey, playerSessionChanged,
     globalErrorVisible: false, globalErrorSupportCode: "AP-CLIENT", globalErrorMessage: "",
     lastPlayerStateRefreshRequestedAt: 0, pendingPlayerPasscode: "", accessCodeEntryError: "", pendingNotificationOpen: null,
-    displayedTalkTarget: null, locallySuppressedNotificationIds: [],
+    displayedTalkTarget: null, browserPages: {}, locallySuppressedNotificationIds: [],
     cachePlayerState(state) { cached.push(state); },
     clearPlayerStateCache() { effects.push("clear-cache"); },
     clearTranscriptStorage() { effects.push("clear-transcript"); },
