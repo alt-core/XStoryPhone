@@ -59,7 +59,7 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 検索結果から開くとblock内のメッセージを元の位置へ復元し、対象talkを開いて復元blockの先頭を表示します。先頭の直前に日付区切りがある場合は、日付区切りから表示します。添付の検索結果から開いた時も同じです。途中の分岐で追加されるblockとrepeat blockは修復対象にできません。
 
-写真や動画を会話分岐へ使う場合は、`photo_items.tsv` の `description` に説明を書きます。この説明は会話判定と監修UIだけで使われ、アルバム表示やクライアントデータには含まれません。未定義時は写真タイトルを使った一般的な添付説明になります。
+写真や動画を会話分岐へ使う場合は、`photo_items.tsv` の `description` に説明を書きます。この説明は会話判定と監修UIだけで使われ、アルバム表示やクライアントデータには含まれません。未定義時は画像・動画を添付した旨の一般的な説明になります。
 
 通常の分岐とは別のeventから台本を追加する場合は、hookで `context.talk.addBlock("guide", "block_id")` を呼びます。本文をコードへ重複させず、同じblockを監修画面でも確認できます。指定できるのは、そのtalkに属する非repeat blockのうち、repeat派生を含む全表示でtemplateを状態変数だけから解決できるものです。template値は、この呼出時点で固定されます。別talkのblockや、会話入力から抽出したmatch値を必要とするblockは`npm run check`の型検査で拒否されます。
 
@@ -71,7 +71,16 @@ browserモードでは、発話blockを追加した同じAPI処理で、そのta
 
 メッセージ／チャットの下書き（本文・写真・共有）と送信エラーは会話ごとに保持します。同じアプリ内で会話を切り替えても、送信に失敗した内容が別の相手の入力欄へ移ることはありません。下書きは表示中アプリのメモリだけに置くため、ホーム・別アプリ・ロック画面への移動やリロードで破棄されます。
 
-各talkのitem行の `input_visible` と `input_enabled` で、自由入力composerの表示と、talkへの入力許可を独立して設定できます。空欄はどちらも`true`です。検索AIはproject_constantsの `search_agent.input_visible / search_agent.input_enabled` を使います。
+各talkのitem行の `input_visible` と `input_enabled` で、自由入力composerの表示と、talkへの入力許可を独立して設定できます。`input_visible`が空欄ならアプリの既定値、`input_enabled`が空欄なら`true`です。検索AIはproject_constantsの `search_agent.input_visible / search_agent.input_enabled` を使います。
+
+アプリ全体で自由入力を使わない場合は、`project_constants`に次の任意設定を追加します。TSVの列追加は不要です。
+
+| key | value | exposure | 対象 |
+|---|---|---|---|
+| `messages.input_visible` | `false` | `private` | メッセージの各会話の既定値 |
+| `chat.input_visible` | `false` | `private` | チャットの各会話の既定値 |
+
+省略・空欄なら既定値は`true`です。各会話行に明示した`true`／`false`が優先されます。これは初期表示の設定で、その後の`/input show`／`hide`やhookによる変更を禁止するものではありません。Quick Replyと入力許可、検索AIの設定には影響しません。
 
 - `input_visible`: テキスト、写真・動画、共有、送信buttonを含むcomposer一式を表示するか。Quick Replyには影響しません。
 - `input_enabled`: 通常入力、添付、共有、Quick Replyを受理するか。

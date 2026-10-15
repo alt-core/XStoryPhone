@@ -72,6 +72,22 @@ test("開錠対象の重複とapp/contentのID衝突を制作時に拒否する"
   assert.match(invoke().stderr,/content id がapp idと重複/u);
 }));
 
+test("写真のtitle列は廃止済みheaderとして拒否する", () => withAuthoring(({ edit, invoke }) => {
+  edit("photo_items", (rows, headers) => {
+    headers.push("title");
+    rows.find(row => row.id === "evening_platform").title = "廃止済みの写真名";
+  });
+  assert.match(invoke().stderr, /photo_items: 未知または廃止済みのheaderです: title/u);
+}));
+
+test("project_items経由でも写真のrecord.titleを拒否する", () => withAuthoring(({ edit, invoke }) => {
+  edit("project_items", rows => rows.push({
+    id: "fixture_photo_title", app: "photos",
+    record: JSON.stringify({ title: "廃止済みの写真名", imageAttachmentId: "media_7" })
+  }));
+  assert.match(invoke().stderr, /fixture_photo_title: photosのrecord\.titleは廃止済みです/u);
+}));
+
 test("空欄で全対象にできるhookは明示的な全対象も同じ意味で受け付ける", () => withAuthoring(({ edit, invoke }) => {
   edit("hooks", rows=>rows.push({event:"content_opened",target:"*",script:'state.set("session_started", true);'}));
   assert.equal(invoke().status,0);
@@ -224,6 +240,57 @@ test("廃止した検索案内定数を互換読込みせず表のtriggerへ誘�
   assert.match(rejected.stderr, /trigger=blocked_link/u);
 }));
 
+test("送信欄のアプリ別既定値は会話行で上書きでき、入力許可と検索AIへ影響しない", () => withAuthoring(({ edit, invoke }) => {
+  const expression = 'console.log(JSON.stringify(Object.fromEntries(result.worker.talks.map(talk => [talk.id, [talk.inputVisible, talk.inputEnabled]]))));';
+  const initial = invoke(expression);
+  assert.equal(initial.status, 0, initial.stderr);
+  const defaults = JSON.parse(initial.stdout);
+  for (const id of ["guide", "sms_receiver", "lobby", "chat_receiver", "search_agent"]) {
+    assert.deepEqual(defaults[id], [true, true]);
+  }
+
+  edit("project_constants", rows => rows.push(
+    { key: "messages.input_visible", value: "false", exposure: "private" },
+    { key: "chat.input_visible", value: "true", exposure: "private" }
+  ));
+  edit("message_items", rows => { rows.find(row => row.id === "guide").input_visible = "true"; });
+  edit("chat_items", rows => { rows.find(row => row.id === "lobby").input_visible = "false"; });
+  const messagesHidden = invoke(expression);
+  assert.equal(messagesHidden.status, 0, messagesHidden.stderr);
+  const messages = JSON.parse(messagesHidden.stdout);
+  assert.deepEqual(messages.guide, [true, true], "会話行のtrueはアプリ既定falseより優先する");
+  assert.deepEqual(messages.sms_receiver, [false, true], "空欄のメッセージ会話はアプリ既定値を使う");
+  assert.deepEqual(messages.lobby, [false, true], "会話行のfalseはアプリ既定trueより優先する");
+  assert.deepEqual(messages.chat_receiver, [true, true]);
+  assert.deepEqual(messages.search_agent, [true, true]);
+
+  edit("project_constants", rows => {
+    rows.find(row => row.key === "messages.input_visible").value = "true";
+    rows.find(row => row.key === "chat.input_visible").value = "false";
+  });
+  edit("message_items", rows => { rows.find(row => row.id === "guide").input_visible = "false"; });
+  edit("chat_items", rows => { rows.find(row => row.id === "lobby").input_visible = "true"; });
+  const chatHidden = invoke(expression);
+  assert.equal(chatHidden.status, 0, chatHidden.stderr);
+  const chat = JSON.parse(chatHidden.stdout);
+  assert.deepEqual(chat.guide, [false, true]);
+  assert.deepEqual(chat.sms_receiver, [true, true], "メッセージの既定値はチャットと独立する");
+  assert.deepEqual(chat.lobby, [true, true]);
+  assert.deepEqual(chat.chat_receiver, [false, true], "空欄のチャット会話はアプリ既定値を使う");
+  assert.deepEqual(chat.search_agent, [true, true]);
+}));
+
+test("送信欄のアプリ別既定値は会話が空でも不正なbooleanを拒否する", () => {
+  for (const key of ["messages.input_visible", "chat.input_visible"]) withAuthoring(({ edit, invoke }) => {
+    edit("message_items", rows => { rows.length = 0; });
+    edit("chat_items", rows => { rows.length = 0; });
+    edit("project_constants", rows => rows.push({ key, value: "hidden", exposure: "private" }));
+    const rejected = invoke();
+    assert.notEqual(rejected.status, 0);
+    assert.ok(rejected.stderr.includes(`${key}: true/falseで指定してください。`), rejected.stderr);
+  });
+});
+
 test("使用頻度の低いTSV列も素材・フォーム・宛先・入力UIへ変換される", () => withAuthoring(({ edit, invoke }) => {
   edit("home_items", rows => { rows.find(row => row.id === "notes").badge_cond = "session_started"; });
   for (const table of ["message_items", "chat_items"]) edit(table, rows => {
@@ -238,7 +305,7 @@ test("使用頻度の低いTSV列も素材・フォーム・宛先・入力UIへ
       { id: "fixture_audio", type: "audio", asset: "/fixture/audio.wav", poster: "fixture_image", content: "fixture_still", search: "資料 写真", search_app: "messages", cond: "session_started" }
     );
   });
-  edit("photo_items", rows => rows.push({ id: "fixture_still", initial: "normal", image: "fixture_image", audio: "fixture_audio", title: "音声付き画像" }));
+  edit("photo_items", rows => rows.push({ id: "fixture_still", initial: "normal", image: "fixture_image", audio: "fixture_audio" }));
   edit("gen_audio", rows => rows.push({ id: "fixture_voice", title: "固定音声", provider: "static" }));
   edit("radio_items", rows => rows.push({
     id: "fixture_radio", initial: "normal", title: "音声確認", audio: "fixture_audio\ngen_audio:fixture_voice",

@@ -150,7 +150,7 @@ test("別partの素材URLを制作時の結合で漏らさず、取得後に共�
   const f = fixture(t);
   const url = "/fixture/hidden-image-73da28.webp";
   f.edit("attachments", rows => rows.push({ comment: "#evidence" }, { id: "future_image", type: "image", asset: url }));
-  f.edit("photo_items", rows => rows.push({ id: "cross_part_photo", image: "future_image", title: "後読み画像", initial: "repairable", repair_label: "破損データ", search: "後読み画像" }));
+  f.edit("photo_items", rows => rows.push({ id: "cross_part_photo", image: "future_image", initial: "repairable", repair_label: "破損データ", search: "後読み画像" }));
   const result = f.build();
   assert.equal(result.status, 0, result.stderr);
   const worker = JSON.parse(result.stdout);
@@ -206,7 +206,7 @@ test("ruleのないblockを読み取り専用の終点にでき、未取得defau
 test("開始時の確実な素材不足は行付きエラーにし、破損枠と条件付き表示は警告に留める", t => {
   const f=fixture(t);
   f.edit("attachments", rows=>rows.push({comment:"#evidence"},{id:"later_image",type:"image",asset:"/later-image.webp"}));
-  f.edit("photo_items", rows=>rows.push({id:"later_photo",image:"later_image",initial:"normal",title:"後の画像"}));
+  f.edit("photo_items", rows=>rows.push({id:"later_photo",image:"later_image",initial:"normal"}));
   assert.match(f.build().stderr,/photo_items\.tsv:\d+.*開始時.*part evidence/u);
   f.edit("photo_items",rows=>{rows.find(row=>row.id==="later_photo").initial="repairable";});
   const result=f.build();assert.equal(result.status,0,result.stderr);

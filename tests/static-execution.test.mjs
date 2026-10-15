@@ -283,8 +283,8 @@ test("非baseのpassword入口は次のpartの鍵付き添付の枠を持ち、�
       worker.publicIds.attachment[id]=`a_${id}`;
     }
     worker.contents.push(
-      {id:"earlier_photo",publicId:"c_earlier_photo",appId:"photos",part:"base",initialState:"repairable",cond:"",search:[],repairLabel:"破損データ",record:{title:"先行する枠",imageAttachmentId:"evidence_asset2"}},
-      {id:"later_photo",publicId:"c_later_photo",appId:"photos",part:"vault",initialState:"normal",cond:"",search:[],record:{title:"後から読む画像の検証用名称",imageAttachmentId:"evidence_asset"}}
+      {id:"earlier_photo",publicId:"c_earlier_photo",appId:"photos",part:"base",initialState:"repairable",cond:"",search:[],repairLabel:"破損データ",record:{imageAttachmentId:"evidence_asset2"}},
+      {id:"later_photo",publicId:"c_later_photo",appId:"photos",part:"vault",initialState:"normal",cond:"",search:[],record:{imageAttachmentId:"evidence_asset"}}
     );
     worker.publicIds.content.earlier_photo="c_earlier_photo";
     worker.publicIds.content.later_photo="c_later_photo";

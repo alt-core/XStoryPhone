@@ -407,7 +407,6 @@ function validateRecord(content, errors) {
     phone: ["name", "kind", "at", "durationLabel"],
     notes: ["title", "body"],
     mail: ["from", "to", "subject", "date", "body"],
-    photos: ["title"],
     calendar: ["title", "date", "time", "place", "memo"],
     radio: ["programTitle"],
     browser: ["title", "url"]
@@ -416,6 +415,9 @@ function validateRecord(content, errors) {
     if (typeof record[key] !== "string") {
       errors.push(`${content.id}: record.${key} は文字列にしてください。`);
     }
+  }
+  if (content.appId === "photos" && Object.hasOwn(record, "title")) {
+    errors.push(`${content.id}: photosのrecord.titleは廃止済みです。`);
   }
   if (content.appId === "mail" && record.cc !== undefined && typeof record.cc !== "string") {
     errors.push(`${content.id}: record.cc は文字列にしてください。`);

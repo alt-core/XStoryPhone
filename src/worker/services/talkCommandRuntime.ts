@@ -34,14 +34,14 @@ export function createTalkCommandRuntime(runtime: ScenarioRuntime) {
       return value;
     const content = contentByInternalId(command.contentId);
     const photoDescription = command.kind === "photo" ? runtime.workerScenario.photoDescriptions[command.contentId]?.trim() : "";
+    if (command.kind === "photo")
+      return photoDescription
+        ? `プレイヤーはテキスト本文なしで、次の内容の画像または動画コンテンツだけを添付しました: ${photoDescription}`
+        : "プレイヤーは画像または動画を添付しました。";
     const label = content && ["title", "programTitle", "name"]
       .map((key) => content.record[key])
       .find((item): item is string => typeof item === "string" && Boolean(item.trim()));
-    return command.kind === "photo"
-      ? photoDescription
-        ? `プレイヤーはテキスト本文なしで、次の内容の画像または動画コンテンツだけを添付しました: ${photoDescription}`
-        : `プレイヤーは${label ? `「${label}」という` : ""}画像または動画を添付しました。`
-      : `プレイヤーは${label ? `「${label}」という` : ""}ラジオ項目を共有しました。`;
+    return `プレイヤーは${label ? `「${label}」という` : ""}ラジオ項目を共有しました。`;
   }
   return { talkCommand, internalizeTalkCommand, talkCommandAvailable, semanticInputForTalkCommand };
 }

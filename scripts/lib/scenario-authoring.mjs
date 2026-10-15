@@ -24,7 +24,7 @@ export const AUTHORING_COLUMNS = {
   hooks: ["comment", "event", "target", "cond", "script", "notes", "id", "needs_ai"],
   passwords: ["comment", "content", "password", "load_part", "notes"],
   calendar_items: [...common, "title", "date", "time", "place", "memo"],
-  photo_items: [...common, "image", "description", "audio", "video", "title", "tags"],
+  photo_items: [...common, "image", "description", "audio", "video", "tags"],
   note_items: [...common, "title", "body", "tags"],
   radio_items: [...common, "title", "audio", "cues", "playback_cond", "playback_disabled_label", "form_kind", "form_id", "form_label", "form_url", "form_disabled_cond", "transcript"],
   notifications: ["comment", "id", "app", "target", "title", "body", "cond", "notes"],
@@ -212,11 +212,15 @@ export function compileScenarioAuthoring(workbook) {
     ...optional(row, { repair_label: "repairLabel", badge_cond: "badgeCond" }),
     ...(text(row, "initial") && text(row, "initial") !== "normal" && !text(row, "repair_label") ? { repairLabel: "破損アプリ" } : {})
   }));
+  const inputVisibleDefaults = {
+    message_items: booleanCell(value("messages.input_visible"), "messages.input_visible", true),
+    chat_items: booleanCell(value("chat.input_visible"), "chat.input_visible", true)
+  };
   const talks = ["message_items", "chat_items"].flatMap((id) => rows(id).map((row) => ({
     id: text(row, "id"), kind: id === "message_items" ? "sms" : "chat", appId: id === "message_items" ? "messages" : "chat",
     label: text(row, "name"), startBlocks: splitList(row.start), initialState: text(row, "initial") || "normal",
     search: searchTerms(row.search), cond: text(row, "cond"), ...optional(row, { avatar: "avatarUrl", repair_label: "repairLabel" }),
-    inputVisible: booleanCell(row.input_visible, `${id}.input_visible`, true), inputEnabled: booleanCell(row.input_enabled, `${id}.input_enabled`, true)
+    inputVisible: booleanCell(row.input_visible, `${id}.input_visible`, inputVisibleDefaults[id]), inputEnabled: booleanCell(row.input_enabled, `${id}.input_enabled`, true)
   })));
   talks.push({ id: "search_agent", kind: "search_agent", startSteps: splitList(value("search_agent.start")),
     inputVisible: booleanCell(value("search_agent.input_visible"), "search_agent.input_visible", true),
@@ -249,7 +253,7 @@ export function compileScenarioAuthoring(workbook) {
       asset(audio, "audio");
       warnings.push(`photo_items!${row.__rowNumber} (${row.id}): video指定時は動画内の音声を使います。audioによる音声差替えは行いません。`);
     }
-    const record = { title: text(row, "title"), ...(image ? { imageAttachmentId: asset(image, "image") } : {}),
+    const record = { ...(image ? { imageAttachmentId: asset(image, "image") } : {}),
       ...(video ? { mediaKind: "video", videoAttachmentId: asset(video, "video") } : audio ? { mediaKind: "still_video", audioAttachmentId: asset(audio, "audio") } : {}),
       ...(text(row, "tags") ? { tags: splitList(row.tags) } : {}) };
     contents.push(item(row, "photos", record));

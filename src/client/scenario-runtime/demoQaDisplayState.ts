@@ -37,7 +37,6 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
     ? Array.from({ length: 10 }, (_, index) => ({
         id: `qa-photo-extra-${index + 1}`,
         contentId: `qa-photo-extra-${index + 1}`,
-        title: index === 9 ? "非常に長いタイトルを持つ表示確認用の画像" : `確認用画像 ${index + 1}`,
         imageUrl: [
           "/demo/album/coffee-table.webp",
           "/demo/album/evening-platform.webp",
@@ -167,14 +166,12 @@ function createQaDeviceState(options: QaPlayerStateOptions): DeviceState {
     photos: [{
       id: "qa-photo",
       contentId: "qa-photo",
-      title: "確認用画像",
       imageUrl: "/demo/album/evening-platform.webp",
       tags: ["表示確認", "静止画", "横スクロール確認用の長いタグ", "手がかり"],
       initialState: "normal"
     }, {
       id: "qa-video",
       contentId: "qa-video",
-      title: "確認用動画",
       mediaKind: "still_video",
       imageUrl: "/demo/album/rainy-window.webp",
       audioUrl: "/system/incoming-call-bell.wav",

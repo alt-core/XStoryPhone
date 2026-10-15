@@ -1054,7 +1054,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       };
     }
     if (content.appId === "photos") {
-      return { ...shared, title: content.repairLabel ?? "破損したデータ" };
+      return shared;
     }
     if (content.appId === "calendar") {
       return { ...shared, title: content.repairLabel ?? "破損した予定", date: "--/--", time: "--:--", place: "取得不能", memo: "予定データが壊れています。" };
@@ -1498,6 +1498,8 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
   }
   function contentTitle(content: ScenarioContent) {
     const record = content.record;
+    if (content.appId === "photos")
+      return record.mediaKind === "still_video" || record.mediaKind === "video" ? "動画" : "写真";
     const projectTitle = projectAppById.get(content.appId)?.searchTitle?.(record);
     if (projectTitle?.trim())
       return projectTitle;

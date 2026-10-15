@@ -131,7 +131,6 @@ export type MessageThread = {
 
 export type PhotoItem = {
   id: string;
-  title?: string;
   tags?: string[];
   mediaKind?: "still_video" | "video";
   attachmentId?: string;

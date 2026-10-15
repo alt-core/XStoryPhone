@@ -36,7 +36,7 @@ function authoringFixture(t) {
   for (const type of ["image", "audio", "video"]) {
     edit("attachments", rows => rows.push({ id: `fixture_${type}`, type, asset: `/fixture/${type}.media` }));
     edit("photo_items", rows => rows.push({
-      id: `fixture_${type}_item`, initial: "hidden", title: `${type}の資料`,
+      id: `fixture_${type}_item`, initial: "hidden",
       image: type === "image" ? "fixture_image" : type === "audio" ? "fixture_poster" : "",
       audio: type === "audio" ? "fixture_audio" : "", video: type === "video" ? "fixture_video" : ""
     }));
@@ -177,7 +177,7 @@ test("鍵付き画像の対応は明示IDだけで決まり、同じURL・表示
   assert.equal(f.build().worker.attachments.find(item => item.id === "fixture_image").albumContentId, undefined, "URL一致で結ばない");
   f.edit("photo_items", rows => {
     rows.find(item => item.id === "fixture_image_item").image = "fixture_image";
-    rows.push({ comment: "#later" }, { id: "second_target", image: "fixture_image", initial: "hidden", title: "別の項目", cond: "false" });
+    rows.push({ comment: "#later" }, { id: "second_target", image: "fixture_image", initial: "hidden", cond: "false" });
   });
   assert.equal(f.build().worker.attachments.find(item => item.id === "fixture_image").albumContentId, undefined, "取得前・条件不成立の候補も含めて曖昧さを判定する");
   f.edit("attachments", rows => { rows.find(item => item.id === "fixture_image").content = "fixture_image_item"; });
@@ -392,7 +392,7 @@ test("関連contentがメモでもアルバム行先・露出・観測・タッ�
 
 test("素材の本体参照が複数なら警告し、利用可能な先頭項目を勝手に選ばない", async t => {
   const f = authoringFixture(t);
-  f.edit("photo_items", rows => { rows.find(item => item.id === "fixture_image_item").initial = "normal"; rows.push({ id: "second_item", image: "fixture_image", title: "別項目", initial: "normal" }); });
+  f.edit("photo_items", rows => { rows.find(item => item.id === "fixture_image_item").initial = "normal"; rows.push({ id: "second_item", image: "fixture_image", initial: "normal" }); });
   const { worker, authoringWarnings } = f.build();
   assert.ok(authoringWarnings.some(text => text.includes("fixture_image") && text.includes("複数")));
   const runtime = createScenarioRuntime(worker);
@@ -408,7 +408,7 @@ test("通常添付は明示したアルバム項目を開き、表示不能で�
   const f = authoringFixture(t);
   f.edit("photo_items", rows => {
     rows.find(item => item.id === "fixture_image_item").initial = "normal";
-    rows.push({ id: "fixture_second", image: "fixture_image", initial: "normal", title: "別の項目" });
+    rows.push({ id: "fixture_second", image: "fixture_image", initial: "normal" });
   });
   f.edit("attachments", rows => { rows.find(item => item.id === "fixture_image").content = "fixture_second"; });
   const { worker } = f.build();
@@ -521,7 +521,7 @@ test("生成した対応がSMS/chatの表示観測からアルバム登録・タ
 
 test("複数参照は選択・拒否せず、明示指定と鍵付き添付を保つ", t => {
   const f = authoringFixture(t);
-  f.edit("photo_items", rows => rows.push({ id: "fixture_shared", image: "fixture_image", title: "共有素材の別項目" }));
+  f.edit("photo_items", rows => rows.push({ id: "fixture_shared", image: "fixture_image" }));
   const duplicate = f.build();
   assert.equal(duplicate.worker.attachments.find(item => item.id === "fixture_image").content, undefined);
   f.edit("attachments", rows => { rows.find(item => item.id === "fixture_image").content = "fixture_shared"; });

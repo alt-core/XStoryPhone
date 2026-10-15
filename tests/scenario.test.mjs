@@ -1054,9 +1054,9 @@ test("デモは任意字幕付きラジオと実動画を含み、字幕なし�
   assert.equal(scenario.worker.attachments.find(item=>item.id===video?.record.videoAttachmentId)?.asset, "/demo/demo-video.mp4");
   assert.equal(talkCommandAvailable("photo:demo_video", createInitialPlayerState()), true);
   const beforeReceipt = createInitialPlayerState();
-  assert.equal(searchScenario("画像受信テスト", beforeReceipt).some((item) => item.title === "受信したダミー画像"), false);
+  assert.equal(searchScenario("画像受信テスト", beforeReceipt).some((item) => item.contentId === workerScenario.publicIds.content.demo_received_image), false);
   beforeReceipt.stateValues.demo_image_received = true;
-  assert.equal(searchScenario("画像受信テスト", beforeReceipt).some((item) => item.title === "受信したダミー画像"), true);
+  assert.equal(searchScenario("画像受信テスト", beforeReceipt).some((item) => item.contentId === workerScenario.publicIds.content.demo_received_image), true);
 });
 
 test("デモの一覧アプリはスクロール確認用ダミーデータを持つ", () => {

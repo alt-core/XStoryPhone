@@ -2,9 +2,9 @@
 import type { WorkerScenario } from "../shared/scenario";
 
 export const workerScenario: WorkerScenario = {
-  "revision": "64d7997ea5b44e87",
-  "clientRevision": "client_1e63edd180836161",
-  "transcriptRevision": "transcript_25e3137a6f827b77",
+  "revision": "cf9395a78c00dc65",
+  "clientRevision": "client_7bb3009a1c613d47",
+  "transcriptRevision": "transcript_2b64167ccb460f13",
   "playerMode": "browser",
   "project": {
     "id": "demo",
@@ -493,7 +493,6 @@ export const workerScenario: WorkerScenario = {
         "写真"
       ],
       "record": {
-        "title": "夕方のホーム",
         "imageAttachmentId": "media_7",
         "tags": [
           "駅",
@@ -517,7 +516,6 @@ export const workerScenario: WorkerScenario = {
       ],
       "repairLabel": "暗▚▞▐化された画像",
       "record": {
-        "title": "雨の日の窓",
         "imageAttachmentId": "rainy_window_image",
         "tags": [
           "雨",
@@ -540,7 +538,6 @@ export const workerScenario: WorkerScenario = {
         "写真"
       ],
       "record": {
-        "title": "休憩中",
         "imageAttachmentId": "media_8",
         "tags": [
           "休憩"
@@ -561,7 +558,6 @@ export const workerScenario: WorkerScenario = {
         "カラーバー"
       ],
       "record": {
-        "title": "デモ動画",
         "imageAttachmentId": "demo_received_image_attachment",
         "mediaKind": "video",
         "videoAttachmentId": "demo_video_attachment",
@@ -584,7 +580,6 @@ export const workerScenario: WorkerScenario = {
         "画像受信テスト"
       ],
       "record": {
-        "title": "受信したダミー画像",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "受信",
@@ -604,7 +599,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
@@ -623,7 +617,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
@@ -642,7 +635,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
@@ -661,7 +653,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
@@ -680,7 +671,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"
@@ -699,7 +689,6 @@ export const workerScenario: WorkerScenario = {
         "ダミーデータ"
       ],
       "record": {
-        "title": "ダミーデータ",
         "imageAttachmentId": "demo_received_image_attachment",
         "tags": [
           "ダミーデータ"

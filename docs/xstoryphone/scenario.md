@@ -58,6 +58,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `device.os_name` / `search_agent.name` | `StoryOS` / `ナビ` | 画面上の名称 |
 | `device.date` / `device.time_label` | `2026-08-12` / `20:14` | 作中の日時 |
 | `talk.clock` | `scenario` | 発話の表示時計。`real`（既定）/ `scenario`。exposureはprivateで記述し、解決済みのモードだけをクライアントへ自動公開 |
+| `messages.input_visible` / `chat.input_visible` | `false` | メッセージ／チャットの自由入力欄の初期表示。省略時`true`、各会話行の指定を優先。exposureはprivateで記述 |
 | `player.access_code` | `required` | browserの任意入場制限。`none`（既定）/ `required`。APIの`ACCESS_CODE_SECRET`も必要 |
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
@@ -122,13 +123,13 @@ server/browser/staticで同じ規則を使います。時刻欄のない検索AI
 - `chat`
 - `browser`
 
-`message_items`と`chat_items`にtalkのid/name/startを書き、`talk_people`と`talk_blocks`、`talk_flow`、`attachments`で内容を組み立てます。`start`は初期blockの改行区切りです。talk全体を修復する場合はその行のinitial/search/repair_labelを使います。入力欄の表示と入力許可はinput_visible/input_enabledで独立に指定でき、空欄はtrueです。詳しくは[会話エンジン](conversation.md#talk全体の修復)と[入力欄とQuick Reply](conversation.md#入力欄とquick-reply)を参照してください。
+`message_items`と`chat_items`にtalkのid/name/startを書き、`talk_people`と`talk_blocks`、`talk_flow`、`attachments`で内容を組み立てます。`start`は初期blockの改行区切りです。talk全体を修復する場合はその行のinitial/search/repair_labelを使います。入力欄の表示と入力許可はinput_visible/input_enabledで独立に指定できます。input_visibleの空欄はproject_constantsのアプリ別既定値（未設定時true）を使い、input_enabledの空欄はtrueです。詳しくは[会話エンジン](conversation.md#talk全体の修復)と[入力欄とQuick Reply](conversation.md#入力欄とquick-reply)を参照してください。
 
 過去履歴の一部分だけを壊す場合は`talk_history`にid、talk、block、initial=repairable、repair_label、searchを書きます。対象blockはそのtalkのstartに一度だけ含まれる必要があり、各発話のtimeも必須です。talk全体の修復との併用、repeatや途中追加blockの部分修復はできません。連続する破損範囲はまとめて表示し、検索結果から開くと復元blockの先頭へ移動します。
 
 ### 一覧と詳細
 
-メモ・メール・アルバム・電話・メッセージ・チャット・ブラウザは、一覧と詳細の2画面で構成します。詳細の左上には一覧へ移るボタンがあります。
+メモ・メール・アルバム・電話・メッセージ・チャット・ブラウザは、一覧と詳細の2画面で構成します。詳細の左上には一覧へ移るボタンがあります。アルバムでは画像の表示領域を広く取り、このボタンを画像に重ねます。
 
 | アプリ | ホームから開いた時 | 外から項目を開いた時 |
 |---|---|---|
@@ -149,7 +150,7 @@ server/browser/staticで同じ規則を使います。時刻欄のない検索AI
 
 メールの一覧には差出人・日付・件名を、メモの一覧には題名を表示します。本文は詳細を開くまで表示しません。
 
-`note_items.tags`と`photo_items.tags`は任意の改行区切りです。タグは詳細の題名の直下に記述順で並び、多い場合は横スクロールします。一覧には表示せず、絞込みにも使いません。
+`note_items.tags`と`photo_items.tags`は任意の改行区切りです。タグは記述順で並び、多い場合は横スクロールします。メモでは詳細の題名の直下、アルバムでは画像の下端（動画では再生操作の上）に重ねます。一覧には表示せず、絞込みにも使いません。
 
 | 表 | id | titleまたはsubject | その他のセル例 |
 |---|---|---|---|
@@ -166,7 +167,7 @@ server/browser/staticで同じ規則を使います。時刻欄のない検索AI
 | image＋audio | 静止サムネイルと音声を組み合わせた動画（内部形式still_video） |
 | video、必要ならimage | 実動画。imageは任意のポスター画像 |
 
-例えばattachmentsに`id=station_image / type=image / asset=/media/station.webp`を置き、photo_itemsに`id=station_photo / image=station_image / title=駅前の写真`を書きます。descriptionは会話判定・監修用の内容説明であり、アルバムへ表示する本文ではありません。
+例えばattachmentsに`id=station_image / type=image / asset=/media/station.webp`を置き、photo_itemsに`id=station_photo / image=station_image`を書きます。写真・動画にタイトルの属性はありません。descriptionは会話判定・監修用の内容説明であり、アルバムへ表示する本文ではありません。検索結果では素材に応じて「写真」または「動画」と表示します。
 
 会話で添付する場合はtalk_blocksのattachmentに同じIDを書きます。attachmentsのcontentは対応するコンテンツID、posterは画像attachment IDです。画像・音声・動画とアルバム項目の対応は生成時に作られ、会話内メディアからアルバムへ移動できます。still_videoと実動画の両方をメッセージ・チャットへ添付できます。
 

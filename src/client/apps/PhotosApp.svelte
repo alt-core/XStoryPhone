@@ -9,7 +9,7 @@
   import VideoPlayback from "../system/VideoPlayback.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import { resourceUrl } from "../system/resourceUrls";
-  import AppDetailBar from "./AppDetailBar.svelte";
+  import AppListButton from "./AppListButton.svelte";
   import AppListHeader from "./AppListHeader.svelte";
   import AppShell from "./AppShell.svelte";
 
@@ -89,7 +89,7 @@
   }
 
   function photoLabel(photo: PhotoItem) {
-    return photo.title ?? (isVideoContent(photo) ? "動画" : "写真");
+    return isVideoContent(photo) ? "動画" : "写真";
   }
 
   function applyFocus(contentId: string, requestId: number) {
@@ -290,24 +290,9 @@
 <svelte:window on:keydown={handleWindowKeydown} on:resize={() => zoomed && syncZoomFrame()} />
 
 <AppShell title="アルバム" subtitle={`${photos.length}件・端末内`} accent="#f0b35d">
-  <div class="album-app">
+  <div class="album-app" class:viewing-photo={Boolean(openPhoto && !openPhoto.corrupted)}>
     {#if openPhoto && !openPhoto.corrupted}
-      <section class="photo-detail" class:with-tag-row={Boolean(openPhoto.title && openPhoto.tags?.length)} aria-label={photoLabel(openPhoto)}>
-        {#if openPhoto.title}
-          <AppDetailBar listLabel="アルバム一覧" title={openPhoto.title} onList={returnToList} />
-          {#if openPhoto.tags?.length}
-            <div class="detail-tags">
-              <ContentTags tags={openPhoto.tags} />
-            </div>
-          {/if}
-        {:else}
-          <AppDetailBar listLabel="アルバム一覧" onList={returnToList}>
-            <div class="bar-tags">
-              <ContentTags tags={openPhoto.tags ?? []} />
-            </div>
-          </AppDetailBar>
-        {/if}
-
+      <section class="photo-detail" aria-label={photoLabel(openPhoto)}>
         <div class="media-stage" class:native-video={isNativeVideoContent(openPhoto)}>
           {#if isNativeVideoContent(openPhoto)}
             <div class="native-video-frame">
@@ -339,6 +324,14 @@
               <Image size={38} strokeWidth={1.6} />
             </div>
           {/if}
+          {#if openPhoto.tags?.length}
+            <div class="detail-tags" class:with-playback={isVideoContent(openPhoto)}>
+              <ContentTags tags={openPhoto.tags} overlay />
+            </div>
+          {/if}
+        </div>
+        <div class="photo-list-control">
+          <AppListButton label="アルバム一覧" onClick={returnToList} />
         </div>
       </section>
     {:else}
@@ -424,6 +417,10 @@
     min-height: 0;
     height: 100%;
     padding: 8px 12px 42px;
+  }
+
+  .album-app.viewing-photo {
+    padding: 0 0 42px;
   }
 
   .photo-library,
@@ -575,26 +572,36 @@
   }
 
   .photo-detail {
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 8px;
+    position: relative;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   }
 
-  .photo-detail.with-tag-row {
-    grid-template-rows: auto auto minmax(0, 1fr);
+  /* 一覧ボタンの大きさは共通UIのまま、見出し行を取らずに画像へ重ねる。 */
+  .photo-list-control {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 2;
+    --ap-surface-2: rgba(4, 8, 12, 0.76);
+    --ap-border: rgba(255, 255, 255, 0.24);
   }
 
-  .detail-tags,
-  .bar-tags {
+  .photo-list-control :global(.app-list-button:hover) {
+    background: rgba(30, 36, 44, 0.9);
+  }
+
+  .detail-tags {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 1;
     min-width: 0;
     --content-tag-accent: #f0b35d;
   }
 
-  .detail-tags {
-    padding: 0 2px;
-  }
-
-  .bar-tags {
-    flex: 1 1 auto;
+  .detail-tags.with-playback {
+    bottom: 72px;
   }
 
   /* 表示枠の大きさを子の上限(max-height: 100%)の基準にし、縦長の画像も全体を収める。 */
@@ -605,7 +612,6 @@
     place-items: center;
     min-height: 0;
     overflow: hidden;
-    border-radius: 18px;
     background:
       radial-gradient(circle at 50% 42%, rgba(240, 179, 93, 0.08), transparent 58%),
       rgba(3, 6, 10, 0.55);
@@ -619,7 +625,7 @@
     width: 100%;
     height: 100%;
     min-height: 0;
-    padding: 10px;
+    padding: 0;
     border: 0;
     background: transparent;
     cursor: zoom-in;
@@ -628,7 +634,6 @@
   .zoom-trigger:focus-visible {
     outline: 2px solid rgba(240, 179, 93, 0.88);
     outline-offset: -4px;
-    border-radius: 18px;
   }
 
   .zoom-trigger img,
@@ -637,7 +642,6 @@
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    border-radius: 12px;
     box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
   }
 
@@ -649,7 +653,7 @@
     width: 100%;
     height: 100%;
     min-height: 0;
-    padding: 10px 10px 64px;
+    padding: 0 0 64px;
   }
 
   .still-video-control {
