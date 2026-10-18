@@ -2317,6 +2317,27 @@ test("hookの公開拒否は先に記録した副作用も全て破棄する", a
   }
 });
 
+test("hookのゲームオーバー理由は改行を正規化し、160字を上限にして空欄を省略する", async () => {
+  const hook = { event: "test_game_over_reason", target: "", handler: "test_game_over_reason", cond: "", needsAi: false };
+  workerScenario.hooks.push(hook);
+  try {
+    for (const [input, expected] of [
+      [undefined, undefined],
+      [" \r\n ", undefined],
+      ["  原因。\r\n次の行動。\r補足。  ", "原因。\n次の行動。\n補足。"],
+      ["あ".repeat(161), "あ".repeat(160)],
+      ["😀".repeat(81), "😀".repeat(80)]
+    ]) {
+      scenarioHookHandlers.test_game_over_reason = context => context.effectSequence.gameOver(input);
+      const result = await runScenarioHooks(createInitialPlayerState(), { eventId: hook.event });
+      assert.deepEqual(result.presentationSequence, { type: "game_over", ...(expected ? { reasonMessage: expected } : {}) });
+    }
+  } finally {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers.test_game_over_reason;
+  }
+});
+
 test("前景hookはeffectを順番に返し、effectSequence以前の状態だけを保存する", async () => {
   workerScenario.stateVariables.test_effect_before = false;
   workerScenario.stateVariables.test_effect_after = false;

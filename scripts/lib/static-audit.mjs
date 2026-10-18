@@ -56,6 +56,7 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
     }
   }
   const initial = [...initialFiles].map(read).join("\n");
+  const includesInitialText = value => initial.includes(value) || initial.includes(JSON.stringify(value).slice(1, -1));
   if (initial.includes(worker.revision) || initial.includes(worker.transcriptRevision)) failures.push("原本由来のrevision digestがstaticの先行取得範囲にあります。");
   const publicBase = scenarioForParts(worker, ["base"]);
   const initialDefinitionValues = new Set([
@@ -64,6 +65,7 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
     ...publicBase.talkBlocks.flatMap(block => [block.id, block.talkId, block.blockKey, block.part, ...block.messages.map(message => message.id)]),
     ...publicBase.talks.flatMap(talk => [talk.id, talk.publicId, talk.part]),
     ...publicBase.talks.flatMap(talk => leaves({label:talk.label,search:talk.search,avatarUrl:talk.avatarUrl})),
+    ...publicBase.talks.flatMap(talk => talk.rules.filter(rule => rule.type !== "secret").flatMap(rule => leaves(rule.gameOverReason))),
     ...leaves(publicBase.photoDescriptions),
     ...publicBase.contents.flatMap(item => leaves(item.record)),
     ...publicBase.talkBlocks.flatMap(block => block.messages.flatMap(message => [message.body, ...leaves(message.segments), ...leaves(message.quickReplies)])),
@@ -75,9 +77,12 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
   ]);
   for (const rule of worker.talks.flatMap(talk => talk.rules).filter(rule => rule.type === "secret")) {
     if (initial.includes(rule.id)) failures.push("secretの元分岐IDが先行取得範囲にあります。回答前に原文由来の判定値を配布しないでください。");
+    const reason = rule.gameOverReason ?? "";
+    if ((reason.length >= 10 || reason.startsWith("/")) && !initialDefinitionValues.has(reason) && includesInitialText(reason)) failures.push(`secretのゲームオーバー理由が回答前に配布されています: ${JSON.stringify(reason)}`);
   }
   const futureItems = key => worker[key].filter(item => partOf(item) !== "base");
   const future = [
+    ...worker.talks.flatMap(talk => talk.rules).filter(rule => partOf(rule) !== "base").flatMap(rule => leaves(rule.gameOverReason)),
     ...futureItems("talks").flatMap(item => leaves({label:item.label,search:item.search,avatarUrl:item.avatarUrl})),
     ...futureItems("contents").flatMap(item => leaves(worker.photoDescriptions[item.id])),
     ...futureItems("contents").flatMap(item => leaves({ record: contentPayload(item), search: item.search })),
@@ -90,7 +95,7 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
     ...futureItems("assistantMessages").map(item => item.body)
   ];
   for (const value of new Set(future)) {
-    if ((value.length >= 10 || value.startsWith("/")) && !initialDefinitionValues.has(value) && initial.includes(value)) failures.push(`未取得partの値が先行取得範囲へ混入しています: ${JSON.stringify(value)}`);
+    if ((value.length >= 10 || value.startsWith("/")) && !initialDefinitionValues.has(value) && includesInitialText(value)) failures.push(`未取得partの値が先行取得範囲へ混入しています: ${JSON.stringify(value)}`);
   }
   const release = path.posix.dirname(path.posix.dirname(entry.base));
   for (const category of ["parts", "answers"]) {
@@ -113,7 +118,7 @@ export function auditStaticDistribution(directory, worker, hookScripts) {
     }
     for (const rule of part.rules) {
       if (rule.intent || rule.example || rule.notes || (rule.isDefault && rule.criteria)) failures.push(`制作専用の分岐情報が配布されています: ${part.id}`);
-      if (rule.type === "secret" && (!rule.answerIndex || rule.criteria || rule.match || rule.nextBlocks?.length || rule.outputSteps?.length || rule.set?.length || rule.loadParts?.length)) failures.push(`secretの継続が回答前に配布されています: ${part.id}`);
+      if (rule.type === "secret" && (!rule.answerIndex || rule.criteria || rule.match || rule.gameOverReason || rule.nextBlocks?.length || rule.outputSteps?.length || rule.set?.length || rule.loadParts?.length)) failures.push(`secretの継続が回答前に配布されています: ${part.id}`);
     }
     if ((part.definition.lockedContentPasswords ?? []).some(item => !item.answerIndex || item.answers.length || item.loadParts.length)) failures.push(`passwordの正答または継続が先行配布されています: ${part.id}`);
   }

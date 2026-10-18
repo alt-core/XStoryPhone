@@ -9,6 +9,7 @@ import type { LlmProviderEnv, StructuredOutputProvider } from "../providers/stru
 import { hookLlmModelVersion, hookLlmRequestKey, HookLlmUnavailableError, normalizeHookLlmMatchRequest, normalizeHookLlmRequest, resolveHookLlmRequest, type HookLlmRequest } from "./hookLlm.ts";
 import { applyCompactStateAssignments, effectiveStateValues, setStateValue, stateValue } from "../stateValues.ts";
 import { latestTalkDeliveredAt, nextTalkMessageSentAt } from "../talkMessageClock.ts";
+import { MAX_GAME_OVER_REASON_LENGTH } from "../../shared/presentation.ts";
 type ScenarioPresentationTransition = {
   fadeInMs: number;
   holdMs: number;
@@ -508,7 +509,7 @@ export function createScenarioHooksRuntime(runtime: ScenarioRuntime, scenarioHoo
       },
       effectSequence: {
         gameOver(reasonMessage) {
-          const cleanedReasonMessage = reasonMessage?.trim().slice(0, 160);
+          const cleanedReasonMessage = reasonMessage?.replace(/\r\n?/gu, "\n").trim().slice(0, MAX_GAME_OVER_REASON_LENGTH);
           return endWithPresentationSequence({
             type: "game_over",
             ...(cleanedReasonMessage ? { reasonMessage: cleanedReasonMessage } : {})

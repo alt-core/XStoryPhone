@@ -1159,8 +1159,7 @@ export function loadAndValidateScenario(overrides = {}) {
     for (const key of templateKeys(criteria)) {
       if (!Object.hasOwn(stateVariableDefinitions, key)) errors.push(`${label}: criteriaのtemplateが未定義です: {{${key}}}`);
     }
-    const mode = String(row.mode ?? "").trim();
-    if (!["", "stay", "game_over"].includes(mode)) errors.push(`${label}: modeが不正です。`);
+    const { mode, gameOverReason } = row;
     if (searchAgent && mode === "game_over") errors.push(`${label}: search_agentではmode=game_overを使用できません。`);
     const assignments = splitSetStatements(String(row.set ?? ""));
     validateCondition(label, row.cond, stateVariableDefinitions, errors);
@@ -1259,6 +1258,7 @@ export function loadAndValidateScenario(overrides = {}) {
       nextFromId,
       set: assignments,
       mode,
+      ...(gameOverReason ? { gameOverReason } : {}),
       notes: String(row.notes ?? "").trim(),
       example: String(row.example ?? "").trim()
     };

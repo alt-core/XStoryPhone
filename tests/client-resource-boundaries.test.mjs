@@ -53,6 +53,22 @@ test("開始告知は実Svelte描画でもHTMLを実行せず、対応した強�
   assert.match(html, /\*\*未閉鎖/u);
 });
 
+test("ゲームオーバー理由は安全な段落として描画し、復帰表示を理由の下に置く", () => {
+  const html = renderComponent("system/GameOverOverlay.svelte", {
+    visible: true, reasonMessage: "原因。\n<img src=x onerror=alert(1)>。"
+  });
+  assert.equal((html.match(/<button\b/gu) ?? []).length, 1);
+  assert.equal((html.match(/class="reason-paragraph\b/gu) ?? []).length, 2);
+  assert.match(html, /class="reason-paragraph [^"]*\bguidance\b[^"]*">&lt;img/u);
+  assert.doesNotMatch(html, /<img src=x/u);
+  assert.doesNotMatch(html, /。。/u);
+  assert.ok(html.indexOf("game-over-reason") < html.indexOf("retry-label"));
+  assert.ok(html.indexOf("retry-label") < html.indexOf("return-fade"));
+  const withoutReason = renderComponent("system/GameOverOverlay.svelte", { visible: true });
+  assert.doesNotMatch(withoutReason, /game-over-reason|with-reason/u);
+  assert.equal((withoutReason.match(/retry-label/gu) ?? []).length, 1);
+});
+
 for (const [component, props, expected] of [
   ["system/AttachmentImageFrame.svelte", { src: "/media/attachment.webp" }, "/works/story/media/attachment.webp"],
   ["system/UserAvatar.svelte", { src: "/media/avatar.webp" }, "/works/story/media/avatar.webp"],

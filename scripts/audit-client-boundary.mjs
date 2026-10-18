@@ -88,6 +88,7 @@ const protectedValues = new Set([
       match: rule.match,
       example: rule.example,
       notes: rule.notes,
+      gameOverReason: rule.gameOverReason,
       searchQueries: rule.outputSteps
         .filter((step) => step.kind === "search")
         .map((step) => step.queryTemplate)
@@ -142,7 +143,7 @@ for (const relativeBuildDir of process.argv.slice(2)) {
   const bundleFiles = buildFiles.filter((file) => new Set([".css", ".html", ".js"]).has(path.extname(file)));
   const bundle = bundleFiles.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   for (const value of protectedValues) {
-    if (bundle.includes(value)) failures.push(`${relativeBuildDir}: 未到達シナリオ値がclient buildへ混入しています: ${JSON.stringify(value)}`);
+    if (bundle.includes(value) || bundle.includes(JSON.stringify(value).slice(1, -1))) failures.push(`${relativeBuildDir}: 未到達シナリオ値がclient buildへ混入しています: ${JSON.stringify(value)}`);
   }
 }
 

@@ -90,7 +90,9 @@
       return "ゲームオーバーから復帰中";
     }
     if (reasonMessage) {
-      return `ゲームオーバー。${reasonMessage}。ゲームオーバーから復帰`;
+      const reason = reasonMessage.trimEnd();
+      const separator = /[。！？.!?]$/.test(reason) ? "" : "。";
+      return `ゲームオーバー。${reason}${separator}ゲームオーバーから復帰`;
     }
     return "ゲームオーバーから復帰";
   }
@@ -127,24 +129,36 @@
 </script>
 
 {#if visible}
-  <button
+  <div
     class:returning
     class={`game-over-overlay${reasonMessage ? " with-reason" : ""}`}
-    type="button"
-    aria-label={ariaLabel || defaultAriaLabel()}
-    disabled={returning}
-    on:click={dismiss}
   >
-    <span class="game-over-content">
-      {#if imageUrl}
-        <img class="game-over-logo" src={resourceUrl(imageUrl)} alt="" aria-hidden="true" />
-      {:else if titleText}
-        <span class="game-over-title" aria-hidden="true">{titleText}</span>
+    <button
+      class="game-over-scroll"
+      type="button"
+      aria-label={ariaLabel || defaultAriaLabel()}
+      disabled={returning}
+      on:click={dismiss}
+    >
+      <span class="game-over-content">
+        {#if imageUrl}
+          <img class="game-over-logo" src={resourceUrl(imageUrl)} alt="" aria-hidden="true" />
+        {:else if titleText}
+          <span class="game-over-title" aria-hidden="true">{titleText}</span>
+        {/if}
+        {#if reasonMessage}
+          <span class="game-over-reason">
+            {#each reasonMessage.split(/\r\n?|\n/) as paragraph, index}
+              <span class="reason-paragraph" class:guidance={index > 0}>{paragraph}</span>
+            {/each}
+          </span>
+          <span class="retry-label">{label}</span>
+        {/if}
+      </span>
+      {#if !reasonMessage}
+        <span class="retry-label">{label}</span>
       {/if}
-      {#if reasonMessage}
-        <span class="game-over-reason">{reasonMessage}</span>
-      {/if}
-    </span>
+    </button>
     {#each glitchBands as band (band.id)}
       <span
         class="glitch-band"
@@ -152,9 +166,8 @@
         aria-hidden="true"
       ></span>
     {/each}
-    <span class="retry-label">{label}</span>
     <span class="return-fade" aria-hidden="true"></span>
-  </button>
+  </div>
 {/if}
 
 <style>
@@ -178,8 +191,31 @@
     animation: game-over-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
-  .game-over-overlay:disabled {
+  /* 暗転とグリッチの外枠は固定し、操作ボタン内だけをスクロールさせる。 */
+  .game-over-scroll {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+    cursor: inherit;
+  }
+
+  .game-over-scroll:disabled {
     cursor: default;
+  }
+
+  .game-over-overlay.with-reason .game-over-scroll {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-y: auto;
+    padding: max(24px, env(safe-area-inset-top)) 0 max(24px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
   }
 
   .game-over-overlay::before,
@@ -269,6 +305,12 @@
     max-height: 48dvh;
   }
 
+  .game-over-overlay.with-reason .game-over-content {
+    flex-shrink: 0;
+    margin: auto;
+    padding: 0 16px;
+  }
+
   .game-over-title {
     position: relative;
     z-index: 2;
@@ -292,18 +334,41 @@
     position: relative;
     z-index: 2;
     display: block;
-    max-width: min(82vw, 640px);
+    width: min(100%, 420px);
+    padding: 16px 20px;
+    border: 1px solid rgba(230, 247, 244, 0.2);
+    border-radius: 12px;
+    box-sizing: border-box;
     color: rgba(238, 247, 244, 0.9);
-    font-size: clamp(14px, 3.6vw, 17px);
-    font-weight: 700;
-    line-height: 1.7;
+    background: rgba(2, 7, 10, 0.8);
+    font-size: clamp(0.9375rem, 3.6vw, 1rem);
+    font-weight: 400;
+    line-height: 1.75;
     letter-spacing: 0;
-    text-align: center;
+    text-align: left;
     overflow-wrap: anywhere;
+    word-break: auto-phrase;
+    text-wrap: pretty;
     text-shadow:
       0 0 18px rgba(0, 255, 219, 0.18),
       0 8px 28px rgba(0, 0, 0, 0.76);
+    backdrop-filter: blur(12px);
     animation: reason-in 360ms ease-out 380ms both;
+  }
+
+  .reason-paragraph {
+    display: block;
+    min-height: 1.75em;
+    white-space: pre-wrap;
+  }
+
+  .reason-paragraph + .reason-paragraph {
+    margin-top: 0.6em;
+  }
+
+  .reason-paragraph.guidance {
+    color: #8ff3e1;
+    font-weight: 700;
   }
 
   @supports not (height: 100dvh) {
@@ -319,6 +384,7 @@
   }
 
   .retry-label {
+    --retry-offset-x: -50%;
     position: absolute;
     left: 50%;
     bottom: clamp(46px, 14vh, 118px);
@@ -342,9 +408,24 @@
     letter-spacing: 0;
     text-align: center;
     white-space: nowrap;
-    transform: translateX(-50%);
+    transform: translateX(var(--retry-offset-x));
     backdrop-filter: blur(12px);
     animation: retry-in 360ms ease-out 560ms both;
+  }
+
+  .game-over-overlay.with-reason .retry-label {
+    --retry-offset-x: 0%;
+    position: static;
+    box-sizing: border-box;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-height: 480px) {
+    .game-over-overlay.with-reason .game-over-logo {
+      max-height: 30vh;
+      max-height: 30dvh;
+    }
   }
 
   .return-fade {
@@ -455,12 +536,12 @@
   @keyframes retry-in {
     from {
       opacity: 0;
-      transform: translate(-50%, 8px);
+      transform: translate(var(--retry-offset-x), 8px);
     }
 
     to {
       opacity: 1;
-      transform: translate(-50%, 0);
+      transform: translate(var(--retry-offset-x), 0);
     }
   }
 

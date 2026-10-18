@@ -1562,12 +1562,65 @@ test("talk flowのgame_overは一時会話をpresentation sequenceで返す", as
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.presentation?.sequence?.type, "game_over");
+    assert.equal(body.presentation?.sequence?.reasonMessage, "この選択では物語を続けられませんでした。");
     assert.equal(body.presentation?.sequence?.talk.talkId, workerScenario.publicIds.talk.guide);
     assert.ok(body.presentation?.sequence?.talk.messages.some((message) => message.body.includes("メッセージの送受信")));
     assert.equal(store.transcripts.has(`${store.player.id}\0talk:guide`), false);
     assert.deepEqual(store.recordedInputEvents[0]?.responseSnapshot.outputSteps, gameOverRule.outputSteps);
   } finally {
     guide.rules.splice(guide.rules.indexOf(gameOverRule), 1);
+  }
+});
+
+test("server/browserの会話理由は選択したgame_over応答だけに載り、公開状態とtokenへ保存しない", async () => {
+  const originalMode = workerScenario.playerMode;
+  const guide = workerScenario.talks.find(talk => talk.id === "guide");
+  const baseRule = guide.rules.find(rule => rule.from === guide.initialFrom && rule.isDefault);
+  const reason = "終了理由の非公開マーカー36912。\nもう一度、情報を確認しましょう。";
+  const gameOverRule = { ...baseRule, id: "test-game-over-reason", type: "match", criteria: "/^終了理由$/u",
+    isDefault: false, mode: "game_over", gameOverReason: reason };
+  const otherRule = { ...gameOverRule, id: "test-other-game-over-reason", criteria: "/^別の終了$/u", gameOverReason: "別の非公開マーカー59231。" };
+  guide.rules.unshift(gameOverRule, otherRule);
+  const secret = "game-over-reason-browser-secret";
+  try {
+    for (const mode of ["server", "browser"]) {
+      workerScenario.playerMode = mode;
+      const store = new MemoryStore();
+      const app = createApp({ store, config: { appEnv: "development", browserStateSecret: secret, playerInputLogging: false, llm: {} } });
+      let credential;
+      const call = async (route, fields = {}) => {
+        const response = await app.request(`http://localhost/api/${route}`, {
+          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${credential ?? ""}` },
+          body: JSON.stringify({ ...fields, ...(mode === "browser" && credential ? { progressToken: credential } : {}) })
+        });
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        credential = body.playerState?.progressToken ?? body.sessionToken ?? credential;
+        return body;
+      };
+      async function assertPrivateState(body) {
+        const serialized = JSON.stringify(body);
+        for (const marker of ["非公開マーカー36912", "非公開マーカー59231", "gameOverReason"]) assert.equal(serialized.includes(marker), false);
+        const saved = mode === "browser" ? await decodeBrowserProgress(secret, workerScenario.project.id, credential) : store.player;
+        assert.ok(saved);
+        assert.equal(JSON.stringify(saved).includes("非公開マーカー"), false);
+      }
+      const started = await call("session/start", { serialCode: "1234" });
+      await assertPrivateState(started);
+      const before = await call("player-state");
+      await assertPrivateState(before);
+      const control = before.playerState.talks.find(talk => talk.talkId === guide.publicId);
+      const ended = await call("talk/send", { talkId: control.talkId, turnKey: control.turnKey, message: "終了理由" });
+      assert.equal(ended.presentation?.sequence?.type, "game_over");
+      assert.equal(ended.presentation.sequence.reasonMessage, reason);
+      assert.equal(JSON.stringify(ended).includes("非公開マーカー59231"), false);
+      await assertPrivateState({ playerState: ended.playerState });
+      await assertPrivateState(await call("player-state"));
+    }
+  } finally {
+    workerScenario.playerMode = originalMode;
+    guide.rules.splice(guide.rules.indexOf(gameOverRule), 1);
+    guide.rules.splice(guide.rules.indexOf(otherRule), 1);
   }
 });
 

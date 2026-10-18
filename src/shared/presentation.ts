@@ -1,6 +1,9 @@
 import type { AppId } from "./appRegistry.ts";
 import type { ScenarioMessageAttachment } from "./scenario.ts";
 
+// hook と制作表で同じ上限を使う。改行を含む UTF-16 コード単位で数える。
+export const MAX_GAME_OVER_REASON_LENGTH = 160;
+
 export type PublicPresentationMessageSegment =
   | { kind: "text"; text: string }
   | { kind: "link"; text: string; appId: AppId; contentId: string; linkId?: string }

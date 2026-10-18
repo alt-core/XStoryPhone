@@ -556,7 +556,16 @@ test("clear後の遅着応答は進行を復活させず、memoryは保存APIを
 });
 
 test("配布監査は実際の先行取得範囲と秘密locatorを確認する", async t => {
-  const f = await filesFixture(t);
+  const gameOverReason = "後partだけの理由マーカー1736\nまだプレイヤーへ知らせない案内です。";
+  const secretReason = "正答後だけの理由マーカー2869\n取得前の秘密情報です。";
+  const f = await filesFixture(t, ({ worker }) => {
+    const secret = worker.talks.flatMap(talk => talk.rules).find(rule => rule.type === "secret");
+    secret.mode = "game_over";
+    secret.gameOverReason = secretReason;
+    const talk = worker.talks.find(item => item.id === "guide");
+    talk.rules.push({ ...talk.rules.find(rule => rule.isDefault), id: "future-game-over", part: "evidence",
+      isDefault: false, type: "match", criteria: "/^終了$/u", mode: "game_over", gameOverReason });
+  });
   fs.mkdirSync(path.join(f.outputDir, "assets"));
   fs.writeFileSync(path.join(f.outputDir, "index.html"), '<script type="module" src="/assets/main.js"></script>');
   fs.writeFileSync(path.join(f.outputDir, "assets/main.js"), 'console.log("engine");');
@@ -571,6 +580,16 @@ test("配布監査は実際の先行取得範囲と秘密locatorを確認する"
   assert.ok(auditStaticDistribution(f.outputDir, f.scenario.worker).some(error => error.includes("秘密の取得先")));
   fs.writeFileSync(path.join(f.outputDir, "assets/main.js"), 'console.log("未到達の本文マーカー7391");');
   assert.ok(auditStaticDistribution(f.outputDir, f.scenario.worker).some(error => error.includes("先行取得範囲へ混入")));
+  fs.writeFileSync(path.join(f.outputDir, "assets/main.js"), `console.log(${JSON.stringify(gameOverReason)});`);
+  assert.ok(auditStaticDistribution(f.outputDir, f.scenario.worker).some(error => error.includes("後partだけの理由マーカー1736")));
+  fs.writeFileSync(path.join(f.outputDir, "assets/main.js"), `console.log(${JSON.stringify(secretReason)});`);
+  assert.ok(auditStaticDistribution(f.outputDir, f.scenario.worker).some(error => error.includes("secretのゲームオーバー理由")));
+  fs.writeFileSync(path.join(f.outputDir, "assets/main.js"), 'console.log("engine");');
+  const baseFile = path.join(f.outputDir, f.manifest.base);
+  const base = JSON.parse(fs.readFileSync(baseFile, "utf8"));
+  base.rules.find(rule => rule.type === "secret").gameOverReason = "回答前に混入した理由";
+  fs.writeFileSync(baseFile, JSON.stringify(base));
+  assert.ok(auditStaticDistribution(f.outputDir, f.scenario.worker).some(error => error.includes("secretの継続")));
 });
 
 test("複数partの一部取得失敗後も両方を初回通知し、hook行順を取得順へ変えない", async t => {
@@ -635,6 +654,7 @@ test("static保存transactionの途中失敗は状態・履歴・取得済part�
 
 test("secretのgame_overもpart通知とsetを保存し、一時返信・from・完了hookの契約を変えない", async t => {
   let talkId, from;
+  const gameOverReason = "secret到達後だけの理由マーカー5928\n答えを見直してやりなおしてください。";
   const f = await filesFixture(t, scenario => {
     const worker = scenario.worker;
     const talk = worker.talks.find(item => item.id === "guide");
@@ -643,16 +663,21 @@ test("secretのgame_overもpart通知とsetを保存し、一時返信・from・
     worker.talkBlocks.push({ id: blockId, talkId: "guide", blockKey: "static_game_over", part: "evidence", order: 2000,
       messages: [{ id: "game-over-reply", sender: "guide", body: "一時表示の終端返信", attachmentId: "", sentAt: "" }] });
     talk.rules.unshift({ ...worker.talks.find(item => item.id === "search_agent").rules.find(rule => rule.type === "secret"),
-      id: "secret-game-over", from, mode: "game_over", nextFromId: blockId, nextBlocks: [blockId], outputSteps: [{ kind: "block", blockId }] });
+      id: "secret-game-over", from, mode: "game_over", gameOverReason, nextFromId: blockId, nextBlocks: [blockId], outputSteps: [{ kind: "block", blockId }] });
     worker.hooks.push({ event: "talk_turn_completed", target: "guide", cond: "", part: "evidence", order: 2000, handler: "unexpected_completion", needsAi: false });
     scenario.hookScripts.unexpected_completion = 'throw new Error("game_overでは呼ばない");';
   });
+  const base = JSON.parse(fs.readFileSync(path.join(f.outputDir, f.manifest.base), "utf8"));
+  assert.ok(!JSON.stringify(base).includes("secret到達後だけの理由マーカー5928"));
   const execution = createStaticPlayerExecution(f.options);
   await execution.initialize();
   const before = (await request(execution, "/api/session/start")).playerState;
+  assert.ok(!JSON.stringify(before).includes("secret到達後だけの理由マーカー5928"));
   const talk = before.talks.find(item => item.talkId === talkId);
   const result = await request(execution, "/api/talk/send", { talkId, turnKey: talk.turnKey, message: "虹の鍵" });
   assert.equal(result.presentation.sequence.type, "game_over");
+  assert.equal(result.presentation.sequence.reasonMessage, gameOverReason);
+  assert.ok(!JSON.stringify(result.playerState).includes("secret到達後だけの理由マーカー5928"));
   assert.ok(result.presentation.sequence.talk.messages.some(message => message.body === "一時表示の終端返信"));
   assert.equal(result.playerState.projectState.part_seen, true);
   assert.ok(!result.playerState.smsMessages.some(message => message.body === "一時表示の終端返信"));
@@ -661,6 +686,7 @@ test("secretのgame_overもpart通知とsetを保存し、一時返信・from・
   // 同じ入力地点に留まり、同じsecretをもう一度選べる（part通知だけは繰り返さない）。
   const repeated = await request(execution, "/api/talk/send", { talkId, turnKey: result.playerState.talks.find(item => item.talkId === talkId).turnKey, message: "虹の鍵" });
   assert.equal(repeated.presentation.sequence.type, "game_over");
+  assert.equal(repeated.presentation.sequence.reasonMessage, gameOverReason);
   assert.equal(repeated.playerState.searchAgentMessages.filter(message => message.body === "取得完了の案内マーカー8426").length, 1);
 });
 

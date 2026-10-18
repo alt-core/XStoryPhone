@@ -1581,7 +1581,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         effects: publicPresentation(partHooks)?.effects ?? [],
         sequence: {
           type: "game_over",
-          reasonMessage: "この選択では物語を続けられませんでした。",
+          reasonMessage: selection.rule.gameOverReason || "この選択では物語を続けられませんでした。",
           talk: {
             talkId: talk.publicId,
             kind: talk.kind,

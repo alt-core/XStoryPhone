@@ -55,6 +55,14 @@ test("nextの命令・進行mode・状態更新・抽出・part読込みが異�
   }
 });
 
+test("ゲームオーバーの理由が異なる誤選択は同じ結果として受理しない", async () => {
+  const target = alter(rule => ({ ...rule, mode: "game_over", gameOverReason: "同じ理由" }));
+  const input = { ...fixture, mockSelection: decision("help") };
+  assert.equal((await runTalkCase(target, input)).expectationMatch, "equivalent");
+  const changed = { ...target, talks: target.talks.map(talk => ({ ...talk, rules: talk.rules.map(rule => rule.id === "help" ? { ...rule, gameOverReason: "別の理由" } : rule) })) };
+  await assert.rejects(runTalkCase(changed, input), /同等の分岐/u);
+});
+
 test("抽出JSONのkey順や空白だけの差は同等で、抽出条件の差は不一致になる", async () => {
   const target = alter((rule) => ({
     ...rule, match: rule.id === "agree" ? '{"name":"名前","place":"場所"}' : '{ "place": "場所", "name": "名前" }'

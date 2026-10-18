@@ -133,11 +133,17 @@ Quick Replyは入力補助であり、serverの選択肢allowlistではありま
 | `extract` | 名前付き正規表現、またはAI抽出のJSON object |
 | `next` | 表示するblock、全talk共通の`/input`、または検索AI用command。複数はセル内で改行し、通常遷移では最後の無条件blockが次のfromになる |
 | `set` | `;` または改行区切りの状態更新。引用符内は区切らない |
-| `mode` | 空欄、`stay`、`game_over` |
+| `mode` | 空欄、`stay`、`game_over`、または理由付きの `game_over("理由")` |
 | `notes` | 監修用メモ |
 | `example` | 代表入力 |
 
 各fromには`type=default`がちょうど1件必要です。defaultのtextは空欄にします。場面説明は同じtalk/fromの`type=context`行のtextへ書き、`{{state_id}}`を使えます。contextは0〜1行で、cond・intent・example・extract・next・mode・setは使いません。AIを使うfromでは通常AI ruleの`intent / text / example`とdefaultの`example`を記述します。AIを使わないfromへAI用exampleを強制しません。`stay`はfromを動かさず、`game_over`は返信blockを履歴へ保存せず一時表示して、内部のgame-over effect sequenceへ移ります。
+
+ゲームオーバーの理由は既存の`mode`セルへ、`game_over("確認に失敗しました。\n手順を確認して、もう一度答えましょう。")`のように指定します。引数は二重引用符で囲んだJSON文字列を1個だけ受け付けます。改行は`\n`またはセル内の実改行を使えます。引用符を理由に含める場合は`\"`と書きます。引数を省略した`game_over`・`game_over()`、空文字列や空白だけの理由では、従来の「この選択では物語を続けられませんでした。」を表示します。
+
+理由は改行コードをLFへ揃え、前後の空白を除いた後で、改行を含め160 UTF-16コード単位以内にします。絵文字などは1文字で2コード単位になる場合があります。長すぎる理由、引数の不正な記法、`{{state_id}}`などのテンプレート指定はビルドエラーです。
+
+server/browserモードでは、理由文はserver用のruleに保持し、ゲームオーバーへ到達した応答にだけ含めます。到達前の公開bundle・API応答・進行tokenへは含めません。staticモードは既存の設計どおりruleを配布するため、到達前の秘匿を保証しません。画面では理由に下地を付けて左寄せで表示し、改行を段落として扱い、2段落目以降をシアン・太字で強調します。やりなおす表示は理由の下へ並びます。hookの`effectSequence.gameOver(reason)`も同じ画面と160 UTF-16コード単位の上限を使います。`scenario:talk-flow:writer-review`では台詞と合わせて理由文も確認できます。
 
 ここでdefaultが必要なのは、`talk_flow`にfrom行を書く入力地点です。対応するfrom行を一つも書かないblockは、読み取り専用の終点にできます。その地点では投稿できず、Quick Replyも表示しません。後でhookから入力地点へ移すことは可能です。これはserver/browser/static、メッセージ・チャット・検索AIに共通の仕様です。`scenario:talk-flow:writer-review`は、初期位置と通常遷移から到達する終点を確認用に一覧します。会話を続けたい場合のdefault書き忘れに注意してください。
 

@@ -245,7 +245,8 @@ function statusLineForRule(row) {
     return "（同じ状態を維持）";
   }
   if (mode === "game_over") {
-    return "（GAME OVER）";
+    const reason = visibleText(row.gameOverReason);
+    return reason ? `（GAME OVER）\n理由:\n${reason}` : "（GAME OVER）";
   }
   return "";
 }

@@ -6,6 +6,7 @@ export function comparableRuleOutcome(rule) {
   const match = rule.match?.trim() ?? "";
   return {
     mode: rule.mode || "advance",
+    gameOverReason: rule.gameOverReason || "",
     outputSteps: rule.outputSteps ?? [],
     nextFromId: rule.nextFromId ?? "",
     loadParts: rule.loadParts ?? [],

@@ -35,6 +35,45 @@ function withAuthoring(run) {
   }
 }
 
+test("game_overの引数は既存の列構成からworkerだけに生成し、引数なしも受け付ける", () => withAuthoring(({ edit, invoke }) => {
+  const reason = "理由の非公開マーカー62841。\n次の行動を確認しましょう。";
+  edit("talk_flow", (rows, headers) => {
+    assert.equal(headers.includes("game_over_reason"), false);
+    const row = rows.find(row => row.talk === "guide" && row.type === "match");
+    row.mode = `game_over(${JSON.stringify(`  ${reason.replace("\n", "\r\n")}  `)})`;
+  });
+  const result = invoke('console.log(JSON.stringify({reason:result.worker.talks.flatMap(talk=>talk.rules).find(rule=>rule.gameOverReason)?.gameOverReason,client:JSON.stringify([result.deviceState,result.projectConstants])}));');
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.reason, reason);
+  assert.equal(output.client.includes("理由の非公開マーカー62841"), false);
+
+  edit("talk_flow", rows => { rows.find(row => row.talk === "guide" && row.type === "match").mode = "game_over"; });
+  const legacy = invoke('console.log(JSON.stringify(result.worker.talks.flatMap(talk=>talk.rules).some(rule=>rule.gameOverReason)));');
+  assert.equal(legacy.status, 0, legacy.stderr);
+  assert.equal(JSON.parse(legacy.stdout), false);
+}));
+
+test("引数付きgame_overも制作時の理由・context・検索AIの制約を守る", () => withAuthoring(({ edit, invoke }) => {
+  edit("talk_flow", rows => { rows.find(row => row.talk === "guide" && row.type === "match").mode = 'game_over("{{topic}}")'; });
+  assert.match(invoke().stderr, /game_overの理由にはtemplateを指定できません/u);
+  edit("talk_flow", rows => {
+    rows.find(row => row.talk === "guide" && row.type === "match").mode = "stay";
+    rows.find(row => row.type === "context").mode = 'game_over("理由")';
+  });
+  assert.match(invoke().stderr, /contextにmodeは指定できません/u);
+  edit("talk_flow", rows => {
+    rows.find(row => row.type === "context").mode = "";
+    rows.find(row => row.talk === "search_agent" && row.type === "match").mode = 'game_over("理由")';
+  });
+  assert.match(invoke().stderr, /search_agentではmode=game_overを使用できません/u);
+}));
+
+test("理由のために追加した列は制作表のheaderとして受け付けない", () => withAuthoring(({ edit, invoke }) => {
+  edit("talk_flow", (_rows, headers) => headers.push("game_over_reason"));
+  assert.match(invoke().stderr, /未知または廃止済みのheaderです: game_over_reason/u);
+}));
+
 test("案内triggerは対象アプリと文脈を検査し、共通行を未取得partや条件で隠せない", () => withAuthoring(({ edit, invoke }) => {
   edit("assistant_messages", rows => rows.push({id:"event_hint",trigger:"app_unavailable:messages",body:"アプリ案内"}));
   assert.equal(invoke().status,0);

@@ -78,6 +78,7 @@ export type TalkRule = PartOwned & {
   nextFromId: string;
   set: readonly string[];
   mode: "" | "stay" | "game_over";
+  gameOverReason?: string;
   notes: string;
   example: string;
 };
