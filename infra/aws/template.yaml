@@ -112,11 +112,25 @@ Parameters:
   TypesafeLowConfidenceFallback:
     Type: String
     Default: ""
-  ReservedConcurrency:
+  CodeBucketName:
+    Type: String
+    MinLength: 1
+  CodeObjectKey:
+    Type: String
+    AllowedPattern: '^releases/.+$'
+  CodeObjectVersion:
+    Type: String
+    MinLength: 1
+  MaxEnvironments:
     Type: Number
-    Default: 5
+    Default: 2
+    MinValue: 2
+    MaxValue: 10000
+  MaxConcurrencyPerEnvironment:
+    Type: Number
+    Default: 2
     MinValue: 1
-    MaxValue: 100
+    MaxValue: 128
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -124,6 +138,33 @@ Parameters:
 
 Conditions:
   HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
+  HasAllowedOrigins: !Not [!Equals [!Ref AllowedOrigins, ""]]
+  HasBrowserStateSecret: !Not [!Equals [!Ref BrowserStateSecret, ""]]
+  HasAccessCodeSecret: !Not [!Equals [!Ref AccessCodeSecret, ""]]
+  HasLlmApiKey: !Not [!Equals [!Ref LlmApiKey, ""]]
+  HasLlmModel: !Not [!Equals [!Ref LlmModel, ""]]
+  HasLlmBaseUrl: !Not [!Equals [!Ref LlmBaseUrl, ""]]
+  HasLlmTimeoutMs: !Not [!Equals [!Ref LlmTimeoutMs, ""]]
+  HasLlmReasoningEffort: !Not [!Equals [!Ref LlmReasoningEffort, ""]]
+  HasLlmProfileFastModel: !Not [!Equals [!Ref LlmProfileFastModel, ""]]
+  HasLlmProfileFastReasoningEffort: !Not [!Equals [!Ref LlmProfileFastReasoningEffort, ""]]
+  HasLlmProfileFastTimeoutMs: !Not [!Equals [!Ref LlmProfileFastTimeoutMs, ""]]
+  HasLlmProfileSuperModel: !Not [!Equals [!Ref LlmProfileSuperModel, ""]]
+  HasLlmProfileSuperReasoningEffort: !Not [!Equals [!Ref LlmProfileSuperReasoningEffort, ""]]
+  HasLlmProfileSuperTimeoutMs: !Not [!Equals [!Ref LlmProfileSuperTimeoutMs, ""]]
+  HasLlmProfileUltraModel: !Not [!Equals [!Ref LlmProfileUltraModel, ""]]
+  HasLlmProfileUltraReasoningEffort: !Not [!Equals [!Ref LlmProfileUltraReasoningEffort, ""]]
+  HasLlmProfileUltraTimeoutMs: !Not [!Equals [!Ref LlmProfileUltraTimeoutMs, ""]]
+  HasLlmAnalyticsEnabled: !Not [!Equals [!Ref LlmAnalyticsEnabled, ""]]
+  HasLlmDebugLogs: !Not [!Equals [!Ref LlmDebugLogs, ""]]
+  HasLlmResultRetentionDays: !Not [!Equals [!Ref LlmResultRetentionDays, ""]]
+  HasLlmTalkSelector: !Not [!Equals [!Ref LlmTalkSelector, ""]]
+  HasTypesafeApiKey: !Not [!Equals [!Ref TypesafeApiKey, ""]]
+  HasTypesafeModel: !Not [!Equals [!Ref TypesafeModel, ""]]
+  HasTypesafeMinConfidence: !Not [!Equals [!Ref TypesafeMinConfidence, ""]]
+  HasTypesafeAdvanceMinConfidence: !Not [!Equals [!Ref TypesafeAdvanceMinConfidence, ""]]
+  HasTypesafeGameOverMinConfidence: !Not [!Equals [!Ref TypesafeGameOverMinConfidence, ""]]
+  HasTypesafeLowConfidenceFallback: !Not [!Equals [!Ref TypesafeLowConfidenceFallback, ""]]
 
 Resources:
   AppTable:
@@ -174,91 +215,120 @@ Resources:
       SSESpecification:
         SSEEnabled: true
 
-  HttpApi:
-    Type: AWS::Serverless::HttpApi
+  AppFunctionRole:
+    Type: AWS::IAM::Role
     Properties:
-      StageName: $default
-
-  AppFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${EnvironmentName}-api
-      Runtime: nodejs22.x
-      Architectures: [arm64]
-      CodeUri: ../../
-      Handler: src/platform/aws/handler.handler
-      MemorySize: 512
-      Timeout: 30
-      ReservedConcurrentExecutions: !Ref ReservedConcurrency
-      Environment:
-        Variables:
-          APP_ENV: !Ref EnvironmentName
-          ALLOWED_ORIGINS: !Ref AllowedOrigins
-          TABLE_NAME: !Ref AppTable
-          ADMIN_REVIEW_SECRET: !Ref AdminReviewSecret
-          BROWSER_STATE_SECRET: !Ref BrowserStateSecret
-          ACCESS_CODE_SECRET: !Ref AccessCodeSecret
-          PLAYER_INPUT_LOGGING: !Ref PlayerInputLogging
-          LLM_API_KEY: !Ref LlmApiKey
-          LLM_MODEL: !Ref LlmModel
-          LLM_BASE_URL: !Ref LlmBaseUrl
-          LLM_TIMEOUT_MS: !Ref LlmTimeoutMs
-          LLM_REASONING_EFFORT: !Ref LlmReasoningEffort
-          LLM_PROFILE_FAST_MODEL: !Ref LlmProfileFastModel
-          LLM_PROFILE_FAST_REASONING_EFFORT: !Ref LlmProfileFastReasoningEffort
-          LLM_PROFILE_FAST_TIMEOUT_MS: !Ref LlmProfileFastTimeoutMs
-          LLM_PROFILE_SUPER_MODEL: !Ref LlmProfileSuperModel
-          LLM_PROFILE_SUPER_REASONING_EFFORT: !Ref LlmProfileSuperReasoningEffort
-          LLM_PROFILE_SUPER_TIMEOUT_MS: !Ref LlmProfileSuperTimeoutMs
-          LLM_PROFILE_ULTRA_MODEL: !Ref LlmProfileUltraModel
-          LLM_PROFILE_ULTRA_REASONING_EFFORT: !Ref LlmProfileUltraReasoningEffort
-          LLM_PROFILE_ULTRA_TIMEOUT_MS: !Ref LlmProfileUltraTimeoutMs
-          LLM_ANALYTICS_ENABLED: !Ref LlmAnalyticsEnabled
-          LLM_DEBUG_LOGS: !Ref LlmDebugLogs
-          LLM_RESULT_RETENTION_DAYS: !Ref LlmResultRetentionDays
-          LLM_HOOK_MAX_REQUESTS: !Ref LlmHookMaxRequests
-          LLM_TALK_SELECTOR: !Ref LlmTalkSelector
-          TYPESAFE_API_KEY: !Ref TypesafeApiKey
-          TYPESAFE_MODEL: !Ref TypesafeModel
-          TYPESAFE_MIN_CONFIDENCE: !Ref TypesafeMinConfidence
-          TYPESAFE_ADVANCE_MIN_CONFIDENCE: !Ref TypesafeAdvanceMinConfidence
-          TYPESAFE_GAME_OVER_MIN_CONFIDENCE: !Ref TypesafeGameOverMinConfidence
-          TYPESAFE_LOW_CONFIDENCE_FALLBACK: !Ref TypesafeLowConfidenceFallback
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AppTable
-      Events:
-        ApiRoot:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /api
-            Method: ANY
-        ApiProxy:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /api/{proxy+}
-            Method: ANY
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/platform/aws/handler.ts
-        External:
-          - "@aws-sdk/client-dynamodb"
-        Format: cjs
-        Minify: true
-        Sourcemap: false
-        Target: es2022
+        - PolicyName: AppFunctionRolePolicy0
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:DescribeTable
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  - !GetAtt AppTable.Arn
+                  - !Sub ${AppTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt AppWebFunctionLogGroup.Arn
+                  - !GetAtt AppWebFunctionLocalLogGroup.Arn
 
-  AppFunctionLogGroup:
+  AppWebFunctionLogGroup:
     Type: AWS::Logs::LogGroup
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
     Properties:
-      LogGroupName: !Sub /aws/lambda/${AppFunction}
+      LogGroupName: !Sub /aws/lambda/web/${ProjectName}-${EnvironmentName}-web-api
       RetentionInDays: !Ref LogRetentionDays
+
+  AppWebFunctionLocalLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/web/${ProjectName}-${EnvironmentName}-web-api.local
+      RetentionInDays: !Ref LogRetentionDays
+
+  AppWebFunction:
+    Type: AWS::Serverless::WebFunction
+    # SAMが生成するEndpointはRevisionをGetAttで参照し、同じRevisionをDependsOnにも列挙する。
+    # 依存関係は既に満たされるため動作への影響はなく、手書きの設定では重複を除去できない。
+    # lint時はMetadataが本体・Revision・Endpointへ伝播し、この範囲のW3005だけを除外する。
+    # 他資源のW3005と、この3資源の他ルールは引き続き検査する。
+    # SAM側で重複生成が解消されたら、このMetadataと注記を削除する。
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3005
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${EnvironmentName}-web-api
+      Runtime: nodejs24.x
+      EntryPoint: index.cjs
+      CodeUri:
+        Bucket: !Ref CodeBucketName
+        Key: !Ref CodeObjectKey
+        Version: !Ref CodeObjectVersion
+      ExecutionRoleArn: !GetAtt AppFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref AppWebFunctionLogGroup
+      Timeout: 30
+      MaxConcurrencyPerEnvironment: !Ref MaxConcurrencyPerEnvironment
+      ScalingConfig:
+        MaxEnvironments: !Ref MaxEnvironments
+      AuthType: IamAuth
+      EndpointType: HomeRegion
+      EndpointName: !Ref EnvironmentName
+      AutoDeploymentMode: LatestRevision
+      EnvironmentVariables:
+        APP_ENV: !Ref EnvironmentName
+        ALLOWED_ORIGINS: !If [HasAllowedOrigins, !Ref AllowedOrigins, !Ref AWS::NoValue]
+        TABLE_NAME: !Ref AppTable
+        ADMIN_REVIEW_SECRET: !Ref AdminReviewSecret
+        BROWSER_STATE_SECRET: !If [HasBrowserStateSecret, !Ref BrowserStateSecret, !Ref AWS::NoValue]
+        ACCESS_CODE_SECRET: !If [HasAccessCodeSecret, !Ref AccessCodeSecret, !Ref AWS::NoValue]
+        PLAYER_INPUT_LOGGING: !Ref PlayerInputLogging
+        LLM_API_KEY: !If [HasLlmApiKey, !Ref LlmApiKey, !Ref AWS::NoValue]
+        LLM_MODEL: !If [HasLlmModel, !Ref LlmModel, !Ref AWS::NoValue]
+        LLM_BASE_URL: !If [HasLlmBaseUrl, !Ref LlmBaseUrl, !Ref AWS::NoValue]
+        LLM_TIMEOUT_MS: !If [HasLlmTimeoutMs, !Ref LlmTimeoutMs, !Ref AWS::NoValue]
+        LLM_REASONING_EFFORT: !If [HasLlmReasoningEffort, !Ref LlmReasoningEffort, !Ref AWS::NoValue]
+        LLM_PROFILE_FAST_MODEL: !If [HasLlmProfileFastModel, !Ref LlmProfileFastModel, !Ref AWS::NoValue]
+        LLM_PROFILE_FAST_REASONING_EFFORT: !If [HasLlmProfileFastReasoningEffort, !Ref LlmProfileFastReasoningEffort, !Ref AWS::NoValue]
+        LLM_PROFILE_FAST_TIMEOUT_MS: !If [HasLlmProfileFastTimeoutMs, !Ref LlmProfileFastTimeoutMs, !Ref AWS::NoValue]
+        LLM_PROFILE_SUPER_MODEL: !If [HasLlmProfileSuperModel, !Ref LlmProfileSuperModel, !Ref AWS::NoValue]
+        LLM_PROFILE_SUPER_REASONING_EFFORT: !If [HasLlmProfileSuperReasoningEffort, !Ref LlmProfileSuperReasoningEffort, !Ref AWS::NoValue]
+        LLM_PROFILE_SUPER_TIMEOUT_MS: !If [HasLlmProfileSuperTimeoutMs, !Ref LlmProfileSuperTimeoutMs, !Ref AWS::NoValue]
+        LLM_PROFILE_ULTRA_MODEL: !If [HasLlmProfileUltraModel, !Ref LlmProfileUltraModel, !Ref AWS::NoValue]
+        LLM_PROFILE_ULTRA_REASONING_EFFORT: !If [HasLlmProfileUltraReasoningEffort, !Ref LlmProfileUltraReasoningEffort, !Ref AWS::NoValue]
+        LLM_PROFILE_ULTRA_TIMEOUT_MS: !If [HasLlmProfileUltraTimeoutMs, !Ref LlmProfileUltraTimeoutMs, !Ref AWS::NoValue]
+        LLM_ANALYTICS_ENABLED: !If [HasLlmAnalyticsEnabled, !Ref LlmAnalyticsEnabled, !Ref AWS::NoValue]
+        LLM_DEBUG_LOGS: !If [HasLlmDebugLogs, !Ref LlmDebugLogs, !Ref AWS::NoValue]
+        LLM_RESULT_RETENTION_DAYS: !If [HasLlmResultRetentionDays, !Ref LlmResultRetentionDays, !Ref AWS::NoValue]
+        LLM_HOOK_MAX_REQUESTS: !Ref LlmHookMaxRequests
+        LLM_TALK_SELECTOR: !If [HasLlmTalkSelector, !Ref LlmTalkSelector, !Ref AWS::NoValue]
+        TYPESAFE_API_KEY: !If [HasTypesafeApiKey, !Ref TypesafeApiKey, !Ref AWS::NoValue]
+        TYPESAFE_MODEL: !If [HasTypesafeModel, !Ref TypesafeModel, !Ref AWS::NoValue]
+        TYPESAFE_MIN_CONFIDENCE: !If [HasTypesafeMinConfidence, !Ref TypesafeMinConfidence, !Ref AWS::NoValue]
+        TYPESAFE_ADVANCE_MIN_CONFIDENCE: !If [HasTypesafeAdvanceMinConfidence, !Ref TypesafeAdvanceMinConfidence, !Ref AWS::NoValue]
+        TYPESAFE_GAME_OVER_MIN_CONFIDENCE: !If [HasTypesafeGameOverMinConfidence, !Ref TypesafeGameOverMinConfidence, !Ref AWS::NoValue]
+        TYPESAFE_LOW_CONFIDENCE_FALLBACK: !If [HasTypesafeLowConfidenceFallback, !Ref TypesafeLowConfidenceFallback, !Ref AWS::NoValue]
 
   StaticBucket:
     Type: AWS::S3::Bucket
@@ -286,6 +356,15 @@ Resources:
         Name: !Sub ${ProjectName}-${EnvironmentName}-s3
         OriginAccessControlOriginType: s3
         SigningBehavior: always
+        SigningProtocol: sigv4
+
+  ApiOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${ProjectName}-${EnvironmentName}-web-api
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always-amz-auth
         SigningProtocol: sigv4
 
   SpaRewriteFunction:
@@ -322,10 +401,12 @@ Resources:
             S3OriginConfig:
               OriginAccessIdentity: ""
           - Id: ApiOrigin
-            DomainName: !Sub ${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+            DomainName: !GetAtt AppWebFunctionEndpoint.DomainName
+            OriginAccessControlId: !GetAtt ApiOriginAccessControl.Id
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 45
         DefaultCacheBehavior:
           TargetOriginId: StaticOrigin
           ViewerProtocolPolicy: redirect-to-https
@@ -373,4 +454,8 @@ Outputs:
   TableName:
     Value: !Ref AppTable
   ApiEndpoint:
-    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+    Value: !Sub https://${Distribution.DomainName}
+  FunctionArn:
+    Value: !GetAtt AppWebFunction.FunctionArn
+  EndpointArn:
+    Value: !GetAtt AppWebFunctionEndpoint.EndpointArn

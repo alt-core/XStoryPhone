@@ -186,9 +186,10 @@ test("AWSとCloudflareは同じCORS設定を共通AppConfigへ渡しGatewayへ�
   const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
   const template = source("../infra/aws/template.yaml");
   assert.match(template, /AllowedOrigins:\s+Type: String\s+Default: ""/u);
-  assert.match(template, /ALLOWED_ORIGINS: !Ref AllowedOrigins/u);
+  assert.match(template, /HasAllowedOrigins: !Not \[!Equals \[!Ref AllowedOrigins, ""\]\]/u);
+  assert.match(template, /ALLOWED_ORIGINS: !If \[HasAllowedOrigins, !Ref AllowedOrigins, !Ref AWS::NoValue\]/u);
   assert.doesNotMatch(template, /CorsConfiguration:/u);
-  assert.match(source("../src/platform/aws/handler.ts"), /allowedOrigins: process\.env\.ALLOWED_ORIGINS/u);
+  assert.match(source("../src/platform/aws/server.ts"), /allowedOrigins: process\.env\.ALLOWED_ORIGINS/u);
   assert.match(source("../src/worker/index.ts"), /allowedOrigins: env\.ALLOWED_ORIGINS/u);
   const wrangler = JSON.parse(source("../wrangler.jsonc"));
   for (const environment of ["dev", "stg", "prod"]) {

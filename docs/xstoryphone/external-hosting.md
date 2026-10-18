@@ -59,7 +59,7 @@ https://static.example,https://preview.example
 
 CORSは共通サーバーで適用し、GET・POST・OPTIONS、Authorization・Content-Typeを許可します。Cookie認証や `Access-Control-Allow-Credentials` は追加しません。`/api/admin` とその配下は対象外です。監修画面と監修APIはAPIサーバー自身のoriginで利用してください。
 
-CORSは認証や利用人数制限ではありません。BearerやHMACの検証は従来どおりで、Originのない正規CLIも禁止しません。Lambdaの初期化失敗・timeout、GatewayやCloudflare側の制限など、共通サーバーに到達しない応答へのCORS付与は保証しません。API Gatewayへ別のCORS設定を重ねないでください。
+CORSは認証や利用人数制限ではありません。BearerやHMACの検証は従来どおりで、Originのない正規CLIも禁止しません。Web Functionの初期化失敗・timeout、CloudFrontやCloudflare側の制限など、共通サーバーに到達しない応答へのCORS付与は保証しません。配信層へ別のCORS設定を重ねないでください。
 
 ### AWS
 
@@ -73,11 +73,13 @@ npm run deploy:aws:dev -- --api-only
 
 本番では `deploy:aws:prod`、stgでは `deploy:aws:stg` を明示します。上のコマンドはAWSへ実際に配備します。`--api-only` は「静的公開工程を省略する」という意味です。
 
-- 維持する処理: 公開境界監査、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、SAM build/deploy。
-- 省略する処理: クライアントビルド、S3同期、CloudFront invalidation。
-- ヘルスチェック: CloudFormation出力の `ApiEndpoint` に対する `/api/health`。通常配備は従来どおり `SiteUrl` を使います。
+- 維持する処理: 公開境界監査、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、APIのbundle・ZIP作成、非公開コード用S3への配置とWeb Functionの配備・呼出policy確認。
+- 省略する処理: クライアントビルド、静的S3同期、CloudFront invalidation。
+- ヘルスチェック: 通常配備・API-onlyともCloudFront経由の `/api/health`。CloudFormation出力の `ApiEndpoint` と `SiteUrl` はどちらもCloudFrontのbase URLです。
 
 S3・CloudFrontは既存スタックに残ります。既存の静的ファイルを更新・削除せず、外部ホストへもアップロードしません。未知・重複したオプションは処理開始前に拒否します。
+
+`VITE_XSTORYPHONE_API_BASE_URL`にはCloudFrontのURLを指定します。Web Functionのprivate originは直接の接続先にしません。API Gateway構成でexecute-api URLを使っていた外部画面は、同じ静的originと保存prefixを保ったままCloudFrontのURLで再ビルドしてください。接続先の変更を理由に進行データを削除しないでください。既存AWS構成からの初回切替には一時停止があり得るため、[初回切替の確認事項](deployment-aws.md#api-gateway構成からの初回切替)も確認してください。
 
 `ALLOWED_ORIGINS` は配備開始前に検証し、SAMの `AllowedOrigins` parameterへ渡します。未指定・空文字では許可設定を空へ戻すので、継続して利用する値は毎回渡してください。API-onlyでは静的クライアント用の保存設定・API接続先設定を使わず、検証もしません。これらは別途 `build:static` で検証します。
 

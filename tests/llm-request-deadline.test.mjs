@@ -90,24 +90,36 @@ test('並列の抽出標本も同じ時点で中断し、再試行待ちの余�
   assert.equal(calls,3);assert.equal(c.timers.size,0);
 });
 
-test('AWS handlerは入口からの残り時間を使い、要求間で締切を共有しない',async()=>{
-  let now=1_000;const captured=[];
-  const sandbox={exports:{},Date:{now:()=>now},process:{env:{TABLE_NAME:'fixture',LLM_TIMEOUT_MS:'27000'}},require(name){
-    if(name==='@aws-sdk/client-dynamodb')return {DynamoDBClient:class {}};
+test('AWS HTTP入口は要求ごとに27秒の期限を渡し、設定を共有変更しない',async()=>{
+  let now=1_000,listener,shutdown,close,clientDestroyed=false;const captured=[];
+  const sandbox={exports:{},Date:{now:()=>now},process:{
+    env:{TABLE_NAME:'fixture',AWS_LAMBDA_HTTP_ENDPOINT:'127.0.0.1:3000',LLM_TIMEOUT_MS:'27000'},
+    once(event,callback){assert.equal(event,'SIGTERM');shutdown=callback;}
+  },require(name){
+    if(name==='@aws-sdk/client-dynamodb')return {DynamoDBClient:class {destroy(){clientDestroyed=true;}}};
     if(name==='./dynamoStore')return {DynamoStore:class {}};
-    if(name==='../../server/app')return {createApp(dependencies){captured.push(dependencies);return dependencies;}};
-    if(name==='hono/aws-lambda')return {handle:app=>async event=>{await event.wait;return app.config.llm.requestDeadlineMs;}};
+    if(name==='../../server/app')return {createApp(dependencies){captured.push(dependencies);return {
+      async fetch(request){await request.wait;return dependencies.config.llm.requestDeadlineMs;}
+    };}};
+    if(name==='@hono/node-server')return {serve(options){
+      assert.equal(options.hostname,'127.0.0.1');assert.equal(options.port,3000);listener=options.fetch;
+      return {close(callback){close=callback;}};
+    }};
     throw new Error(`未対応import: ${name}`);
   }};
   vm.createContext(sandbox);
-  vm.runInContext(ts.transpileModule(fs.readFileSync(new URL('../src/platform/aws/handler.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
-  let finish;const first=sandbox.exports.handler({wait:new Promise(resolve=>finish=resolve)},{getRemainingTimeInMillis:()=>30_000});
-  now=2_000;
-  assert.equal(await sandbox.exports.handler({},{getRemainingTimeInMillis:()=>8_000}),7_000);
-  assert.equal(await sandbox.exports.handler({},{getRemainingTimeInMillis:()=>900_000}),29_000,'HTTP APIの30秒枠も超えない');
+  vm.runInContext(ts.transpileModule(fs.readFileSync(new URL('../src/platform/aws/server.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
+  let finish;const first=listener({wait:new Promise(resolve=>finish=resolve)});
+  now=2_000;assert.equal(await listener({}),29_000);
   finish();assert.equal(await first,28_000);
   assert.equal(captured[0].store,captured[1].store,'storeは共有する');
-  assert.notEqual(captured[0].config.llm,captured[1].config.llm,'要求の設定は独立する');
+  assert.notEqual(captured[0].config,captured[1].config,'要求のconfigは独立する');
+  assert.notEqual(captured[0].config.llm,captured[1].config.llm,'LLM・生成音声へ渡す期限も独立する');
+  captured[0].config.llm.LLM_MODEL='要求Aだけの変更';
+  now=3_000;assert.equal(await listener({}),30_000);
+  assert.equal(captured[2].config.llm.LLM_MODEL,undefined,'元の設定を書き換えない');
+  shutdown();assert.equal(clientDestroyed,false,'接続を閉じる前にSDKを破棄しない');
+  close();assert.equal(clientDestroyed,true);
 });
 
 test('Jevで使った時間を回付先LLMの待機から引き、期限後のJevも呼ばない',async t=>{

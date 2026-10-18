@@ -1,21 +1,34 @@
 # AWSへの公開
 
-AWS版は、CloudFront、非公開S3、API Gateway HTTP API、Lambda、DynamoDB On-DemandをAWS SAMで作成します。VPC、NAT Gateway、常駐サーバーは使用しません。Cloudflare版と同じクライアント、API、シナリオ処理を使います。
+AWS版は、CloudFront、非公開S3、Lambda Web Functions、DynamoDB On-DemandをAWS SAMで作成します。静的ファイルはS3、`/api/*`はCloudFrontのOrigin Access Control（OAC）を通してWeb Functionへ配信します。API Gateway、VPC、NAT Gatewayは使用しません。Cloudflare版と同じクライアント、API、シナリオ処理を使います。
 
 ## 前提
 
-- Node.js 22.18以降
-- AWS CLI
-- AWS SAM CLI
-- デプロイ先アカウントでCloudFormation、Lambda、API Gateway、DynamoDB、S3、CloudFront、IAM、CloudWatch Logsを作成できる認証情報
+- Node.js 22.18以降（AWS上のAPI実行環境はNode.js 24）
+- `lambda-web`に対応するAWS CLI（2.38.1で動作確認）
+- Web Functionsに対応するAWS SAM CLI（1.169.0で動作確認）と、対応するリソース定義を持つcfn-lint
+- デプロイ先アカウントでCloudFormation、Lambda Web Functions、DynamoDB、S3、CloudFront、IAM、CloudWatch Logsを作成・更新できる認証情報
+
+cfn-lintがWeb Functionのリソースやプロパティを認識しない場合は、`cfn-lint --update-specs`で定義を更新してください。この更新にはネットワーク接続が必要です。認証・認可エラーが出た場合は、別アカウントや別の認証経路へ切り替えず、認証情報と権限を確認してください。
+
+Homebrewで導入したSAM CLIに同梱されたcfn-lintは、次のコマンドで更新できます。
+
+```sh
+"$(brew --prefix aws-sam-cli)/libexec/bin/cfn-lint" --update-specs
+```
 
 初期設定は次のとおりです。
 
 - リージョン: `ap-northeast-1`
-- 公開URL: CloudFront標準ドメイン
+- 公開URLとAPIの接続先: CloudFront標準ドメイン
 - プレイヤー入力ログ: 無効
-- DynamoDBとS3: スタック削除時も保持
-- Lambdaログ: devは7日、stg/prodは14日
+- DynamoDBと静的ファイル用S3: スタック削除時も保持
+- コード用S3とその読取policy: 独立したartifactsスタックで管理し、削除時も保持
+- Web Functionの中央・ローカルログ: devは7日、stg/prodは14日
+
+Web FunctionのoriginはIAM認証とCloudFrontの呼出policyで保護し、署名なしの直接アクセスを拒否します。アプリのAuthorizationはOAC署名と別に維持し、API応答は正常・エラーともCloudFrontでキャッシュしません。クライアントや監修画面の接続先に、private originのURLを指定しないでください。
+
+API配信には`CachingDisabled`と`AllViewerExceptHostHeader`を使い、viewerのHostはoriginへ渡しません。API用OACは`lambda`・`always-amz-auth`・`sigv4`を指定します。アプリのBearer認証をOAC署名へ置き換えたり、認証転送のためにAPIキャッシュを有効にしたりしないでください。
 
 ## ローカル検証
 
@@ -29,7 +42,11 @@ npm run aws:validate
 npm run aws:build
 ```
 
-`npm run aws:validate` と `npm run aws:build` はローカルのSAM CLIを使います。これらはデプロイしません。
+`npm run aws:validate` はローカルのSAM CLIでテンプレートを検証します。`npm run build:aws` は静的クライアントを、`npm run aws:build` はAPIのbundleとZIPを作り、AWS API用の成果物を `.aws-sam/web-api/` に出力します。これらはデプロイしません。Web FunctionのZIPは独自のビルド処理で作るため、`sam build`や`sam package`でローカルCodeUriを処理する手順は使いません。
+
+SAMは生成したEndpointからRevisionを`GetAtt`で参照し、同じRevisionを`DependsOn`にも列挙します。依存関係は正しく保たれますが、cfn-lintはこの重複を`W3005`として警告し、`sam validate --lint`は警告だけでも失敗します。そのため、`AppWebFunction`のresource Metadataで、この警告だけを除外しています。lint時は同じWeb Functionから生成される本体・Revision・Endpointの3資源へ適用され、他資源の`W3005`や、それ以外の検査は維持されます。SAM側の重複生成が解消されたら、この限定除外を削除してください。
+
+APIのZIPにはシナリオや非公開の判定処理を含みます。`.aws-sam/`を静的ホストへ置いたり、静的ファイル用S3へアップロードしたりしないでください。
 
 ## デプロイ
 
@@ -58,7 +75,31 @@ npm run deploy:aws:stg
 npm run deploy:aws:prod
 ```
 
-スクリプトは公開境界監査、静的ビルド、SAM build/deploy、S3同期、CloudFront invalidation、ヘルスチェックを順番に行います。リソース定義の正本は `infra/aws/template.yaml` です。
+スクリプトは公開境界監査、シナリオと静的クライアントのビルド、APIのbundle・ZIP作成、非公開コード用S3への配置、SAM deploy、Web Functionの呼出policy確認、CloudFrontの配備待機とヘルスチェックを行います。APIの確認を通ってから静的S3同期・CloudFront invalidationを行い、最後にヘルスチェックを再実行します。失敗した段階で停止し、後続の静的公開工程へ進みません。リソース定義の正本は、mainスタックの `infra/aws/template.yaml` とコード保管用の `infra/aws/artifacts.yaml` です。
+
+コード保管用スタックはmainスタック名に`-artifacts`を付けた名前です。ZIPは内容hashを使う`releases/`配下へ置き、S3のBucket・Key・Versionを指定して配備します。CloudFormationのテンプレート用ファイルは同じ非公開バケットの`cloudformation/`配下へ分けます。既存のSAM管理バケットの権限や内容は変更しません。
+
+### API Gateway構成からの初回切替
+
+既存のAPI Gateway・従来Lambda構成から切り替える場合は、通常の再配備とは分けて扱います。切替前に既知正常のコード、テンプレート、必要な設定・秘密値と復旧用資材を確保してください。
+
+`--no-execute-changeset`を付けると、APIコードの作成・非公開S3への配置までは行い、mainスタックの変更セットを作成した時点で停止します。変更セットは実行せず、health確認・静的S3同期・invalidationも行いません。`--api-only`と併用できます。
+
+```sh
+npm run deploy:aws:dev -- --no-execute-changeset
+```
+
+方式移行時は未実行変更セットを使い、実行前に人が次を確認してください。
+
+- `AppTable`、`StaticBucket`、`Distribution`のlogical IDと物理資源を維持し、置換しないこと。
+- 既存の実行roleの権限と、旧ログの保持を意図せず失わないこと。
+- 進行データの移行・初期化や、署名秘密値の再生成を行わないこと。
+
+旧ログ資源を削除する場合は、削除差分を適用する前に、その資源の`DeletionPolicy`を`Retain`へ先行更新してください。資源を削除するテンプレートへ後から保持方針を追加しても、旧ログは保護できません。
+
+確認前に変更セットを実行しないでください。確認後は、レビューした変更セットそのものをCloudFormationコンソールまたは`aws cloudformation execute-change-set`で実行します。`UPDATE_COMPLETE`を確認してから、`--no-execute-changeset`を外して同じ配備コマンドを再実行し、呼出policy・health確認・静的公開を完了してください。`--api-only`を使った場合は再実行でも維持します。同じ内容のAPI ZIPは既存のobject versionを再利用するため、不要なuploadやrevisionを作りません。
+
+初回はCloudFrontのorigin切替後にWeb Functionの呼出policyを設定するため、一時的に403になる期間があります。必要なメンテナンス時間を確保してください。無停止や復旧時間は保証しません。通常のWeb Function更新にはこの事前確認操作は不要で、旧新の実行方式を切り替える設定もありません。
 
 ### 外部静的ホストを使う場合
 
@@ -68,13 +109,21 @@ npm run deploy:aws:prod
 ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 ```
 
-`--api-only` は静的クライアントのビルド、S3同期、CloudFront invalidationを省略し、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、SAM build/deployを維持します。ヘルスチェックは `ApiEndpoint` の `/api/health` を使います。既存S3・CloudFront資源は削除せず、外部ホストへのアップロードも行いません。stg・prodでも同じオプションを使えます。
+`--api-only` は静的クライアントのビルド、静的S3同期、CloudFront invalidationを省略し、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、APIのbundle・ZIP作成と配備を維持します。ヘルスチェックは通常配備と同じCloudFrontの `/api/health` を使い、`ApiEndpoint` もCloudFrontのbase URLを返します。既存の静的S3・CloudFront資源は削除せず、外部ホストへのアップロードも行いません。stg・prodでも同じオプションを使えます。
 
 `ALLOWED_ORIGINS` は配備処理の開始前に検証し、SAMの `AllowedOrigins` へ渡します。未指定・空文字での配備は許可設定を空へ戻すため、継続して利用するoriginは毎回渡してください。クライアントを作らないAPI-onlyでは、クライアント用の保存設定や `VITE_XSTORYPHONE_API_BASE_URL` は使用・検証しません。初回導入や `clientRevision` が変わる更新はAPI-onlyだけでは完了しないため、[APIと画面を揃える更新手順](external-hosting.md#更新とclientrevision)も確認してください。
 
 ## 環境設定
 
-環境名、スタック名、同時実行上限、ログ保持日数は `scripts/deploy-aws.mjs` で管理します。`infra/aws/samconfig.toml` はリージョン、変更確認、CloudFormation用S3の解決など、SAM CLIの設定を持ちます。秘密値はどちらのファイルにも記録しません。
+環境名、スタック名、最大環境数、1環境の同時要求上限、ログ保持日数は `scripts/deploy-aws.mjs` で管理します。`infra/aws/samconfig.toml` はリージョンや変更確認など、SAM CLIの設定を持ちます。テンプレートのupload先S3は配備スクリプトが明示します。秘密値はどちらのファイルにも記録しません。
+
+| 環境 | 最大環境数 | 1環境の同時要求上限 | 通常時の積 |
+|---|---:|---:|---:|
+| dev | 2 | 2 | 4 |
+| stg | 2 | 2 | 4 |
+| prod | 2 | 5 | 10 |
+
+最大環境数は常時確保する環境数ではありません。AWSによる調整や運用イベント時の一時超過があるため、表の積は厳密な同時実行数や料金上限を保証しません。待機環境の維持時間や費用削減率も保証しません。
 
 作品ごとにAWS資源を分ける場合は、配備時に`XSTORYPHONE_PROJECT_NAME=my-story`を指定します。未指定は`xstoryphone`で、標準名を維持します。英小文字で始まる小文字英数字・ハイフンの1〜24文字とし、S3の予約prefixは使えません。24文字上限は、S3名へ環境・account・regionを付ける余裕を残すためです。stack名は`my-story-dev`等になります。名前変更は別stackへの配備であり、旧資源やデータを移行・削除しません。
 
@@ -82,7 +131,7 @@ ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 
 コンソール等で直接設定した関連付けを自動で取り込む機能ではありません。本設定へ移す最初の配備では既存のARNを明示してください。
 
-このWAF設定が保護するのはCloudFront経由だけです。公開される`ApiEndpoint`（execute-api）への直接アクセスは保護しません。アクセスコードの総当たりや外部生成費用の上限を、この関連付けだけで保証するものではありません。
+このWAF設定が保護するのはCloudFront経由の通信です。APIの接続先もCloudFrontであり、署名なしでprivate originへ直接アクセスする経路は許可しません。ただし、アクセスコードの総当たりや外部生成費用の上限を、この関連付けだけで保証するものではありません。
 
 プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser/staticで利用でき、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
@@ -114,7 +163,7 @@ export LLM_REASONING_EFFORT='low'              # 任意
 npm run deploy:aws:prod
 ```
 
-このリポジトリの `infra/aws/template.yaml` では、Lambdaの実行時間を30秒に設定しています。AWS handlerは要求ごとに「30秒とLambda残り時間の小さい方から3秒を引いた時点」をLLM共通の締切とします。Jev、回付先のLLM、抽出、hookが同じ締切を使い、各試行は `LLM_TIMEOUT_MS`・profileなどの設定上限と残り時間の小さい方で打ち切ります。締切後は新しい通信を始めず、既存の再送可能なエラーに戻します。hookで明示したfallbackは従来どおりです。この内部値は環境変数ではなく、Cloudflareやローカルの制作試験には設定しません。
+このリポジトリの `infra/aws/template.yaml` では、Web Functionの要求timeoutを30秒に設定しています。AWSのHTTP入口は要求ごとに受付から27秒後を共通の締切とし、保存・応答に3秒の余裕を残します。Jev、回付先のLLM、抽出、hookが同じ締切を使い、各試行は `LLM_TIMEOUT_MS`・profileなどの設定上限と残り時間の小さい方で打ち切ります。並行要求の締切は共有しません。締切後は新しい通信を始めず、既存の再送可能なエラーに戻します。hookで明示したfallbackは従来どおりです。この内部値は環境変数ではなく、Cloudflareやローカルの制作試験には設定しません。
 
 生成音声の投入・照会も同じ絶対期限を使います。予算不足なら保存済みintent/jobと確定した進行を保持してpendingを返し、次の通常の状態取得へ回します。受付済みの外部job IDを保存した後、照会にも残予算を適用します。作品providerにも残り時間・中断signalへの対応が必要です。投入後の受付不明は自動再投入せず、次回のprovider照合・既存のjob期限判定へ回します。契約と責務は[生成音声provider](extensions.md#要求の締切と生成の再開)を参照してください。
 
@@ -124,13 +173,15 @@ hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のう�
 
 会話のrule選択にJevを使う場合は、`LLM_TALK_SELECTOR=typesafe` と `TYPESAFE_API_KEY` を環境変数で渡します。`TYPESAFE_MODEL`、`TYPESAFE_MIN_CONFIDENCE`、`TYPESAFE_ADVANCE_MIN_CONFIDENCE`、`TYPESAFE_GAME_OVER_MIN_CONFIDENCE`、`TYPESAFE_LOW_CONFIDENCE_FALLBACK` は任意です。`TYPESAFE_LOW_CONFIDENCE_FALLBACK=llm`では、LLMの設定も渡します。確信度の低い入力だけはJevとLLMの2回分の待ち時間になります。API keyはCloudFormation上で非表示にします。Jevの1試行は10秒で打ち切ります。意味は[会話エンジン](conversation.md#rule選択にjevを使う)を参照してください。
 
-一つのeventで解決するhook LLM要求の上限は `LLM_HOOK_MAX_REQUESTS`（既定5）です。変更する場合はデプロイ時の環境変数へ設定します。通信retryやmatchの標本数とは別であり、上限内でもLambda全体の実行時間以内に収まるとは限りません。
+一つのeventで解決するhook LLM要求の上限は `LLM_HOOK_MAX_REQUESTS`（既定5）です。変更する場合はデプロイ時の環境変数へ設定します。通信retryやmatchの標本数とは別であり、上限内でも要求の処理時間以内に収まるとは限りません。
 
 GA4による任意の計測を使う場合だけ、デプロイ実行時の環境変数へ `VITE_XSTORYPHONE_GA4_MEASUREMENT_ID` を設定します。未設定または `VITE_XSTORYPHONE_CLIENT_STORAGE=memory` なら外部スクリプトを読み込みません。有効にする場合は、実際の送信内容に合わせてプライバシーポリシーを更新してください。
 
 ## 更新とロールバック
 
-通常の更新は同じ環境のデプロイコマンドを再実行します。LambdaやCloudFormationの更新に問題がある場合は、CloudFormationの直前の正常なテンプレート／コードへGitを戻し、同じコマンドで再デプロイします。
+通常の更新は同じ環境のデプロイコマンドを再実行します。復旧には、既知正常のコード・テンプレート・設定と、API ZIPのS3 Bucket・Key・Versionを使って再配備します。古いWeb Function revisionが残っていることを前提にせず、復旧用ZIPを保持してください。`clientRevision`が変わる復旧では静的クライアントも同じ版へ揃えます。
+
+Web Functionは配備後もコードのobject versionを参照するため、使用中や復旧用のZIP、対応する読取policyを削除しないでください。日数だけを理由に削除する自動処理はありません。コードや読取権限の喪失でrevisionが永久にFailedとなった場合は、資材・権限を復元したうえで新しいrevisionを配備します。復旧のために進行データや署名秘密値を初期化しません。
 
 静的ファイルだけを戻す場合は、正常なコミットで `npm run build:aws` を行い、対象バケットへ再同期してCloudFront invalidationを作成します。
 
@@ -142,7 +193,9 @@ CloudFormationスタックはSAM CLIで削除できます。
 sam delete --stack-name xstoryphone-dev --config-file infra/aws/samconfig.toml --config-env dev
 ```
 
-DynamoDBテーブルとS3バケットは誤消去防止のため保持されます。完全に削除する場合は、必要なバックアップを確認したうえで、それぞれを明示的に削除してください。この操作は復元困難なので、対象の環境名とAWSアカウントを必ず確認してください。
+DynamoDBテーブルと静的S3バケットは誤消去防止のため保持されます。コード保管用の`xstoryphone-dev-artifacts`スタックは別に管理され、mainスタックを削除しても残ります。そのスタックを削除する場合も、コード用S3と読取policyは保持されます。
+
+完全に削除する場合は、必要なバックアップと使用中・復旧用revisionを確認したうえで、保持資源をそれぞれ明示的に削除してください。ZIPのobject versionを消すと、稼働中のWeb Functionも利用不能になる場合があります。この操作は復元困難なので、対象の環境名とAWSアカウントを必ず確認してください。
 
 ## 初期範囲外
 
