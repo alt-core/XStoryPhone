@@ -11,6 +11,7 @@ const source = readFileSync(new URL("../src/client/system/audioEngine.ts", impor
 function audioHarness(resolveUrl = resourceUrl) {
   const howls = [];
   const frames = new Map();
+  const warnings = [];
   let serial = 0;
   let frameSerial = 0;
   class FakeHowl {
@@ -23,27 +24,43 @@ function audioHarness(resolveUrl = resourceUrl) {
     }
     state() { return "loaded"; }
     duration() { return 2; }
-    once(name, callback) { return this.on(name, callback); }
-    on(name, callback) {
-      this.events.set(name, [...(this.events.get(name) ?? []), callback]);
+    once(name, callback, id) { return this.on(name, callback, id, true); }
+    on(name, callback, id, once = false) {
+      this.events.set(name, [...(this.events.get(name) ?? []), { callback, id, once }]);
       return this;
     }
-    off(name, callback) {
-      this.events.set(name, (this.events.get(name) ?? []).filter((entry) => entry !== callback));
+    off(name, callback, id) {
+      this.events.set(name, (this.events.get(name) ?? []).filter((entry) => (
+        (callback && entry.callback !== callback) || (id !== undefined && entry.id !== id)
+      )));
       return this;
     }
-    play() { return this.soundId = ++serial; }
+    emit(name, id) {
+      for (const entry of [...(this.events.get(name) ?? [])]) {
+        if (entry.id !== undefined && entry.id !== id) continue;
+        if (entry.once) this.off(name, entry.callback, entry.id);
+        entry.callback(id);
+      }
+    }
+    play() { this.isPlaying = true; return this.soundId = ++serial; }
     loop() {}
-    playing() { return true; }
+    playing(id) { return this.isPlaying && (id === undefined || id === this.soundId); }
     seek() { return this.position; }
-    stop() { this.stopCount += 1; }
+    stop(id) {
+      this.stopCount += 1;
+      if (id !== undefined && id !== this.soundId) return this;
+      this.isPlaying = false;
+      this.emit("stop", this.soundId);
+      return this;
+    }
     end() {
       this.position = 2;
-      for (const callback of [...(this.events.get("end") ?? [])]) callback(this.soundId);
+      this.isPlaying = false;
+      this.emit("end", this.soundId);
     }
   }
   const sandbox = {
-    exports: {}, console,
+    exports: {}, console: { ...console, warn(...args) { warnings.push(args); } },
     require(name) {
       if (name === "./resourceUrls.ts") return { resourceUrl: resolveUrl };
       assert.equal(name, "howler");
@@ -61,7 +78,7 @@ function audioHarness(resolveUrl = resourceUrl) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText, sandbox);
   return {
-    api: sandbox.exports, howls, frames,
+    api: sandbox.exports, howls, frames, warnings,
     tick() {
       const pending = [...frames.values()];
       frames.clear();
@@ -155,7 +172,7 @@ test("複数segmentの境界cueとticker通知済みcueは旧endの重複でも�
   howls[0].position = 1;
   tick();
   assert.deepEqual(events, ["cue1"]);
-  const staleEnd = [...howls[0].events.get("end")];
+  const staleEnd = howls[0].events.get("end").map((entry) => entry.callback);
   howls[0].end();
   staleEnd.forEach((callback) => callback(howls[0].soundId));
   assert.deepEqual(events, ["cue1", "cue2"]);
@@ -176,4 +193,78 @@ test("最後のcueで新再生を始めても旧完了は新再生を停止し�
   await replacement;
   assert.equal(ended, false);
   assert.equal(api.isAudioPlaybackActive("new"), true);
+});
+
+test("通常停止は一度だけ音源を止め、購読・tickerを外してonStopを一度通知する", async () => {
+  const { api, howls, frames } = audioHarness();
+  const stops = [];
+  await api.playAudio({
+    id: "normal-stop", segments: [{ url: "/one.wav" }],
+    onStop(reason) { stops.push(reason); }
+  });
+  const howl = howls[0];
+
+  api.stopAudioPlayback("操作停止", "normal-stop");
+  api.stopAudioPlayback("重複停止");
+
+  assert.equal(howl.stopCount, 1);
+  assert.equal(howl.playing(howl.soundId), false);
+  assert.equal([...howl.events.values()].flat().length, 0);
+  assert.equal(api.isAudioPlaybackActive(), false);
+  assert.equal(frames.size, 0);
+  assert.deepEqual(stops, ["操作停止"]);
+});
+
+test("停止通知後に配信済みの古いcallbackが届いても停止・UI通知を繰り返さない", async () => {
+  const { api, howls, frames, warnings } = audioHarness();
+  const events = [];
+  await api.playAudio({
+    id: "late-callback", segments: [{ url: "/one.wav" }],
+    onStarted() { events.push("開始"); }, onEnded() { events.push("完了"); },
+    onStop() { events.push("停止"); }, onError() { events.push("エラー"); }
+  });
+  const howl = howls[0];
+  const oldCallbacks = [...howl.events.values()].flat().map((entry) => entry.callback);
+  const stoppingCallbacks = [];
+  const originalStop = howl.stop.bind(howl);
+  howl.stop = (id) => {
+    stoppingCallbacks.push(...[...howl.events.values()].flat().map((entry) => entry.callback));
+    return originalStop(id);
+  };
+
+  api.stopAudioPlayback();
+  assert.ok(stoppingCallbacks.length > 0);
+  for (const callback of [...oldCallbacks, ...stoppingCallbacks]) {
+    callback(howl.soundId, new Error("遅延した通知"));
+  }
+
+  assert.equal(howl.stopCount, 1);
+  assert.equal([...howl.events.values()].flat().length, 0);
+  assert.equal(api.isAudioPlaybackActive(), false);
+  assert.equal(frames.size, 0);
+  assert.deepEqual(events, ["開始", "停止"]);
+  assert.deepEqual(warnings, []);
+});
+
+test("音源停止の同期例外は警告に留め、tickerの解除とonStop通知を完了する", async () => {
+  const { api, howls, frames, warnings } = audioHarness();
+  const stops = [];
+  await api.playAudio({
+    id: "failed-stop", segments: [{ url: "/one.wav" }],
+    onStop(reason) { stops.push(reason); }
+  });
+  const howl = howls[0];
+  const stopError = new Error("停止APIの同期例外");
+  howl.stop = () => { howl.stopCount += 1; throw stopError; };
+
+  assert.doesNotThrow(() => api.stopAudioPlayback("操作停止"));
+
+  assert.equal(howl.stopCount, 1);
+  assert.equal([...howl.events.values()].flat().length, 0);
+  assert.equal(api.isAudioPlaybackActive(), false);
+  assert.equal(frames.size, 0);
+  assert.deepEqual(stops, ["操作停止"]);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], "[audioEngine:stop]");
+  assert.equal(warnings[0][1], stopError);
 });

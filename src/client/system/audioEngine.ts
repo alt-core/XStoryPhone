@@ -504,11 +504,50 @@ function stopActivePlayback(reason: string, emitStop: boolean) {
 
 function releaseSoundRef(playback: ActivePlayback, soundRef: ActiveSound) {
   forgetSoundRef(playback, soundRef);
+  stopHowlSound(soundRef.howl, soundRef.soundId);
+}
+
+function stopHowlSound(howl: Howl, soundId: number) {
+  let finished = false;
+
+  const finishStop = () => {
+    if (finished) return;
+    finished = true;
+    try {
+      howl.off("play", retryStop);
+      howl.off("playerror", handlePlayError);
+      howl.off("stop", finishStop, soundId);
+    } catch (error) {
+      warnNonFatalAudioError("stop_cleanup", error);
+    }
+  };
+  const retryStop = () => {
+    if (finished) return;
+    try {
+      howl.stop(soundId);
+    } catch (error) {
+      finishStop();
+      warnNonFatalAudioError("stop", error);
+    }
+  };
+  const handlePlayError = (failedSoundId: number) => {
+    retryStop();
+    // 拒否されたSoundは別IDで再利用され得るため、旧IDのstop通知だけを待たない。
+    if (failedSoundId === soundId) finishStop();
+  };
+
+  // 読み込み待ちではplaying()がfalseでも停止未完了。通知を先に購読する。
+  // 別IDの開始でもHowl共通の待機が解けるため、再試行の契機はIDで限定しない。
+  howl.on("play", retryStop);
+  howl.on("playerror", handlePlayError);
+  howl.on("stop", finishStop, soundId);
   try {
-    soundRef.howl.stop(soundRef.soundId);
+    // stopが保留されても、遅れて届くループ末尾の処理で再開させない。
+    howl.loop(false, soundId);
   } catch (error) {
-    warnNonFatalAudioError("stop", error);
+    warnNonFatalAudioError("loop", error);
   }
+  retryStop();
 }
 
 function forgetSoundRef(playback: ActivePlayback, soundRef: ActiveSound) {
