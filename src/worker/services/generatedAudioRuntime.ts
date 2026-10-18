@@ -1,9 +1,59 @@
 import type { PublicGeneratedAudioState } from "../../shared/scenario.ts";
 import type { AppStore, GeneratedAudioJob } from "../../server/store.ts";
-import { generatedAudioProvider, type GeneratedAudioProviderResult } from "../providers/generatedAudio.ts";
+import {
+  GENERATED_AUDIO_ACCEPTANCE_UNKNOWN_ERROR_CODE, GeneratedAudioRequestDeferredError,
+  generatedAudioProvider, type GeneratedAudioProvider, type GeneratedAudioProviderResult, type GeneratedAudioRequestBudget
+} from "../providers/generatedAudio.ts";
 import type { ScenarioRuntime } from "../scenarioRuntime.ts";
 // 定義はこの実行単位に閉じ込め、別プレイヤーの処理と共有変更しない。
-export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"workerScenario">) {
+export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"workerScenario">, options: { requestDeadlineMs?: number } = {}) {
+  const requestDeadlineMs = Number.isFinite(options.requestDeadlineMs) ? options.requestDeadlineMs : undefined;
+  const deferredJobs = new Set<string>();
+  type ProviderOutcome = { kind: "result"; result: GeneratedAudioProviderResult }
+    | { kind: "deferred"; reason?: "not_sent" | "acceptance_unknown" };
+
+  async function callProvider(provider: GeneratedAudioProvider, operation: "enqueue" | "reconcile", playerId: string, job: GeneratedAudioJob,
+    call: (requestBudget?: GeneratedAudioRequestBudget) => Promise<GeneratedAudioProviderResult>): Promise<ProviderOutcome> {
+    const key = `${playerId}\0${job.id}`;
+    if (deferredJobs.has(key) || (operation === "enqueue" && job.errorCode === GENERATED_AUDIO_ACCEPTANCE_UNKNOWN_ERROR_CODE)) {
+      return { kind: "deferred" };
+    }
+    // 固定音声は外部通信をしないため、要求期限にかかわらず即座に利用可能にする。
+    const deadlineMs = provider.id === "static" ? undefined : requestDeadlineMs;
+    const startedAt = Date.now();
+    const remainingMs = deadlineMs === undefined ? undefined : deadlineMs - startedAt;
+    const declaredMinimum = provider.minimumRequestBudgetMs?.[operation];
+    const minimumMs = typeof declaredMinimum === "number" && Number.isFinite(declaredMinimum) ? Math.max(0, declaredMinimum) : 0;
+    if (remainingMs !== undefined && (remainingMs <= 0 || remainingMs < minimumMs)) {
+      deferredJobs.add(key);
+      console.log("[generated_audio:deferred]", { audioId: job.audioId, provider: provider.id, operation, reason: "insufficient_budget", remainingMs });
+      return { kind: "deferred", reason: "not_sent" };
+    }
+    const controller = deadlineMs === undefined ? undefined : new AbortController();
+    const timer = controller && remainingMs !== undefined
+      ? setTimeout(() => controller.abort(new DOMException("生成音声の要求期限を超過しました。", "TimeoutError")), remainingMs) : undefined;
+    try {
+      const result = await call(controller && deadlineMs !== undefined ? { deadlineMs, signal: controller.signal } : undefined);
+      return { kind: "result", result };
+    }
+    catch (error) {
+      const budgetExpired = deadlineMs !== undefined && (controller?.signal.aborted || Date.now() >= deadlineMs);
+      const reason = error instanceof GeneratedAudioRequestDeferredError ? error.reason
+        : budgetExpired
+          ? operation === "enqueue" ? "acceptance_unknown" : "not_sent" : undefined;
+      if (!reason) throw error;
+      if (deadlineMs !== undefined) deferredJobs.add(key);
+      console.log("[generated_audio:deferred]", { audioId: job.audioId, provider: provider.id, operation, reason, elapsedMs: Date.now() - startedAt });
+      return { kind: "deferred", reason };
+    }
+    finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+  function deferredJob(job: GeneratedAudioJob, operation: "enqueue" | "reconcile", outcome: Extract<ProviderOutcome, { kind: "deferred" }>) {
+    return operation === "enqueue" && outcome.reason === "acceptance_unknown" && !job.externalJobId && !job.outputKey
+      ? { ...job, errorCode: GENERATED_AUDIO_ACCEPTANCE_UNKNOWN_ERROR_CODE } : job;
+  }
   async function sha256(value: string) {
     const bytes = new TextEncoder().encode(value);
     const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -74,8 +124,11 @@ export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"worke
     const provider = definition ? generatedAudioProvider(job.provider) : null;
     if (!definition || !provider)
       return job;
-    const result = await provider.enqueue({ definition, inputText: job.inputText, jobId: job.id, createdAt: job.createdAt });
-    const next = applyProviderResult(job, result);
+    const outcome = await callProvider(provider, "enqueue", playerId, job, (requestBudget) => provider.enqueue({
+      definition, inputText: job.inputText!, jobId: job.id, createdAt: job.createdAt, ...(requestBudget ? { requestBudget } : {})
+    }));
+    const next = outcome.kind === "result" ? applyProviderResult(job, outcome.result) : deferredJob(job, "enqueue", outcome);
+    if (JSON.stringify(next) === JSON.stringify(job)) return await store.generatedAudioJob(playerId, job.audioId) ?? job;
     return await store.updateGeneratedAudioJob(playerId, next) ? next : await store.generatedAudioJob(playerId, job.audioId);
   }
   async function retryGeneratedAudio(store: AppStore, playerId: string, audioId: string, expectedId: string) {
@@ -98,11 +151,14 @@ export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"worke
       if (!definition || !provider) {
         continue;
       }
-      let result;
+      // 受付不明の依頼は再投入せず、providerの安全な照合・期限判定へ渡す。
+      const operation = row.status === "queued" && !row.externalJobId && !row.outputKey && row.inputText
+        && row.errorCode !== GENERATED_AUDIO_ACCEPTANCE_UNKNOWN_ERROR_CODE ? "enqueue" : "reconcile";
+      let outcome: ProviderOutcome;
       try {
-        result = row.status === "queued" && !row.externalJobId && !row.outputKey && row.inputText
-          ? await provider.enqueue({ definition, inputText: row.inputText, jobId: row.id, createdAt: row.createdAt })
-          : await provider.reconcile({
+        outcome = await callProvider(provider, operation, playerId, row, (requestBudget) => operation === "enqueue"
+          ? provider.enqueue({ definition, inputText: row.inputText!, jobId: row.id, createdAt: row.createdAt, ...(requestBudget ? { requestBudget } : {}) })
+          : provider.reconcile({
             definition,
             job: {
               id: row.id,
@@ -111,8 +167,9 @@ export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"worke
               outputKey: row.outputKey,
               status: row.status,
               createdAt: row.createdAt
-            }
-          });
+            },
+            ...(requestBudget ? { requestBudget } : {})
+          }));
       }
       catch (error) {
         // 作品固有providerの一時障害で、端末全体の状態取得を止めない。
@@ -123,7 +180,7 @@ export function createGeneratedAudioRuntime(runtime: Pick<ScenarioRuntime,"worke
         });
         continue;
       }
-      const next = applyProviderResult(row, result);
+      const next = outcome.kind === "result" ? applyProviderResult(row, outcome.result) : deferredJob(row, operation, outcome);
       if (JSON.stringify(next) === JSON.stringify(row)) {
         // 照会中に別requestが完了していた場合も、古いpendingを画面へ戻さない。
         rows[index] = await store.generatedAudioJob(playerId, row.audioId) ?? row;

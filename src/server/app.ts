@@ -57,7 +57,9 @@ export function createApp(dependencies: AppDependencies) {
     const [method, path] = key.split(" ");
     outer.on(method, path, async c => {
       const parts = createPartSession(workerScenario, scenarioHookHandlers);
-      const operations = createPlayerOperations(parts.runtime, parts.hooks, createGeneratedAudioRuntime(parts.runtime), undefined, parts);
+      // LLMと同じ絶対期限を使い、見送りの記録はこの要求のruntime内に閉じる。
+      const audio = createGeneratedAudioRuntime(parts.runtime, { requestDeadlineMs: dependencies.config.llm.requestDeadlineMs });
+      const operations = createPlayerOperations(parts.runtime, parts.hooks, audio, undefined, parts);
       const result = await operations.execute(key, {
         hostname: new URL(c.req.url).hostname,
         authorization: c.req.header("authorization"),

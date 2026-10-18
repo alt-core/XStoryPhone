@@ -116,6 +116,8 @@ npm run deploy:aws:prod
 
 このリポジトリの `infra/aws/template.yaml` では、Lambdaの実行時間を30秒に設定しています。AWS handlerは要求ごとに「30秒とLambda残り時間の小さい方から3秒を引いた時点」をLLM共通の締切とします。Jev、回付先のLLM、抽出、hookが同じ締切を使い、各試行は `LLM_TIMEOUT_MS`・profileなどの設定上限と残り時間の小さい方で打ち切ります。締切後は新しい通信を始めず、既存の再送可能なエラーに戻します。hookで明示したfallbackは従来どおりです。この内部値は環境変数ではなく、Cloudflareやローカルの制作試験には設定しません。
 
+生成音声の投入・照会も同じ絶対期限を使います。予算不足なら保存済みintent/jobと確定した進行を保持してpendingを返し、次の通常の状態取得へ回します。受付済みの外部job IDを保存した後、照会にも残予算を適用します。作品providerにも残り時間・中断signalへの対応が必要です。投入後の受付不明は自動再投入せず、次回のprovider照合・既存のjob期限判定へ回します。契約と責務は[生成音声provider](extensions.md#要求の締切と生成の再開)を参照してください。
+
 3秒は保存・応答のための余裕であり、DBの遅延や作品側の独自処理まで含めた完了保証ではありません。match抽出は初回2標本を並列実行し、必要なら追加標本を順次取得するため、LLMを使う作品は必要な経路を実環境で確認してください。この締切は本リポジトリのAWS構成に合わせた値で、AWS全体の上限を示すものではありません。
 
 hookのprofileを使う場合は`LLM_PROFILE_FAST_* / SUPER_* / ULTRA_*`のうち必要な項目だけを設定します。`LLM_ANALYTICS_ENABLED=true`は本文なしのusage log、`LLM_DEBUG_LOGS=true`は入力・prompt・応答を含む調査用logです。debugは調査後にfalseへ戻してください。`LLM_RESULT_RETENTION_DAYS`はserver hook LLM cacheの保持日数で、未指定時は30日です。DynamoDBのcache itemは同じplayer partitionに保存され、期限判定に加えてTTLで遅延削除されます。

@@ -26,11 +26,27 @@ export const projectGeneratedAudioProviders = [myTtsProvider];
 
 次に `gen_audio` シートの `provider` を同じIDへ変更します。server/browserモードのhookから `context.genAudio.prepare(id, { inputText })` を呼ぶと、CloudflareではD1、AWSではDynamoDBを使う共通ジョブ管理へ接続されます。browserでも外部生成を使う場合だけ、補助jobをDBへ保存します。進行と履歴の保存先は変えず、外部生成を準備していない作品や固定音声だけのbrowser作品ではjob DBへアクセスしません。staticモードでは外部生成を行わず、固定音声を使います。
 
-`enqueue`には`jobId`と`createdAt`、`reconcile`のjobにも`createdAt`が渡ります。providerは有限の通信timeoutと短い再試行を持ち、再試行後に受け付けられなければfailedを返してください。待機の終了期限は作品側で決めます。成果物の完成を確認できるならreadyを優先し、確認不能のまま期限を超えた場合はfailedとします。queued/runningでは、次に照合できる外部job ID等を返してください。外部APIの応答本文や秘密値をerrorCodeへ入れず、短い識別コードにします。
+`enqueue`には`jobId`と`createdAt`、`reconcile`のjobにも`createdAt`が渡ります。providerは有限の通信timeoutと短い再試行を持ち、生成・照合を続けられない場合はfailedを返してください。要求予算による見送り・中断は下記の契約で区別します。jobの待機終了期限は作品側で決めます。成果物の完成を確認できるならreadyを優先し、確認不能のままjobの期限を超えた場合はfailedとします。queued/runningでは、次に照合できる外部job ID等を返してください。外部APIの応答本文や秘密値をerrorCodeへ入れず、短い識別コードにします。
 
 `gen_audio.fallback`へaudio attachment IDを指定すると、生成に失敗した場合だけ代替音声を使います。任意列であり、未指定なら失敗を表示します。素材URLは定義へコピーせず、利用時に取得済みpartから解決します。音声完了が進行条件になる作品では、代替音声か別の進行経路を用意してください。
 
 準備中は通常の状態取得で照合し、約15秒後を次回取得の目安にします。ブラウザー休止や通信失敗を含む厳密な時刻保証ではありません。明示的な自動再生は同じ画面・対象で準備が完了するまで待ち、対象変更・停止・画面離脱で取り消します。準備完了だけで未指示の音声を再生しません。
+
+### 要求の締切と生成の再開
+
+AWSでは、LLMと同じ要求の絶対期限を生成音声runtimeへ渡します。期限と見送りの記録はそのHTTP要求内だけに置き、job・browser token・providerの共有変数には保存しません。予算不足で外部通信を見送ると、保存済みqueued/runningを返し、同じ要求の応答生成ではそのjobを再投入・照会しません。次の通常の状態取得は新しい要求予算で同じintent/jobを継続します。受付済みの外部IDは照会より先に保存し、その後の照会も残予算が十分なら従来どおり実行します。期限を渡さない環境の呼出方法と、固定音声の即時採用は従来どおりです。
+
+providerは`minimumRequestBudgetMs: { enqueue: 投入開始に必要なミリ秒, reconcile: 照会開始に必要なミリ秒 }`を任意に宣言できます。coreは残り時間が0以下、またはその操作の必要時間未満なら、providerを呼ばずに元のjobを保持します。未指定の操作は残り時間が正なら呼びます。外部受付が不明になるほど短いPOSTを始めないための値であり、provider固有の秒数をcoreへ埋め込みません。
+
+要求期限があるとき、`enqueue/reconcile`の入力には`requestBudget: { deadlineMs, signal }`も渡ります。providerは各通信の上限を自身のtimeoutと`deadlineMs - Date.now()`の小さい方にし、`signal`をfetchと再試行待機へ伝え、追加試行の前にも残り時間を確認してください。本文受信も上限に含めます。coreはproviderがこの契約に従うことを前提とし、応答済みの外部IDを捨てるための競争的なtimeoutは使いません。
+
+予算不足をprovider内で検出した場合は、`src/worker/providers/generatedAudio.ts`の`GeneratedAudioRequestDeferredError`を投げ、`not_sent`（まだ送っていない）と`acceptance_unknown`（送信後、受付結果が不明）を区別します。送信後の受付不明は、要求期限前の通信例外でも`acceptance_unknown`として扱ってください。送信前の予算不足だけでfailedを返さないでください。providerが明示したfailedはsignalが中断済みでも採用します。照会の予算中断は既存jobを保持し、次の要求で同じjobを照会します。
+
+投入の受付不明は既存jobの`errorCode`へ記録し、次の通常の状態取得では`enqueue`を再実行せず`reconcile`へ渡します。この場合は外部IDがnullでも、元の`job.id`と`createdAt`を使って安全な照合・jobの期限判定を行ってください。従来は外部IDが必ずあると仮定していたproviderも、この入力を扱う必要があります。`reconcile`から新しい生成を投入してはいけません。受付の照合に非対応のproviderは、例外を投げ続けずfailedを返します。安全に照合を続けられる場合だけ`GeneratedAudioRequestDeferredError("acceptance_unknown")`で次回へ回し、既存のjob期限を超えたらfailedにします。外部ID等のないqueued/runningを結果として返すと、不正な結果としてfailedへ変換されます。
+
+運営は失敗jobを確認し、必要なときだけ下記の明示的な再試行を使えます。外部処理のexactly-once、同じ未投入intentへの並行受付の排他、二重課金ゼロを保証する契約ではありません。受付IDや受付不明の保存自体が失敗した場合の再投入もあり得るため、既存どおりproviderは同じ依頼を冪等に扱ってください。
+
+要求の見送りで`createdAt`やjobの期限を更新しません。未投入intentにも元の`createdAt`が渡るため、providerは自身の有効期限を投入前に確認し、期限切れの外部jobを新しく作らないでください。通常ログには段階・時間・固定の理由コードだけを残し、入力・台本・参照key・生成前URLを追加しません。
 
 ラジオの`playback_cond`が成立する前は、音声URLと字幕を返しません。タイトルや投稿フォームまで非公開にする条件ではありません。また、同じ生成音声を先に到達できる通話履歴等から参照すれば、その経路で取得できます。作品全体の到達条件とpartの配置も合わせて確認してください。
 

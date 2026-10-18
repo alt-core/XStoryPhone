@@ -360,6 +360,19 @@ test("DynamoDBの音声照会更新と明示再試行は世代と状態を条件
   assert.equal(dynamoDocument.valueFromItem(replace.ExpressionAttributeValues)[":id"], "old");
 });
 
+test("DynamoDBの受付不明保存は既知の照合情報をnullへ戻さない条件を付ける", async () => {
+  const fake = fakeTransport(async () => { throw conditionalError(); });
+  const store = new DynamoStore(fake.transport, "table");
+  const job = { id: "intent", audioId: "voice", inputHash: "hash", provider: "fixture", status: "queued", externalJobId: null, outputKey: null,
+    errorCode: "request_acceptance_unknown" };
+  assert.equal(await store.updateGeneratedAudioJob("player_a", job), false);
+  const { ConditionExpression, ExpressionAttributeValues } = fake.calls[0].input;
+  for (const key of ["externalJobId", "outputKey"]) {
+    assert.ok(ConditionExpression.includes(`AND (attribute_not_exists(${key}) OR ${key} = :noReference)`));
+  }
+  assert.equal(dynamoDocument.valueFromItem(ExpressionAttributeValues)[":noReference"], null);
+});
+
 test("DynamoDB版hook LLM cacheは同じplayer partitionとTTL属性を使う", async () => {
   const fake = fakeTransport();
   const store = new DynamoStore(fake.transport, "table");

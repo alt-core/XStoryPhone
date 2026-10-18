@@ -877,12 +877,16 @@ export class DynamoStore implements AppStore {
   }
 
   async updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob) {
+    // 遅い受付不明の保存で、別要求が確保した照合情報を消さない。
+    const emptyReferences = (["externalJobId", "outputKey"] as const).filter(key => job[key] === null);
+    const referenceGuard = emptyReferences.map(key => ` AND (attribute_not_exists(${key}) OR ${key} = :noReference)`).join("");
     try {
       await this.transport.execute("PutItem", {
         TableName: this.tableName, Item: item({ PK: playerPk(playerId), SK: `AUDIO#${job.audioId}`, entityType: "AUDIO", ...job, updatedAt: nowIso() }),
-        ConditionExpression: "id = :id AND inputHash = :hash AND provider = :provider AND #status IN (:queued, :running)",
+        ConditionExpression: `id = :id AND inputHash = :hash AND provider = :provider AND #status IN (:queued, :running)${referenceGuard}`,
         ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: item({ ":id": job.id, ":hash": job.inputHash, ":provider": job.provider, ":queued": "queued", ":running": "running" })
+        ExpressionAttributeValues: item({ ":id": job.id, ":hash": job.inputHash, ":provider": job.provider, ":queued": "queued", ":running": "running",
+          ...(emptyReferences.length ? { ":noReference": null } : {}) })
       });
       return true;
     } catch (error) { if (conditionalFailure(error)) return false; throw error; }

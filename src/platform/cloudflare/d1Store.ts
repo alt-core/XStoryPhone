@@ -634,8 +634,10 @@ export class D1Store implements AppStore {
   }
 
   async updateGeneratedAudioJob(playerId: string, job: GeneratedAudioJob) {
+    // 遅い受付不明の保存で、別要求が確保した照合情報を消さない。
+    const referenceGuard = `${job.externalJobId === null ? " AND external_job_id IS NULL" : ""}${job.outputKey === null ? " AND output_key IS NULL" : ""}`;
     const result = await this.db.prepare(`UPDATE generated_audio_jobs SET external_job_id = ?, input_text = ?, output_key = ?, status = ?, error_code = ?, updated_at = ?, completed_at = ?
-      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ? AND status IN ('queued', 'running')`)
+      WHERE player_id = ? AND audio_id = ? AND id = ? AND input_hash = ? AND provider = ? AND status IN ('queued', 'running')${referenceGuard}`)
       .bind(job.externalJobId,job.inputText,job.outputKey,job.status,job.errorCode,nowIso(),job.completedAt,playerId,job.audioId,job.id,job.inputHash,job.provider).run();
     return (result.meta.changes ?? 0) === 1;
   }

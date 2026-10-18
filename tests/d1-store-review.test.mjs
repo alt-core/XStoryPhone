@@ -105,6 +105,20 @@ reviewTest("D1はplayer行なしの補助音声jobを保存し、明示再試行
   assert.equal((await store.generatedAudioJob("browser-player", "voice")).id, "replacement");
 });
 
+reviewTest("D1の遅い受付不明は、別要求が保存した外部IDと出力先を消さない", async () => {
+  const store = new D1Store(new LocalD1());
+  const intent = { id: "intent", audioId: "voice", provider: "fixture", externalJobId: null, inputHash: "hash", inputText: "確認用の文章", outputKey: null,
+    status: "queued", errorCode: null, createdAt: "2026-10-18T00:00:00.000Z", completedAt: null };
+  for (const reference of [{ externalJobId: "external_job_a" }, { outputKey: "/generated/audio_a.wav" }]) {
+    await store.saveGeneratedAudioJob("player_a", intent);
+    assert.equal(await store.updateGeneratedAudioJob("player_a", { ...intent, ...reference }), true);
+    assert.equal(await store.updateGeneratedAudioJob("player_a", { ...intent, errorCode: "request_acceptance_unknown" }), false);
+    const stored = await store.generatedAudioJob("player_a", "voice");
+    for (const [key, value] of Object.entries(reference)) assert.equal(stored[key], value);
+    assert.equal(stored.errorCode, null);
+  }
+});
+
 reviewTest("D1の開始失敗・PIN・reset・再開始は同じ初期化を使い、旧sessionと遅着を隔離する", async () => {
   const original = structuredClone(workerScenario);
   const store = new D1Store(new LocalD1());

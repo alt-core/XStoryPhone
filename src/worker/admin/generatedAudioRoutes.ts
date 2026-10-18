@@ -5,7 +5,6 @@ import { defaultScenarioRuntime } from "../scenario.ts";
 import { createGeneratedAudioRuntime } from "../services/generatedAudioRuntime.ts";
 
 export function registerGeneratedAudioRoutes(app: Hono<ServerEnv>) {
-  const runtime = createGeneratedAudioRuntime(defaultScenarioRuntime);
   const path = "/api/admin/generated-audio/:playerId/:audioId";
   app.get(path, async c => {
     const auth = await authorize(c);
@@ -21,6 +20,9 @@ export function registerGeneratedAudioRoutes(app: Hono<ServerEnv>) {
     if (typeof body?.expectedJobId !== "string" || !body.expectedJobId || body.confirm !== true)
       return c.json({ ok: false, error: "retry_confirmation_required" }, 400);
     c.header("Cache-Control", "no-store");
+    const runtime = createGeneratedAudioRuntime(defaultScenarioRuntime, {
+      requestDeadlineMs: c.var.dependencies.config.llm.requestDeadlineMs
+    });
     const job = await runtime.retryGeneratedAudio(c.var.dependencies.store, c.req.param("playerId"), c.req.param("audioId"), body.expectedJobId);
     return job ? c.json({ ok: true, job }) : c.json({ ok: false, error: "not_retryable" }, 409);
   });

@@ -767,6 +767,222 @@ test("browserの任意生成音声は補助jobだけ保存し、同じtokenで�
   }
 });
 
+async function withBrowserAudioRequestBudget(run) {
+  const original = structuredClone(workerScenario);
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const store = new MemoryStore();
+  const secret = "audio-request-budget-browser-secret";
+  const inputText = "未公開の生成台本fixture618204";
+  const calls = { llm: 0, enqueue: [], reconcile: [], savePlayer: 0 };
+  let now = originalNow();
+  const fixture = {
+    store, secret, inputText, calls,
+    llmElapsedMs: 23_900,
+    get now() { return now; },
+    advance(ms) { now += ms; },
+    enqueueResult: () => ({ status: "running", externalJobId: "external-budget-fixture" }),
+    reconcileResult: () => ({ status: "running" })
+  };
+  const provider = {
+    id: "fixture_request_budget",
+    minimumRequestBudgetMs: { enqueue: 5_000, reconcile: 5_000 },
+    async enqueue(input) { calls.enqueue.push(input); return fixture.enqueueResult(input); },
+    async reconcile(input) { calls.reconcile.push(input); return fixture.reconcileResult(input); }
+  };
+  fixture.provider = provider;
+  projectGeneratedAudioProviders.push(provider);
+  try {
+    Date.now = () => now;
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, "https://llm.example.test/v1/chat/completions");
+      assert.equal(JSON.parse(options.body).model, "budget-model-fixture");
+      calls.llm += 1;
+      // 実際の待機や外部通信をせず、LLM成功までに使った要求時間だけを進める。
+      now += fixture.llmElapsedMs;
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ accepted: true }) } }] }), {
+        headers: { "content-type": "application/json" }
+      });
+    };
+    store.savePlayer = async () => { calls.savePlayer += 1; throw new Error("browserの通常進行をDBへ保存しました"); };
+    workerScenario.playerMode = "browser";
+    workerScenario.features.llm = true;
+    const definition = workerScenario.generatedAudio.find(item => item.id === "demo_voice");
+    definition.provider = provider.id;
+    definition.staticUrl = "";
+    const radio = workerScenario.contents.find(item => item.id === "sample_radio");
+    delete radio.record.audioAttachmentId;
+    radio.record.genAudioId = definition.id;
+    radio.record.playbackCond = "";
+    radio.record.form = { kind: "html", id: "budget_form", label: "確認", url: "/fixture-form" };
+    radio.record.formDisabledCond = "image_color_reported";
+    workerScenario.publicIds.form.budget_form = "form_budget_public";
+    workerScenario.hooks = [{ event: "form_submitted", target: "budget_form", handler: "audio_budget_probe", cond: "", needsAi: true }];
+    scenarioHookHandlers.audio_budget_probe = context => {
+      const result = context.llm.screen("budget_screen", {
+        source: "message", instructions: "入力が受理可能ならacceptedをtrueで返す", schema: { accepted: "boolean" }
+      });
+      if (!result.accepted) context.effectSequence.gameOver("入力を受理できませんでした");
+      context.state.set("image_color_reported", true);
+      context.genAudio.prepare("demo_voice", { inputText });
+    };
+    fixture.app = requestDeadlineMs => createApp({
+      store,
+      config: {
+        appEnv: "production", browserStateSecret: secret, playerInputLogging: false,
+        llm: {
+          LLM_API_KEY: "fixture-key", LLM_MODEL: "budget-model-fixture", LLM_BASE_URL: "https://llm.example.test/v1",
+          LLM_TIMEOUT_MS: "24000", ...(requestDeadlineMs === undefined ? {} : { requestDeadlineMs })
+        }
+      }
+    });
+    fixture.post = (app, path, fields = {}) => app.request(`https://game.example/api/${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(fields)
+    });
+    fixture.audioState = payload => payload.playerState.visibleDeviceState.radioItems.find(item => item.contentId === radio.publicId).generatedAudio;
+    fixture.definition = definition;
+    const started = await fixture.post(fixture.app(), "session/start");
+    assert.equal(started.status, 200);
+    fixture.startToken = (await started.json()).playerState.progressToken;
+    await run(fixture);
+    assert.equal(store.createCalls, 0);
+    assert.equal(store.playerCalls, 0);
+    assert.equal(calls.savePlayer, 0);
+    assert.equal(store.player.stateVersion, 0);
+    assert.equal(store.transcripts.size, 0);
+  } finally {
+    Date.now = originalNow;
+    globalThis.fetch = originalFetch;
+    Object.assign(workerScenario, original);
+    delete scenarioHookHandlers.audio_budget_probe;
+    projectGeneratedAudioProviders.splice(projectGeneratedAudioProviders.indexOf(provider), 1);
+  }
+}
+
+test("browserは遅いLLM後の音声投入を見送り、進行tokenと同じintentを次の要求へ引き継ぐ", async () => {
+  for (const remainingMs of [0, 3_100]) await withBrowserAudioRequestBudget(async fixture => {
+    const { store, calls, definition, secret, inputText } = fixture;
+    const deadline = fixture.now + 23_900 + remainingMs;
+    const response = await fixture.post(fixture.app(deadline), "form/submit", {
+      progressToken: fixture.startToken, formId: "form_budget_public", fields: { message: "確認用の入力" }
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(calls.llm, 1);
+    assert.equal(calls.enqueue.length, 0, "送信前の見送り後は同じ要求のstateJsonでも再投入しない");
+    assert.equal(calls.reconcile.length, 0);
+    assert.notEqual(body.presentation?.sequence?.type, "game_over");
+    const pending = fixture.audioState(body);
+    assert.equal(pending.status, "queued");
+    assert.equal(pending.publicAudioUrl, null);
+    assert.equal(pending.fallbackAudioUrl, null);
+    assert.equal(body.playerState.nextScenarioWakeAt, new Date(fixture.now + 15_000).toISOString());
+    assert.equal(typeof body.playerState.progressToken, "string");
+    const intent = structuredClone(store.audioJobs.get("demo_voice"));
+    assert.equal(intent.status, "queued");
+    assert.equal(intent.externalJobId, null);
+    assert.equal(intent.inputText, inputText);
+    const signedPlayer = await decodeBrowserProgress(secret, workerScenario.project.id, body.playerState.progressToken);
+    assert.equal(signedPlayer.state.stateValues.image_color_reported, true, "LLM後の確定した進行も保持する");
+    assert.equal(typeof signedPlayer.state.generatedAudioRequests[definition.publicId], "string");
+    assert.notEqual(signedPlayer.state.generatedAudioRequests[definition.publicId], intent.inputHash);
+    assert.equal(JSON.stringify(body).includes(inputText), false);
+    assert.equal(JSON.stringify(signedPlayer).includes(inputText), false);
+    assert.equal(JSON.stringify(signedPlayer).includes("requestDeadlineMs"), false);
+
+    fixture.advance(15_000);
+    const nextDeadline = fixture.now + 27_000;
+    const resumed = await fixture.post(fixture.app(nextDeadline), "player-state", { progressToken: body.playerState.progressToken });
+    assert.equal(resumed.status, 200);
+    const resumedBody = await resumed.json();
+    assert.equal(calls.llm, 1, "状態取得では投稿判定を繰り返さない");
+    assert.equal(calls.enqueue.length, 1);
+    assert.equal(calls.enqueue[0].jobId, intent.id);
+    assert.equal(calls.enqueue[0].requestBudget.deadlineMs, nextDeadline);
+    assert.ok(calls.enqueue[0].requestBudget.signal instanceof AbortSignal);
+    assert.equal(store.audioJobs.size, 1);
+    assert.equal(store.audioJobs.get("demo_voice").id, intent.id);
+    assert.equal(store.audioJobs.get("demo_voice").externalJobId, "external-budget-fixture");
+    assert.equal(fixture.audioState(resumedBody).status, "running");
+    assert.equal(resumedBody.playerState.progressToken, body.playerState.progressToken);
+  });
+});
+
+test("browserは音声受付直後に予算が尽きても外部jobを保存し、次の要求で同じjobを照会する", async () => {
+  await withBrowserAudioRequestBudget(async fixture => {
+    const { store, calls } = fixture;
+    const deadline = fixture.now + 27_000;
+    fixture.enqueueResult = () => {
+      fixture.advance(3_100);
+      return { status: "running", externalJobId: "external-budget-fixture" };
+    };
+    // このケースは短い残予算でも投入できるproviderで、受付直後の照会だけを見送る。
+    fixture.provider.minimumRequestBudgetMs.enqueue = 3_000;
+    const response = await fixture.post(fixture.app(deadline), "form/submit", {
+      progressToken: fixture.startToken, formId: "form_budget_public", fields: { message: "確認用の入力" }
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const accepted = structuredClone(store.audioJobs.get("demo_voice"));
+    assert.equal(calls.enqueue.length, 1);
+    assert.equal(calls.reconcile.length, 0, "外部IDの保存後に照会で応答用の余裕を使い切らない");
+    assert.equal(accepted.externalJobId, "external-budget-fixture");
+    assert.equal(accepted.status, "running");
+    assert.equal(fixture.audioState(body).status, "running");
+    assert.equal(fixture.audioState(body).fallbackAudioUrl, null);
+    assert.equal(body.playerState.nextScenarioWakeAt, new Date(fixture.now + 15_000).toISOString());
+
+    fixture.advance(15_000);
+    const nextDeadline = fixture.now + 27_000;
+    fixture.reconcileResult = () => ({ status: "ready", outputKey: "/completed-budget-fixture.wav" });
+    const refreshed = await fixture.post(fixture.app(nextDeadline), "player-state", { progressToken: body.playerState.progressToken });
+    assert.equal(refreshed.status, 200);
+    const refreshedBody = await refreshed.json();
+    assert.equal(calls.enqueue.length, 1, "投入済みjobは次の要求でも再投入しない");
+    assert.equal(calls.reconcile.length, 1);
+    assert.equal(calls.reconcile[0].job.id, accepted.id);
+    assert.equal(calls.reconcile[0].job.externalJobId, accepted.externalJobId);
+    assert.equal(calls.reconcile[0].requestBudget.deadlineMs, nextDeadline);
+    assert.equal(store.audioJobs.get("demo_voice").id, accepted.id);
+    assert.equal(store.audioJobs.get("demo_voice").externalJobId, accepted.externalJobId);
+    assert.equal(fixture.audioState(refreshedBody).status, "ready");
+    assert.equal(fixture.audioState(refreshedBody).publicAudioUrl, "/completed-budget-fixture.wav");
+  });
+});
+
+test("browserは予算が十分なら短いLLMと音声投入の後、同じフォーム応答で音声を利用できる", async () => {
+  await withBrowserAudioRequestBudget(async fixture => {
+    const { store, calls } = fixture;
+    fixture.llmElapsedMs = 1_000;
+    const deadline = fixture.now + 27_000;
+    fixture.enqueueResult = () => {
+      fixture.advance(100);
+      return { status: "running", externalJobId: "external-budget-fixture" };
+    };
+    fixture.reconcileResult = input => {
+      assert.equal(store.audioJobs.get("demo_voice").externalJobId, input.job.externalJobId, "照会前に受付済みIDを保存する");
+      fixture.advance(100);
+      return { status: "ready", outputKey: "/immediate-budget-fixture.wav" };
+    };
+    const response = await fixture.post(fixture.app(deadline), "form/submit", {
+      progressToken: fixture.startToken, formId: "form_budget_public", fields: { message: "確認用の入力" }
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(calls.llm, 1);
+    assert.equal(calls.enqueue.length, 1);
+    assert.equal(calls.reconcile.length, 1, "残予算があれば初回の照会を次の状態取得まで遅らせない");
+    assert.equal(calls.reconcile[0].job.id, calls.enqueue[0].jobId);
+    assert.equal(calls.reconcile[0].requestBudget.deadlineMs, deadline);
+    assert.equal(store.audioJobs.get("demo_voice").status, "ready");
+    assert.equal(fixture.audioState(body).status, "ready");
+    assert.equal(fixture.audioState(body).publicAudioUrl, "/immediate-budget-fixture.wav");
+    assert.equal(body.playerState.nextScenarioWakeAt, null);
+  });
+});
+
 test("browserモードはDBを使わず署名済み進行トークンと差分履歴で進行する", async () => {
   const store = new MemoryStore();
   const originalMode = workerScenario.playerMode;
