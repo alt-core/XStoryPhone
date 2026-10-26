@@ -82,6 +82,7 @@ let activeWakeLock: WakeLockSentinelLike | undefined;
 let wakeLockRequestGeneration = 0;
 let wakeLockRequestPending = false;
 const howlCache = new Map<string, Promise<Howl>>();
+const failedHowls = new WeakSet<Howl>();
 
 configureHowler();
 
@@ -268,22 +269,33 @@ function loadHowl(url: string) {
 
   const loading = new Promise<Howl>((resolve, reject) => {
     const resolveLoaded = () => {
-      cleanup();
+      howl.off("load", resolveLoaded);
       resolve(howl);
     };
-    const rejectLoad = (_soundId: number, error: unknown) => {
+    const handleLoadError = (_soundId: number, error: unknown) => {
       cleanup();
-      howlCache.delete(url);
-      howl.unload();
+      // 保留中の再生処理が残る音源は強制破棄せず、ページ終了まで保持して再利用だけを禁止する。
+      failedHowls.add(howl);
+      if (howlCache.get(url) === loading) {
+        howlCache.delete(url);
+      }
+      // 初期読み込み中なら失敗を返す。解決済みPromiseへのrejectは何も変更しない。
       reject(error);
+      // キャッシュを外してから通知し、onError内の即時再試行も新しい音源へ進める。
+      window.setTimeout(() => {
+        const playback = activePlayback;
+        if (playback?.segments.slice(playback.segmentIndex).some((segment) => segment.howl === howl)) {
+          handlePlaybackError(playback);
+        }
+      }, 0);
     };
     const cleanup = () => {
       howl.off("load", resolveLoaded);
-      howl.off("loaderror", rejectLoad);
+      howl.off("loaderror", handleLoadError);
     };
 
     howl.once("load", resolveLoaded);
-    howl.once("loaderror", rejectLoad);
+    howl.once("loaderror", handleLoadError);
 
     if (howl.state() === "loaded") {
       resolveLoaded();
@@ -301,6 +313,10 @@ function startHowlerSegment(playback: ActivePlayback, segmentIndex: number) {
 
   playback.segmentIndex = segmentIndex;
   const segment = playback.segments[segmentIndex];
+  if (failedHowls.has(segment.howl)) {
+    handlePlaybackError(playback);
+    return false;
+  }
   const loop = playback.request.loop === true && playback.segments.length === 1;
   let soundId = Number.NaN;
   let soundRef: ActiveSound | undefined;

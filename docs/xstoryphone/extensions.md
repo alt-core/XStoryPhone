@@ -85,7 +85,7 @@ PhoneStageの表示は次の3種類です。
 - `embedded`: 端末フレームを含めて表示を維持しますが、端末内部は `inert` になり操作できません。
 - `hidden`: DOMの状態を維持したまま非表示にします。
 
-作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
+作品側は `{@render phone({ mode: "embedded" })}` のように表示方法を指定し、配置と大きさは外側のコンテナで決めます。PhoneStageは外側の大きさに合わせて端末を縮小するため、コンテナの幅と高さは中身に依存させず確定させてください。gridで包む場合は `grid-template-columns: minmax(0, 1fr)` のように最小幅を0にします。中身の幅で広がるコンテナでは、狭い画面で端末がはみ出し、大きさの計算が収まらなくなります。phone snippetは同時に一度だけ描画してください。読み取り用の安定したDOM参照には `data-phone-stage`、`data-phone-shell`、`data-phone-screen` を使い、`PhoneFrame`の内部classやPlayerStateの適用処理へ直接依存しないでください。
 
 `context` には、プレイヤー開始済みかを示す `playerReady`、PlayerState、明示公開された `projectState`、読み取り専用の端末表示状態 `deviceView` と、`dispatchScenarioEvent`、`unlockContent` が渡されます。`playerReady` は認証tokenではなく、作品側で表示可否を判断するbooleanです。作品固有Stageから進行eventを送る場合は、APIを直接呼ばず `context.dispatchScenarioEvent(eventId, fields)` を使います。成功後のPlayerStateはコアと同じ経路で適用されます。呼び出すeventは `project_constants` の `event.client_callable` へセル内改行で列挙してください。
 

@@ -212,3 +212,12 @@ test("browserの未保存を示すstatusなし認証失敗は新規開始へ進�
   assert.equal(context.playerState.stateVersion, 2);
   assert.ok(effects.includes("unlock_device"));
 });
+
+test("ResizeObserverの未配送通知だけを致命エラーから外す", () => {
+  const { isResizeObserverLoopNotice } = componentFunctionHarness(appUrl, ["isResizeObserverLoopNotice"]);
+  for (const message of ["ResizeObserver loop completed with undelivered notifications.", "ResizeObserver loop limit exceeded"]) {
+    assert.equal(isResizeObserverLoopNotice({ error: null, message }), true, message);
+    assert.equal(isResizeObserverLoopNotice({ error: new Error(message), message }), false, `${message}を投げた例外`);
+  }
+  assert.equal(isResizeObserverLoopNotice({ error: null, message: "Script error." }), false);
+});

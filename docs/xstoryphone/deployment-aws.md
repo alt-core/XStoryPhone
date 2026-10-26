@@ -185,6 +185,18 @@ Web Functionは配備後もコードのobject versionを参照するため、使
 
 静的ファイルだけを戻す場合は、正常なコミットで `npm run build:aws` を行い、対象バケットへ再同期してCloudFront invalidationを作成します。
 
+### Web Functionの入口が置き換えになる場合
+
+Web Functionの入口（`AppWebFunctionEndpoint`）は、環境名を入口名に使います。同じWeb Functionで入口名を維持したまま入口を置き換えると、CloudFormationは同じ名前の新しい入口を先に作ろうとして `AlreadyExists` で失敗します。テンプレートを変えていなくても、SAMの変換の更新で同じ置き換えが発生する場合があります。2026年10月の更新では、生成されるEndpointの`FunctionName`が関数名からARN参照へ変わるため、更新前の形式で作成した入口が該当する場合があります。該当するかは変更セットで確認してください。
+
+このSAM変換の変更だけが原因で失敗し、ロールバックが正常に完了した場合は、従来の入口と公開中の版が維持されます。
+
+1. `--no-execute-changeset` を付けて配備コマンドを実行し、作成された変更セットで `AppWebFunctionEndpoint` が置き換えになっていることと、その原因の項目を確認します。意図しないテンプレートの変更が原因なら、その変更を戻します。
+2. `infra/aws/template.yaml` の `EndpointName` を一時的に別の名前（例: `!Sub ${EnvironmentName}-swap`）へ変えて配備します。新しい入口が作られ、CloudFrontの向き先が替わり、古い入口は削除されます。
+3. `EndpointName` を元に戻し、もう一度配備します。
+
+どちらの配備でも、配備コマンドが新しい入口へCloudFrontからの呼出policyを設定します。入口が替わってから設定が終わるまでの間、APIは403になります。prodでは必要なメンテナンス時間を確保してください。
+
 ## 削除
 
 CloudFormationスタックはSAM CLIで削除できます。

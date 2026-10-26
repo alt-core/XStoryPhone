@@ -434,6 +434,11 @@
         console.warn("[audio:cleanup]", event.error ?? event.message);
         return;
       }
+      if (isResizeObserverLoopNotice(event)) {
+        event.preventDefault();
+        console.warn("[layout:resize-observer]", event.message);
+        return;
+      }
 
       trackClientError({
         kind: "window_error",
@@ -510,6 +515,11 @@
     // 着信ベルが loop した瞬間に Safari + Howler の後片付けで起きる既知問題の暫定回避。
     // 本来は audioEngine / Howler 側の loop 終了処理として根本修正する。
     return message.includes("removeEventListener");
+  }
+
+  function isResizeObserverLoopNotice(event: ErrorEvent) {
+    // 届けきれなかった大きさの通知を次の描画へ回した知らせで、表示は続けられる。
+    return !event.error && event.message.startsWith("ResizeObserver loop");
   }
 
   function showGlobalError(

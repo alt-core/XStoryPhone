@@ -118,7 +118,9 @@
     </div>
     <slot name="overlay" />
     {#if incomingCall}
-      <IncomingCallScreen call={incomingCall} onComplete={onCompleteCall} />
+      {#key incomingCall.id}
+        <IncomingCallScreen call={incomingCall} onComplete={onCompleteCall} />
+      {/key}
     {/if}
   </div>
 </div>

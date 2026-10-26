@@ -3,6 +3,7 @@
   import { PhoneCall, PhoneOff, RotateCcw } from "@lucide/svelte";
   import type { IncomingCallItem } from "../scenario-runtime/types";
   import { playAudio, stopAudioPlayback } from "./audioEngine";
+  import { watchPlaybackStall } from "./playbackStallWatch";
   import { captionAt } from "./timedTranscript";
 
   export let call: IncomingCallItem;
@@ -17,6 +18,7 @@
   let bellWanted = true;
   let bellRetryArmed = false;
   let playbackCurrentMs = 0;
+  let callStallWatch: ReturnType<typeof watchPlaybackStall> | undefined;
 
   $: activeCaption = captionAt(call.transcript, playbackCurrentMs);
 
@@ -28,6 +30,7 @@
     bellWanted = false;
     disarmBellRetry();
     stopBell();
+    stopCallStallWatch();
     stopAudioPlayback("call_screen_destroy", callPlaybackId());
   });
 
@@ -96,6 +99,8 @@
     }
 
     callStarting = true;
+    // 通話は音声の終了まで抜けられないため、取得が止まったらリロードを案内する。
+    callStallWatch = watchPlaybackStall(handleCallAudioStall);
     const started = await playAudio({
       id: callPlaybackId(),
       segments: [{ url: call.audioUrl }],
@@ -104,6 +109,7 @@
       },
       onProgress: (progress) => {
         playbackCurrentMs = progress.currentMs;
+        callStallWatch?.progress(progress.currentMs);
       },
       onEnded: completeCall,
       onStop: () => {
@@ -117,7 +123,13 @@
     }
   }
 
+  function handleCallAudioStall() {
+    stopAudioPlayback("call_audio_stalled", callPlaybackId());
+    showCallAudioError();
+  }
+
   function showCallAudioError() {
+    stopCallStallWatch();
     answered = false;
     audioCompleted = false;
     callStarting = false;
@@ -130,8 +142,14 @@
   }
 
   function completeCall() {
+    stopCallStallWatch();
     audioCompleted = true;
     onComplete(call.id);
+  }
+
+  function stopCallStallWatch() {
+    callStallWatch?.stop();
+    callStallWatch = undefined;
   }
 
   function endCall() {
@@ -191,7 +209,7 @@
   {#if audioErrorVisible}
     <div class="audio-error-backdrop" role="presentation">
       <div class="audio-error-dialog" role="alertdialog" aria-modal="true" aria-labelledby="call-audio-error-title" tabindex="-1">
-        <h2 id="call-audio-error-title">音声を開始できませんでした</h2>
+        <h2 id="call-audio-error-title">音声を再生できませんでした</h2>
         <p>通信の状況を確認の上、リロードしてください。</p>
         <div class="audio-error-actions">
           <button class="audio-error-primary" type="button" on:click={reload}>
