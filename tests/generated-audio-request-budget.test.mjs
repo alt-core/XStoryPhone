@@ -28,14 +28,6 @@ function clock(t) {
   };
 }
 
-async function until(check) {
-  for (let index = 0; index < 100; index += 1) {
-    if (check()) return;
-    await new Promise(setImmediate);
-  }
-  assert.fail("試験中の非同期処理に到達しませんでした");
-}
-
 function fixture(t) {
   t.mock.method(globalThis, "fetch", async () => assert.fail("この試験で実通信を行わない"));
   const definition = { id: "audio_a", publicId: "public_audio_a", provider: "budget_fixture", title: "音声", staticUrl: "", fallbackAttachmentId: "fallback" };
@@ -153,17 +145,18 @@ test("照会の残り0と正の短い予算では保存済みpendingを返す", 
   assert.equal(c.timers.size, 0);
 });
 
-test("期限中断後でも取得できた受付IDを破棄せず保存する", async t => {
+test("期限中断後でも取得できた受付IDを破棄せず保存する", { timeout: 5_000 }, async t => {
   const c = clock(t), f = fixture(t);
   const runtime = f.runtime(Date.now() + 1_000);
+  const started = Promise.withResolvers();
   let release;
   f.provider.enqueue = async input => {
     f.calls.enqueue.push(input);
-    return new Promise(resolve => { release = resolve; });
+    return new Promise(resolve => { release = resolve; started.resolve(); });
   };
   const job = await f.intent(runtime);
   const pending = runtime.dispatchGeneratedAudioIntent(f.store, "player_a", job);
-  await until(() => release);
+  await started.promise;
   c.fire([...c.timers][0]);
   assert.equal(f.calls.enqueue[0].requestBudget.signal.aborted, true);
   release({ status: "queued", externalJobId: "accepted_external_job" });
@@ -178,17 +171,21 @@ test("期限中断後でも取得できた受付IDを破棄せず保存する", 
   assert.equal(c.timers.size, 0);
 });
 
-test("投入中の期限切れは受付不明として保存し、次の要求で安全に照合して回復する", async t => {
+test("投入中の期限切れは受付不明として保存し、次の要求で安全に照合して回復する", { timeout: 5_000 }, async t => {
   const c = clock(t), f = fixture(t), logs = [];
   for (const method of ["log", "warn", "error"]) t.mock.method(console, method, (...args) => logs.push(JSON.stringify(args)));
   const runtime = f.runtime(Date.now() + 1_000);
+  const started = Promise.withResolvers();
   f.provider.enqueue = async input => {
     f.calls.enqueue.push(input);
-    return new Promise((_resolve, reject) => input.requestBudget.signal.addEventListener("abort", () => reject(new Error("非公開の生成台本・fixture_secret・参照音声key")), { once: true }));
+    return new Promise((_resolve, reject) => {
+      input.requestBudget.signal.addEventListener("abort", () => reject(new Error("非公開の生成台本・fixture_secret・参照音声key")), { once: true });
+      started.resolve();
+    });
   };
   const job = await f.intent(runtime);
   const pending = runtime.dispatchGeneratedAudioIntent(f.store, "player_a", job);
-  await until(() => f.calls.enqueue.length === 1);
+  await started.promise;
   c.fire([...c.timers][0]);
   await pending;
   assert.equal(f.current().id, job.id);
@@ -278,11 +275,12 @@ test("受付不明の照合が未確定でも元の期限を守り、期限切�
   assert.equal(c.timers.size, 0);
 });
 
-test("再試行待機中にも共有signalが期限で中断し、未送信なら次の要求で同intentを再開する", async t => {
+test("再試行待機中にも共有signalが期限で中断し、未送信なら次の要求で同intentを再開する", { timeout: 5_000 }, async t => {
   const c = clock(t), f = fixture(t);
   f.provider.minimumRequestBudgetMs.enqueue = 1;
   const runtime = f.runtime(Date.now() + 500);
-  let attempts = 0, waiting = false;
+  const started = Promise.withResolvers();
+  let attempts = 0;
   f.provider.enqueue = async input => {
     f.calls.enqueue.push(input);
     attempts += 1;
@@ -291,14 +289,14 @@ test("再試行待機中にも共有signalが期限で中断し、未送信な�
       const retryTimer = setTimeout(resolve, 250);
       const abort = () => { clearTimeout(retryTimer); reject(new GeneratedAudioRequestDeferredError("not_sent")); };
       input.requestBudget.signal.addEventListener("abort", abort, { once: true });
-      waiting = true;
+      started.resolve();
     });
     attempts += 1;
     return { status: "queued", externalJobId: "external_job_a" };
   };
   const job = await f.intent(runtime);
   const pending = runtime.dispatchGeneratedAudioIntent(f.store, "player_a", job);
-  await until(() => waiting);
+  await started.promise;
   c.fire([...c.timers].find(timer => timer.milliseconds === 500));
   await pending;
   assert.equal(attempts, 1);
@@ -313,16 +311,21 @@ test("再試行待機中にも共有signalが期限で中断し、未送信な�
   assert.equal(c.timers.size, 0);
 });
 
-test("照会中の期限切れはjobを保持し、新しい要求から同じ外部IDを照会する", async t => {
+test("照会中の期限切れはjobを保持し、新しい要求から同じ外部IDを照会する", { timeout: 5_000 }, async t => {
   const c = clock(t), f = fixture(t);
   const job = await f.intent(f.runtime());
   await f.store.saveGeneratedAudioJob("player_a", { ...job, externalJobId: "external_job_a", status: "running" });
+  // 暗号処理の所要時間ではなく、中断を受け取れる状態になったことを待つ。
+  const started = Promise.withResolvers();
   f.provider.reconcile = async input => {
     f.calls.reconcile.push(input);
-    return new Promise((_resolve, reject) => input.requestBudget.signal.addEventListener("abort", () => reject(new Error("中断")), { once: true }));
+    return new Promise((_resolve, reject) => {
+      input.requestBudget.signal.addEventListener("abort", () => reject(new Error("中断")), { once: true });
+      started.resolve();
+    });
   };
   const pending = f.state(f.runtime(Date.now() + 500), job);
-  await until(() => f.calls.reconcile.length === 1);
+  await started.promise;
   c.fire([...c.timers][0]);
   assert.equal((await pending).status, "running");
   assert.equal(f.current().createdAt, job.createdAt);
@@ -356,18 +359,22 @@ test("未投入の古いintentは作成時刻を更新せず、providerが期限
   assert.equal(externalRequests, 0);
 });
 
-test("並行要求と別プレイヤーへ締切を持ち越さず、遅いpendingでreadyを消さない", async t => {
+test("並行要求と別プレイヤーへ締切を持ち越さず、遅いpendingでreadyを消さない", { timeout: 5_000 }, async t => {
   const c = clock(t), f = fixture(t);
   const deadlines = [Date.now() + 1_000, Date.now() + 5_000];
   const runtimes = deadlines.map(deadline => f.runtime(deadline));
   const jobs = await Promise.all(runtimes.map((runtime, index) => f.intent(runtime, `player_${index}`)));
+  const started = Promise.withResolvers();
   const entered = [];
   f.provider.enqueue = async input => {
     f.calls.enqueue.push(input);
-    return new Promise(resolve => entered.push({ input, resolve }));
+    return new Promise(resolve => {
+      entered.push({ input, resolve });
+      if (entered.length === 2) started.resolve();
+    });
   };
   const pending = runtimes.map((runtime, index) => runtime.dispatchGeneratedAudioIntent(f.store, `player_${index}`, jobs[index]));
-  await until(() => entered.length === 2);
+  await started.promise;
   assert.notEqual(entered[0].input.requestBudget.signal, entered[1].input.requestBudget.signal);
   assert.deepEqual(entered.map(item => item.input.requestBudget.deadlineMs), deadlines);
   await f.store.saveGeneratedAudioJob("player_0", { ...jobs[0], status: "ready", externalJobId: "completed_job", outputKey: "/ready.wav" });
