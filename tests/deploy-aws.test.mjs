@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parseAllowedOrigins } from "../src/server/cors.ts";
@@ -11,7 +12,7 @@ const source = readFileSync(new URL(scriptUrl), "utf8")
   .replace(/^import .+;\n/gmu, "")
   .replaceAll("import.meta.url", "scriptUrl");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const execute = new AsyncFunction("spawnSync", "readFileSync", "createHash", "isDeepStrictEqual", "setTimeout",
+const execute = new AsyncFunction("spawnSync", "readFileSync", "createHash", "isDeepStrictEqual", "isIP", "setTimeout",
   "fileURLToPath", "loadAndValidateScenario", "parseAllowedOrigins", "process", "console", "fetch", "AbortSignal", "scriptUrl", source);
 
 const functionArn = "arn:aws:lambda:ap-northeast-1:123456789012:web-function/mock-api";
@@ -19,6 +20,13 @@ const endpointArn = `${functionArn}/endpoint/dev`;
 const revision = "mock-client-revision";
 const archiveBytes = Buffer.from("mock-private-api-archive");
 const archiveSha256 = createHash("sha256").update(archiveBytes).digest("hex");
+const customCertificateArn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+const defaultOutputs = {
+  StaticBucketName: "mock-static-bucket", DistributionId: "mock-distribution", DistributionDomainName: "site.example",
+  SiteUrl: "https://site.example", ApiEndpoint: "https://site.example/",
+  FunctionArn: functionArn, EndpointArn: endpointArn
+};
+const customOutputs = { ...defaultOutputs, SiteUrl: "https://play.example.com", ApiEndpoint: "https://play.example.com/" };
 const ownStatement = {
   Sid: "AllowXStoryPhoneCloudFront", Effect: "Allow", Principal: { Service: "cloudfront.amazonaws.com" },
   Action: "lambda:InvokeWebFunctionEndpoint", Resource: endpointArn,
@@ -31,17 +39,14 @@ const ownStatement = {
 async function deployment(arguments_, options = {}) {
   const calls = [];
   const health = [];
+  const healthOptions = [];
   const events = [];
   const sleeps = [];
   const logs = [];
   let exitCode = 0;
   let error;
   class Exit extends Error { constructor(code) { super("モックプロセス終了"); this.code = code; } }
-  const outputs = options.outputs ?? {
-    StaticBucketName: "mock-static-bucket", DistributionId: "mock-distribution",
-    SiteUrl: "https://site.example", ApiEndpoint: "https://site.example/",
-    FunctionArn: functionArn, EndpointArn: endpointArn
-  };
+  const outputs = options.outputs ?? defaultOutputs;
   try {
     await execute((command, args, settings) => {
       calls.push({ command, args, settings });
@@ -75,7 +80,7 @@ async function deployment(arguments_, options = {}) {
       if (filename.endsWith("/manifest.json")) return JSON.stringify(options.manifest ?? { sha256: archiveSha256 });
       if (filename.endsWith("/api.zip")) return options.archiveBytes ?? archiveBytes;
       throw new Error(`想定外のファイル読取: ${filename}`);
-    }, createHash, isDeepStrictEqual, async (ms) => { sleeps.push(ms); }, fileURLToPath, () => ({ worker: {
+    }, createHash, isDeepStrictEqual, isIP, async (ms) => { sleeps.push(ms); }, fileURLToPath, () => ({ worker: {
       playerMode: options.playerMode ?? "server", clientRevision: revision,
       project: { accessCode: options.accessCode ?? "none" }
     } }), parseAllowedOrigins, {
@@ -84,19 +89,25 @@ async function deployment(arguments_, options = {}) {
       exit(code) { throw new Exit(code); }
     }, {
       error: (...values) => logs.push(values.join(" ")), log: (...values) => logs.push(values.join(" "))
-    }, async (url) => {
+    }, async (url, settings) => {
       health.push(url);
+      healthOptions.push(settings);
       events.push({ health: url });
       const configured = options.healthResponses?.[health.length - 1];
       if (configured instanceof Error) throw configured;
       const response = configured ?? { ok: options.healthOk !== false, status: options.healthOk === false ? 503 : 200 };
+      if (response.redirectTo) {
+        if (settings?.redirect === "error") throw new TypeError("テスト用のリダイレクト拒否");
+        // 既定の追従を許した場合は、移動先の正常JSONで成功を誤認できる状況にする。
+        return { ok: true, status: 200, json: async () => ({ ok: true, clientRevision: revision }) };
+      }
       return { ...response, json: async () => response.body ?? { ok: true, clientRevision: revision } };
     }, { timeout: () => undefined }, scriptUrl);
   } catch (caught) {
     if (caught instanceof Exit) exitCode = caught.code;
     else { error = caught; exitCode = 1; }
   }
-  return { calls, health, events, sleeps, logs, exitCode, error };
+  return { calls, health, healthOptions, events, sleeps, logs, exitCode, error };
 }
 
 test("AWS API-onlyは静的公開を実行せず、private ZIP・Web Function・CloudFront healthを維持する", async () => {
@@ -158,6 +169,109 @@ test("WAFは未指定ならparameterを省き、空文字では明示解除す�
   const invalid = await deployment(["dev"], { env: { WEB_ACL_ARN: arn.replace("us-east-1", "ap-northeast-1") } });
   assert.equal(invalid.exitCode, 1);
   assert.equal(invalid.calls.length, 0);
+});
+
+test("独自ドメインは未指定なら維持し、両方空文字なら解除し、指定時は名前と証明書を渡す", async () => {
+  for (const [env, expected, outputs] of [
+    [{}, [], customOutputs],
+    [{ CUSTOM_DOMAIN_NAME: "", CUSTOM_DOMAIN_CERTIFICATE_ARN: "" }, ['CustomDomainName=""', 'CustomDomainCertificateArn=""'], defaultOutputs],
+    [{ CUSTOM_DOMAIN_NAME: "play.example.com", CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn },
+      ['CustomDomainName="play.example.com"', `CustomDomainCertificateArn="${customCertificateArn}"`], customOutputs]
+  ]) {
+    const result = await deployment(["dev", "--api-only"], { env, outputs });
+    assert.equal(result.exitCode, 0, result.error?.stack ?? result.logs.join("\n"));
+    const parameters = result.calls.find(call => call.command === "sam").args.filter(arg => /^CustomDomain(?:Name|CertificateArn)=/u.test(arg));
+    assert.deepEqual(parameters, expected);
+    assert.deepEqual(result.health, [`${outputs.ApiEndpoint.replace(/\/$/u, "")}/api/health`]);
+  }
+});
+
+test("独自ドメインはpunycode・ホスト名の長さの境界・証明書ARNのpartitionを受け付ける", async () => {
+  const longestHost = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(61)].join(".");
+  assert.equal(longestHost.length, 253);
+  for (const [hostname, certificate] of [
+    ["xn--r8jz45g.example", customCertificateArn],
+    [`${"a".repeat(63)}.example`, customCertificateArn],
+    [longestHost, customCertificateArn],
+    ["play.example.com", customCertificateArn.replace("arn:aws:", "arn:aws-cn:")],
+    ["play.example.com", customCertificateArn.replace("arn:aws:", "arn:aws-us-gov:")]
+  ]) {
+    const result = await deployment(["dev", "--api-only"], {
+      env: { CUSTOM_DOMAIN_NAME: hostname, CUSTOM_DOMAIN_CERTIFICATE_ARN: certificate }, outputs: customOutputs
+    });
+    assert.equal(result.exitCode, 0, result.error?.stack ?? result.logs.join("\n"));
+    const parameters = result.calls.find(call => call.command === "sam").args;
+    assert.ok(parameters.includes(`CustomDomainName="${hostname}"`));
+    assert.ok(parameters.includes(`CustomDomainCertificateArn="${certificate}"`));
+  }
+});
+
+test("独自ドメインの不完全な組合せと不正な名前・証明書はbuildとAWS操作より前に拒否する", async () => {
+  const invalidNames = [
+    " ", "Play.example.com", "play.example.com.", "*.example.com", "localhost", "example..com", "bad_name.example",
+    "https://play.example.com", "play.example.com/path", "play.example.com:443", "-play.example.com", "play-.example.com",
+    `${"a".repeat(64)}.example`, ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(62)].join("."),
+    "127.0.0.1", "2001:db8::1", "[2001:db8::1]", "例え.example"
+  ];
+  const invalidCertificates = [
+    " ", "not-an-arn", customCertificateArn.replace("us-east-1", "ap-northeast-1"),
+    customCertificateArn.replace("123456789012", "12345678901"), customCertificateArn.replace(":acm:", ":iam:"),
+    customCertificateArn.replace("certificate/", "certificate/extra/"), customCertificateArn.replace(/5$/u, "g"),
+    `${customCertificateArn}/extra`
+  ];
+  const invalidEnvironments = [
+    { CUSTOM_DOMAIN_NAME: "play.example.com" }, { CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn },
+    { CUSTOM_DOMAIN_NAME: "" }, { CUSTOM_DOMAIN_CERTIFICATE_ARN: "" },
+    { CUSTOM_DOMAIN_NAME: "", CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn },
+    { CUSTOM_DOMAIN_NAME: "play.example.com", CUSTOM_DOMAIN_CERTIFICATE_ARN: "" },
+    ...invalidNames.map(name => ({ CUSTOM_DOMAIN_NAME: name, CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn })),
+    ...invalidCertificates.map(certificate => ({ CUSTOM_DOMAIN_NAME: "play.example.com", CUSTOM_DOMAIN_CERTIFICATE_ARN: certificate }))
+  ];
+  for (const env of invalidEnvironments) {
+    const result = await deployment(["dev", "--api-only"], { env });
+    assert.equal(result.exitCode, 1, JSON.stringify(env));
+    assert.deepEqual(result.calls, [], JSON.stringify(env));
+    assert.deepEqual(result.health, []);
+  }
+});
+
+test("独自ドメインの通常公開とAPI-onlyはApiEndpointだけを確認し、healthの転送を許可しない", async () => {
+  for (const apiOnly of [false, true]) {
+    const result = await deployment(["dev", ...(apiOnly ? ["--api-only"] : [])], {
+      env: { CUSTOM_DOMAIN_NAME: "play.example.com", CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn }, outputs: customOutputs
+    });
+    assert.equal(result.exitCode, 0, result.error?.stack);
+    assert.deepEqual(result.health, Array(apiOnly ? 1 : 2).fill("https://play.example.com/api/health"));
+    assert.ok(result.healthOptions.every(settings => settings.redirect === "error"));
+    assert.equal(result.calls.filter(({ args }) => args.includes("sync")).length, apiOnly ? 0 : 2);
+    const firstHealth = result.events.findIndex(event => event.health);
+    if (!apiOnly) {
+      assert.ok(firstHealth < result.events.findIndex(event => event.args?.includes("sync")));
+      assert.ok(result.events.findIndex(event => event.args?.includes("create-invalidation")) < result.events.findLastIndex(event => event.health));
+    }
+    assert.ok(result.logs.some(line => line.includes("公開が完了しました") && line.includes("https://play.example.com")));
+  }
+});
+
+test("独自ドメインのDNS・TLS不調や転送を成功扱いせず、既定・private originへ迂回しない", async () => {
+  for (const failure of [new Error("テスト用のDNS・TLS接続失敗"), { redirectTo: "https://private-origin.example/api/health" }]) {
+    const result = await deployment(["dev"], {
+      outputs: customOutputs, healthResponses: Array(5).fill(failure)
+    });
+    assert.equal(result.exitCode, 1, result.error?.stack);
+    assert.deepEqual(result.health, Array(5).fill("https://play.example.com/api/health"));
+    assert.ok(result.healthOptions.every(settings => settings.redirect === "error"));
+    assert.ok(!result.calls.some(({ args }) => args.includes("sync") || args.includes("create-invalidation")));
+    assert.ok(!result.logs.some(line => line.includes("公開が完了しました")));
+    const message = result.logs.join("\n");
+    assert.match(message, /独自ドメイン/u);
+    assert.match(message, /DNS/u);
+    assert.ok(message.includes(defaultOutputs.DistributionDomainName));
+    assert.match(message, /DNS\s*only/iu);
+  }
+  const ordinaryFailure = await deployment(["dev", "--api-only"], { healthOk: false });
+  assert.equal(ordinaryFailure.exitCode, 1);
+  assert.ok(!ordinaryFailure.logs.some(line => /独自ドメイン/u.test(line)), "既定ドメインの障害をDNS設定誤りと決めつけない");
 });
 
 test("browserのコード必須設定では署名鍵に加えてコード秘密値も配備前に要求する", async () => {
@@ -330,12 +444,18 @@ test("policy取得失敗をpolicy不在と取り違えず、競合は再取得�
 });
 
 test("未実行の変更セット作成はmain SAMの後で止まり、policy・health・静的公開を進めない", async () => {
-  for (const arguments_ of [["dev", "--no-execute-changeset"], ["dev", "--api-only", "--no-execute-changeset"]]) {
-    const result = await deployment(arguments_);
+  for (const arguments_ of [["dev", "--no-execute-changeset"], ["dev", "--api-only", "--no-execute-changeset"]]) for (const env of [
+    {}, { CUSTOM_DOMAIN_NAME: "play.example.com", CUSTOM_DOMAIN_CERTIFICATE_ARN: customCertificateArn }
+  ]) {
+    const result = await deployment(arguments_, { env });
     assert.equal(result.exitCode, 0, result.error?.stack);
     const last = result.calls.at(-1);
     assert.equal(last.command, "sam");
     assert.ok(last.args.includes("--no-execute-changeset"));
+    if (env.CUSTOM_DOMAIN_NAME) {
+      assert.ok(last.args.includes('CustomDomainName="play.example.com"'));
+      assert.ok(last.args.includes(`CustomDomainCertificateArn="${customCertificateArn}"`));
+    }
     assert.deepEqual(result.health, []);
     assert.ok(!result.calls.some(({ args }) => ["get-resource-policy", "put-resource-policy", "sync", "create-invalidation"].includes(args[1])));
     assert.equal(result.calls.filter(({ args }) => args[1] === "describe-stacks").length, 1);

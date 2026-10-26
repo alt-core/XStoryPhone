@@ -10,6 +10,12 @@ Parameters:
   WebAclArn:
     Type: String
     Default: ""
+  CustomDomainName:
+    Type: String
+    Default: ""
+  CustomDomainCertificateArn:
+    Type: String
+    Default: ""
   EnvironmentName:
     Type: String
     AllowedValues: [dev, stg, prod]
@@ -138,6 +144,9 @@ Parameters:
 
 Conditions:
   HasWebAcl: !Not [!Equals [!Ref WebAclArn, ""]]
+  HasCustomDomain: !And
+    - !Not [!Equals [!Ref CustomDomainName, ""]]
+    - !Not [!Equals [!Ref CustomDomainCertificateArn, ""]]
   HasAllowedOrigins: !Not [!Equals [!Ref AllowedOrigins, ""]]
   HasBrowserStateSecret: !Not [!Equals [!Ref BrowserStateSecret, ""]]
   HasAccessCodeSecret: !Not [!Equals [!Ref AccessCodeSecret, ""]]
@@ -389,6 +398,13 @@ Resources:
     Properties:
       DistributionConfig:
         WebACLId: !If [HasWebAcl, !Ref WebAclArn, !Ref AWS::NoValue]
+        Aliases: !If [HasCustomDomain, [!Ref CustomDomainName], !Ref AWS::NoValue]
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref CustomDomainCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
         Enabled: true
         HttpVersion: http2and3
         IPV6Enabled: true
@@ -446,7 +462,9 @@ Resources:
 
 Outputs:
   SiteUrl:
-    Value: !Sub https://${Distribution.DomainName}
+    Value: !If [HasCustomDomain, !Sub "https://${CustomDomainName}", !Sub "https://${Distribution.DomainName}"]
+  DistributionDomainName:
+    Value: !GetAtt Distribution.DomainName
   StaticBucketName:
     Value: !Ref StaticBucket
   DistributionId:
@@ -454,7 +472,7 @@ Outputs:
   TableName:
     Value: !Ref AppTable
   ApiEndpoint:
-    Value: !Sub https://${Distribution.DomainName}
+    Value: !If [HasCustomDomain, !Sub "https://${CustomDomainName}", !Sub "https://${Distribution.DomainName}"]
   FunctionArn:
     Value: !GetAtt AppWebFunction.FunctionArn
   EndpointArn:

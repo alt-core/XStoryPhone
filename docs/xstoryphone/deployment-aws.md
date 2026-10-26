@@ -109,9 +109,34 @@ npm run deploy:aws:dev -- --no-execute-changeset
 ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 ```
 
-`--api-only` は静的クライアントのビルド、静的S3同期、CloudFront invalidationを省略し、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、APIのbundle・ZIP作成と配備を維持します。ヘルスチェックは通常配備と同じCloudFrontの `/api/health` を使い、`ApiEndpoint` もCloudFrontのbase URLを返します。既存の静的S3・CloudFront資源は削除せず、外部ホストへのアップロードも行いません。stg・prodでも同じオプションを使えます。
+`--api-only` は静的クライアントのビルド、静的S3同期、CloudFront invalidationを省略し、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、APIのbundle・ZIP作成と配備を維持します。ヘルスチェックは通常配備と同じCloudFrontの `/api/health` を使います。`SiteUrl` と `ApiEndpoint` は公開URLを返し、独自ドメインを設定した場合はそちらを使います。既存の静的S3・CloudFront資源は削除せず、外部ホストへのアップロードも行いません。stg・prodでも同じオプションを使えます。
 
 `ALLOWED_ORIGINS` は配備処理の開始前に検証し、SAMの `AllowedOrigins` へ渡します。未指定・空文字での配備は許可設定を空へ戻すため、継続して利用するoriginは毎回渡してください。クライアントを作らないAPI-onlyでは、クライアント用の保存設定や `VITE_XSTORYPHONE_API_BASE_URL` は使用・検証しません。初回導入や `clientRevision` が変わる更新はAPI-onlyだけでは完了しないため、[APIと画面を揃える更新手順](external-hosting.md#更新とclientrevision)も確認してください。
+
+### 独自ドメイン
+
+発行済みのACM証明書を使い、既存のCloudFrontへ `play.example.com` のような名前を一つ追加できます。DNSはRoute 53に限らず、Cloudflareなど外部のDNS事業者でも管理できます。証明書の発行とDNSレコードの作成は、この配備では自動化しません。独自ドメインを指定しない新規環境は、従来どおりCloudFront標準ドメインで公開します。
+
+1. 新しい環境では、まず独自ドメインなしで一度配備します。CloudFormationの出力 `DistributionDomainName` から、公開CNAMEの向け先となるCloudFront標準ホスト名を確認します。この出力がまだない旧版の環境では、標準ドメインを使っている `SiteUrl` のホスト名を使えます。
+2. 配備先と同じAWSアカウントの **us-east-1** に、公開する名前を含むACM証明書を用意します。証明書の対象名（SAN）が `play.example.com` を含むか、対応するワイルドカードで覆うことを確認してください。DNS検証の場合はACMが示す検証用CNAMEをDNSへ置き、証明書が `ISSUED` になってから進みます。このCNAMEは自動更新にも必要なので残します。Cloudflareではプロキシを切った **DNS only** にし、検証用CNAMEは平坦化せずCNAMEのまま応答させてください。
+3. 公開する名前から `DistributionDomainName` へ向けるCNAMEを、配備より先に作成します。これは証明書の検証用CNAMEとは別のレコードです。Cloudflare等のプロキシは使わずDNS onlyにします。`example.com` 自体（apex）を使う場合は、DNS事業者のCNAME平坦化・ALIAS相当の機能が必要です。CloudFrontへ名前と証明書を設定するまでは、このURLを開いても正しい証明書で応答できないため、まだプレイヤーへ案内しないでください。
+4. 必要な秘密値等を設定したうえで、二つの環境変数をshellから渡して配備します。次はdevの例です。stg・prodは対応するコマンドを明示してください。
+
+```sh
+CUSTOM_DOMAIN_NAME=play.example.com \
+CUSTOM_DOMAIN_CERTIFICATE_ARN=arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000 \
+npm run deploy:aws:dev
+```
+
+`SiteUrl` と `ApiEndpoint` は `https://play.example.com` になり、`DistributionDomainName` はDNSの向け先となる標準ホスト名を返します。ヘルスチェックも独自ドメインの `/api/health` へ直接接続し、別URLへのredirectを成功扱いにしません。DNSがまだ引けない場合など、最初の確認に失敗すると静的S3同期・invalidationの前で停止します。この時点ではAPI側は更新済みの場合があるため、DNS・証明書・DNS onlyの設定を確認し、同じ配備を再実行して揃えてください。標準ドメインへ迂回して配備完了とはしません。
+
+追加後もCloudFront標準ドメインは利用できます。標準ドメインから独自ドメインへの自動転送は追加しません。同じ公開名を複数のdistributionへ重複設定することはできないため、dev・stg・prodで異なる名前を使ってください。Cloudflare等のプロキシを通すとCDNが二重になり、WAFのIP判定もプロキシ側のIPを見てしまうため、本手順ではDNS onlyを使います。CAAレコードで証明書の発行者を制限している場合は、`amazon.com` を許可してください。
+
+独自ドメインを外す場合は、`CUSTOM_DOMAIN_NAME='' CUSTOM_DOMAIN_CERTIFICATE_ARN=''` を付けて同じ環境へ配備し、完了後に公開用CNAMEを削除します。証明書検証用のCNAMEは、証明書の利用・更新が不要と確認するまで削除しないでください。
+
+画面のoriginが変わるとブラウザー内の保存は自動継承されません。serverモードは、同じDB・認証設定でパスコードが引き続き受理されるなら、同じパスコードの再入力で再開できます。browserのpersistent進行は旧originに残り、新originからは読めないため、中断再開させる公開URLは公開前に確定することを推奨します。転送しても保存は移りません。memoryは通常reloadで進行を失います。保存方式の詳細は[プレイヤーモード](player-modes.md)を参照してください。
+
+同じoriginから画面とAPIを配信する通常構成では、独自ドメインを付けるためのCORS設定追加は不要です。外部静的ホストの画面originを保ちAPIのURLだけを変える場合は、保存を初期化せず、[外部静的ホストのAPI設定](external-hosting.md#aws)を更新してください。
 
 ## 環境設定
 
@@ -132,6 +157,17 @@ ALLOWED_ORIGINS=https://static.example npm run deploy:aws:dev -- --api-only
 コンソール等で直接設定した関連付けを自動で取り込む機能ではありません。本設定へ移す最初の配備では既存のARNを明示してください。
 
 このWAF設定が保護するのはCloudFront経由の通信です。APIの接続先もCloudFrontであり、署名なしでprivate originへ直接アクセスする経路は許可しません。ただし、アクセスコードの総当たりや外部生成費用の上限を、この関連付けだけで保証するものではありません。
+
+独自ドメインは、shell環境変数 `CUSTOM_DOMAIN_NAME` と `CUSTOM_DOMAIN_CERTIFICATE_ARN` を対で指定します。`.env` の編集だけでは配備設定へ反映されません。
+
+| 二つの変数の指定 | 動作 |
+|---|---|
+| 両方未指定 | 既存の設定を維持。新規stackでは独自ドメインなし |
+| 両方に値を指定 | 名前と発行済み証明書を設定 |
+| 両方に空文字を指定 | 独自ドメインを解除 |
+| 片方だけ指定、または片方だけ空文字 | ビルド・AWS呼出し前に拒否 |
+
+名前は小文字のホスト名で指定し、URL、path、ワイルドカード、末尾の点は付けません。国際化ドメインは `xn--` の表記を使います。証明書ARNはus-east-1のACM証明書を指定します。値の形は配備前に検査しますが、証明書の状態・所有アカウント・対象名やDNSの実設定までは事前照会しないため、[独自ドメインの手順](#独自ドメイン)に従って確認してください。
 
 プレイヤー画面の保存名には `VITE_XSTORYPHONE_STORAGE_PREFIX`、保持方式には `VITE_XSTORYPHONE_CLIENT_STORAGE=persistent|memory` を、クライアントをビルドする環境またはViteが読む `.env` 等で設定します。未指定は従来の保存を維持します。共有originのpersistent公開では重複しないprefixを指定してください。memoryはbrowser/staticで利用でき、serverとの組合せや不正値はクライアントビルドで拒否します。クラウドを変更しない `npm run build:aws` でも検証できます。prefix変更時の旧保存の扱い、memoryの寿命と保証範囲は[クライアント保存の設定](player-modes.md#クライアント保存の設定)を参照してください。
 
@@ -212,7 +248,7 @@ DynamoDBテーブルと静的S3バケットは誤消去防止のため保持さ�
 ## 初期範囲外
 
 - 既存D1データの移行
-- カスタムドメイン、Route 53、ACM
+- Route 53のレコード管理とACM証明書発行の自動化（独自ドメインは発行済み証明書を利用）
 - Bedrock、Polly
 - Lambda Function URL
 - DynamoDB PITR

@@ -46,6 +46,8 @@ test("AWS初期構成は必要最小限のサーバーレス資源だけを定�
     "AWS::ECS::Service",
     "AWS::StepFunctions::StateMachine",
     "AWS::Scheduler::Schedule",
+    "AWS::CertificateManager::Certificate",
+    "AWS::Route53::RecordSet",
     "AWS::Serverless::Function",
     "AWS::Serverless::HttpApi",
     "AWS::Lambda::Function"
@@ -125,8 +127,20 @@ test("DynamoDB・公開素材・CloudFrontのlogical IDと保存契約を維持�
   assert.match(distribution, /DomainName: !GetAtt StaticBucket\.RegionalDomainName/u);
   assert.match(distribution, /FunctionARN: !GetAtt SpaRewriteFunction\.FunctionARN/u);
   for (const output of ["SiteUrl", "ApiEndpoint"]) {
-    assert.match(template, new RegExp(`${output}:\\n\\s+Value: !Sub https://\\$\\{Distribution\\.DomainName\\}`, "u"));
+    assert.match(template, new RegExp(`${output}:\\n\\s+Value: !If \\[HasCustomDomain, !Sub "https://\\$\\{CustomDomainName\\}", !Sub "https://\\$\\{Distribution\\.DomainName\\}"\\]`, "u"));
   }
+  assert.match(template, /DistributionDomainName:\n\s+Value: !GetAtt Distribution\.DomainName/u);
+});
+
+test("独自ドメインは単一aliasとACMを設定し、未指定・解除時は既定証明書へ戻す", () => {
+  for (const parameter of ["CustomDomainName", "CustomDomainCertificateArn"]) {
+    assert.match(template, new RegExp(`  ${parameter}:\\n    Type: String\\n    Default: ""`, "u"));
+  }
+  assert.match(template, /HasCustomDomain: !And\n\s+- !Not \[!Equals \[!Ref CustomDomainName, ""\]\]\n\s+- !Not \[!Equals \[!Ref CustomDomainCertificateArn, ""\]\]/u);
+  const distribution = resourceBlock(template, "Distribution");
+  assert.match(distribution, /Aliases: !If \[HasCustomDomain, \[!Ref CustomDomainName\], !Ref AWS::NoValue\]/u);
+  assert.match(distribution, /ViewerCertificate: !If\n\s+- HasCustomDomain\n\s+- AcmCertificateArn: !Ref CustomDomainCertificateArn\n\s+SslSupportMethod: sni-only\n\s+MinimumProtocolVersion: TLSv1\.2_2021\n\s+- CloudFrontDefaultCertificate: true/u);
+  assert.doesNotMatch(distribution, /IamCertificateId:|SslSupportMethod: vip/u);
 });
 
 test("既存の実行role logical IDとDynamoDB CRUD権限を維持し、両ログの保持期限を設定する", () => {

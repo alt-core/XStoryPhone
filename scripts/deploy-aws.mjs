@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { isIP } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { loadAndValidateScenario } from "./scenario-lib.mjs";
@@ -37,6 +38,25 @@ const webAclArn = process.env.WEB_ACL_ARN;
 if (webAclArn !== undefined && webAclArn !== "" && !/^arn:aws(?:-[a-z]+)*:wafv2:us-east-1:\d{12}:global\/webacl\/[A-Za-z0-9_-]+\/[A-Za-z0-9-]+$/u.test(webAclArn)) {
   console.error("WEB_ACL_ARNはus-east-1のCloudFront用WebACL ARN、または解除するための空文字を指定してください。");
   process.exit(1);
+}
+const customDomainName = process.env.CUSTOM_DOMAIN_NAME;
+const customDomainCertificateArn = process.env.CUSTOM_DOMAIN_CERTIFICATE_ARN;
+if ((customDomainName === undefined) !== (customDomainCertificateArn === undefined)
+  || (customDomainName === "") !== (customDomainCertificateArn === "")) {
+  console.error("CUSTOM_DOMAIN_NAMEとCUSTOM_DOMAIN_CERTIFICATE_ARNは両方を指定するか、両方を省略してください。解除するときは両方に空文字を指定してください。");
+  process.exit(1);
+}
+if (customDomainName) {
+  const labels = customDomainName.split(".");
+  if (customDomainName.length > 253 || labels.length < 2 || isIP(customDomainName)
+    || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))) {
+    console.error("CUSTOM_DOMAIN_NAMEは小文字のホスト名を指定してください。URL・IPアドレス・ワイルドカード・末尾の点は使えません。国際化ドメインはxn--表記にしてください。");
+    process.exit(1);
+  }
+  if (!/^arn:aws(?:-[a-z]+)*:acm:us-east-1:\d{12}:certificate\/[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/u.test(customDomainCertificateArn)) {
+    console.error("CUSTOM_DOMAIN_CERTIFICATE_ARNはus-east-1のACM証明書ARNを指定してください。");
+    process.exit(1);
+  }
 }
 const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS).join(",");
 
@@ -125,10 +145,12 @@ function stackOutputs(name) {
   return Object.fromEntries(outputs.map(({ OutputKey, OutputValue }) => [OutputKey, OutputValue]));
 }
 
-async function checkHealth(endpoint) {
+async function checkHealth(endpoint, distributionDomainName) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      const response = await fetch(`${endpoint.replace(/\/$/u, "")}/api/health`, { signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(`${endpoint.replace(/\/$/u, "")}/api/health`, {
+        redirect: "error", signal: AbortSignal.timeout(30_000)
+      });
       if (response.ok) {
         const body = await response.json();
         if (body.ok === true && body.clientRevision === selectedScenario.clientRevision) return;
@@ -139,6 +161,9 @@ async function checkHealth(endpoint) {
     if (attempt < 4) await setTimeout(2_000);
   }
   console.error("ヘルスチェックに失敗しました。APIの正常応答とclientRevisionを確認してください。");
+  if (distributionDomainName && new URL(endpoint).hostname !== distributionDomainName) {
+    console.error(`独自ドメインのDNSが${distributionDomainName}を向いているか、DNSサービスのプロキシを切っているか（DNS only）も確認してください。`);
+  }
   process.exit(1);
 }
 
@@ -197,6 +222,9 @@ run("sam", [
   `EnvironmentName=${environment}`,
   `ProjectName=${projectName}`,
   ...(webAclArn === undefined ? [] : [`WebAclArn="${webAclArn}"`]),
+  ...(customDomainName === undefined ? [] : [
+    `CustomDomainName="${customDomainName}"`, `CustomDomainCertificateArn="${customDomainCertificateArn}"`
+  ]),
   `CodeBucketName=${codeBucket}`,
   `CodeObjectKey=${codeKey}`,
   `CodeObjectVersion=${code.VersionId}`,
@@ -238,7 +266,7 @@ if (!isDeepStrictEqual(statements.find(item => item.Sid === statement.Sid), stat
   awsJson(["lambda-web", "put-resource-policy", "--resource-arn", outputs.FunctionArn, "--policy", JSON.stringify(policy), ...(current ? ["--revision-id", current.revisionId] : [])]);
 }
 run("aws", ["cloudfront", "wait", "distribution-deployed", "--id", outputs.DistributionId]);
-await checkHealth(healthEndpoint);
+await checkHealth(healthEndpoint, outputs.DistributionDomainName);
 
 if (!apiOnly) {
   const destination = `s3://${outputs.StaticBucketName}`;
@@ -253,5 +281,5 @@ if (!apiOnly) {
   run("aws", ["cloudfront", "create-invalidation", "--distribution-id", outputs.DistributionId, "--paths", "/*"]);
 }
 
-if (!apiOnly) await checkHealth(healthEndpoint);
+if (!apiOnly) await checkHealth(healthEndpoint, outputs.DistributionDomainName);
 console.log(`AWSへの${apiOnly ? "APIのみの" : ""}公開が完了しました: ${healthEndpoint}`);

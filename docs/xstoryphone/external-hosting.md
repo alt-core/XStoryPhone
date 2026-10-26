@@ -75,11 +75,13 @@ npm run deploy:aws:dev -- --api-only
 
 - 維持する処理: 公開境界監査、シナリオ生成、AWS用シナリオ監査、クライアントのソース境界監査、APIのbundle・ZIP作成、非公開コード用S3への配置とWeb Functionの配備・呼出policy確認。
 - 省略する処理: クライアントビルド、静的S3同期、CloudFront invalidation。
-- ヘルスチェック: 通常配備・API-onlyともCloudFront経由の `/api/health`。CloudFormation出力の `ApiEndpoint` と `SiteUrl` はどちらもCloudFrontのbase URLです。
+- ヘルスチェック: 通常配備・API-onlyともCloudFront経由の `/api/health`。CloudFormation出力の `ApiEndpoint` と `SiteUrl` は公開URLで、独自ドメインを設定した場合はそちらを返します。`DistributionDomainName` はDNSの向け先となるCloudFront標準ホスト名です。
 
 S3・CloudFrontは既存スタックに残ります。既存の静的ファイルを更新・削除せず、外部ホストへもアップロードしません。未知・重複したオプションは処理開始前に拒否します。
 
-`VITE_XSTORYPHONE_API_BASE_URL`にはCloudFrontのURLを指定します。Web Functionのprivate originは直接の接続先にしません。API Gateway構成でexecute-api URLを使っていた外部画面は、同じ静的originと保存prefixを保ったままCloudFrontのURLで再ビルドしてください。接続先の変更を理由に進行データを削除しないでください。既存AWS構成からの初回切替には一時停止があり得るため、[初回切替の確認事項](deployment-aws.md#api-gateway構成からの初回切替)も確認してください。
+`VITE_XSTORYPHONE_API_BASE_URL`には、`ApiEndpoint` が示す公開URLを指定します。独自ドメインを使う場合も、[AWSの独自ドメイン手順](deployment-aws.md#独自ドメイン)で設定したCloudFront経由のURLを使い、Web Functionのprivate originは直接の接続先にしません。API Gateway構成でexecute-api URLを使っていた外部画面は、同じ静的originと保存prefixを保ったまま公開URLで再ビルドしてください。接続先の変更を理由に進行データを削除しないでください。既存AWS構成からの初回切替には一時停止があり得るため、[初回切替の確認事項](deployment-aws.md#api-gateway構成からの初回切替)も確認してください。
+
+外部画面のorigin・保存prefix・`project.id` と同じbackendのデータ・認証設定を維持する場合、APIの接続先を独自ドメインへ替えても保存を引き続き使えます。`ALLOWED_ORIGINS` に指定するのは引き続き外部画面のoriginであり、APIの独自ドメインを追加する設定ではありません。画面のoriginそのものを移す場合は、ブラウザー保存を自動継承しない点を区別してください。
 
 `ALLOWED_ORIGINS` は配備開始前に検証し、SAMの `AllowedOrigins` parameterへ渡します。未指定・空文字では許可設定を空へ戻すので、継続して利用する値は毎回渡してください。API-onlyでは静的クライアント用の保存設定・API接続先設定を使わず、検証もしません。これらは別途 `build:static` で検証します。
 
