@@ -17,6 +17,13 @@ function fakeTransport(handler = async () => ({})) {
     transport: {
       async execute(operation, input) {
         calls.push({ operation, input });
+        // 実際のDynamoDBと同じく、キー条件の値に空文字を受け付けない。
+        if (operation === "Query") {
+          const values = dynamoDocument.valueFromItem(input.ExpressionAttributeValues ?? {});
+          if ((input.KeyConditionExpression.match(/:\w+/gu) ?? []).some((name) => values[name] === "")) {
+            throw Object.assign(new Error("キー条件の空文字"), { name: "ValidationException" });
+          }
+        }
         return handler(operation, input, calls.length - 1);
       }
     }
@@ -272,6 +279,18 @@ test("DynamoDB版もアクセスコード失敗回数を同じテーブルの有
   assert.equal(cleared.calls[0].operation, "UpdateItem");
   assert.match(cleared.calls[0].input.UpdateExpression, /ADD successCount :one/u);
   assert.match(cleared.calls[0].input.ConditionExpression, /disabled = :no/u);
+});
+
+test("DynamoDB版のアクセスコード一覧は、最初の頁で空のカーソルをキー条件へ渡さない", async () => {
+  const fake = fakeTransport(async () => ({ Items: [] }));
+  const store = new DynamoStore(fake.transport, "table");
+  assert.deepEqual(await store.accessCodes("", 100), { items: [], nextCursor: null });
+  await store.accessCodes("0042", 100);
+  const [first, next] = fake.calls.map((call) => call.input);
+  assert.equal(first.KeyConditionExpression, "GSI1PK = :pk");
+  assert.deepEqual(dynamoDocument.valueFromItem(first.ExpressionAttributeValues), { ":pk": "ACCESS_CODES" });
+  assert.equal(next.KeyConditionExpression, "GSI1PK = :pk AND GSI1SK > :after");
+  assert.equal(dynamoDocument.valueFromItem(next.ExpressionAttributeValues)[":after"], "0042");
 });
 
 test("DynamoDB版search agent履歴もtalk単位itemで直近200表示eventへ制限する", async () => {

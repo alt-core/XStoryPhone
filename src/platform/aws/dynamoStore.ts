@@ -321,9 +321,11 @@ export class DynamoStore implements AppStore {
     return row ? this.accessCodeRecord({ ...row, counter }) : null;
   }
   async accessCodes(after: string, limit: number) {
+    // DynamoDBはキー条件の空文字を拒否するため、最初の頁では並びの条件を付けない。
     const result = await this.transport.execute("Query", {
-      TableName: this.tableName, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk AND GSI1SK > :after",
-      ExpressionAttributeValues: item({ ":pk": "ACCESS_CODES", ":after": after }), Limit: limit, ScanIndexForward: true
+      TableName: this.tableName, IndexName: "GSI1",
+      KeyConditionExpression: after ? "GSI1PK = :pk AND GSI1SK > :after" : "GSI1PK = :pk",
+      ExpressionAttributeValues: item({ ":pk": "ACCESS_CODES", ...(after ? { ":after": after } : {}) }), Limit: limit, ScanIndexForward: true
     });
     const items = (result.Items ?? []).map(row => this.accessCodeRecord(valueFromItem(row)));
     return { items, nextCursor: result.LastEvaluatedKey && items.length ? items[items.length - 1].counter : null };
