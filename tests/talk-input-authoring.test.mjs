@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseTalkOutputSteps } from "../scripts/lib/talk-output-steps.mjs";
+import { validateScenarioParts } from "../scripts/lib/scenario-parts.mjs";
+import { workerScenario } from "../src/generated/workerScenario.generated.ts";
 import { readScenarioFixture } from "./helpers/authoring-fixture.mjs";
 
 const scenarioLibUrl = new URL("./helpers/authoring-fixture.mjs", import.meta.url).href;
@@ -89,6 +91,97 @@ test("Quick Replyは14件以上かつ20文字超でも500文字以内なら許�
   } finally {
     fs.rmSync(target, { recursive: true, force: true });
   }
+});
+
+test("Quick Replyの表示文分離と明示空、区切り文字のescapeを読み分ける", () => {
+  const target = copiedScenario();
+  try {
+    const file = path.join(target, "authoring/talk_blocks.tsv");
+    const source = fs.readFileSync(file, "utf8");
+    const original = '"古いメモ\nヒント\n機能テスト\nヘルプ"';
+    assert.ok(source.includes(original));
+    const replies = [
+      "従来の候補",
+      " はい => はい、お願いします ",
+      "続きを読む =>",
+      "{{os_date}} => {{os_time_label}}",
+      String.raw`矢印\=>付き => 発言\=>は文字のまま => 続き`,
+      String.raw`文字として\=>表示`,
+      `${"長".repeat(500)} => ${"文".repeat(500)}`
+    ];
+    fs.writeFileSync(file, source.replace(original, `"${replies.join("\n")}"`));
+    const result = validateScenario(target);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout).quickReplies, [
+      "従来の候補",
+      { label: "はい", text: "はい、お願いします" },
+      { label: "続きを読む", text: "" },
+      { label: "{{os_date}}", text: "{{os_time_label}}" },
+      { label: "矢印=>付き", text: "発言=>は文字のまま => 続き" },
+      "文字として=>表示",
+      { label: "長".repeat(500), text: "文".repeat(500) }
+    ]);
+  } finally {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("Quick Replyの表示文にもtemplateと500文字の検証をかけ、空labelと重複labelを拒否する", () => {
+  const cases = [
+    ["=> 発言だけ", /空の選択肢/u],
+    ["同じ => 発言1\n同じ => 発言2", /重複/u],
+    ["同じ\n同じ => 発言2", /重複/u],
+    [[String.raw`矢印\=>付き`, String.raw`矢印\=>付き => 発言`].join("\n"), /重複/u],
+    ["候補 => {{unknown_reply_text}}", /未定義template/u],
+    ["候補 => {{invalid", /template構文が不正/u],
+    [`${"長".repeat(501)} => 発言`, /500文字以内/u],
+    [`候補 => ${"長".repeat(501)}`, /500文字以内/u]
+  ];
+  for (const [replies, expected] of cases) {
+    const target = copiedScenario();
+    try {
+      const file = path.join(target, "authoring/talk_blocks.tsv");
+      const source = fs.readFileSync(file, "utf8");
+      fs.writeFileSync(file, source.replace('"古いメモ\nヒント\n機能テスト\nヘルプ"', `"${replies}"`));
+      const result = validateScenario(target);
+      assert.notEqual(result.status, 0, replies);
+      assert.match(result.stderr, expected);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  }
+});
+
+test("Quick Replyだけの本文なし行は引き続き拒否する", () => {
+  for (const blockId of ["search_agent::intro", "guide::message_reply"]) {
+    const target = copiedScenario();
+    try {
+      const file = path.join(target, "authoring/talk_blocks.tsv");
+      const source = fs.readFileSync(file, "utf8");
+      const body = workerScenario.talkBlocks.find((block) => block.id === blockId).messages.at(-1).body;
+      assert.ok(source.includes(body));
+      fs.writeFileSync(file, source.replace(body, ""));
+      const result = validateScenario(target);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /body または attachment が必要/u);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  }
+});
+
+test("初期Quick Replyの発言だけで参照する変数も、開始時のpart取得を検査する", () => {
+  const worker = structuredClone(workerScenario);
+  worker.parts = [...new Set([...(worker.parts ?? ["base"]), "reply_later"])];
+  worker.stateVariables.reply_later_text = "取得後の発言";
+  worker.stateVariableDefinitions.reply_later_text = { type: "string" };
+  worker.stateVariableParts.reply_later_text = "reply_later";
+  const block = worker.talkBlocks.find((item) => item.id === "search_agent::intro");
+  assert.ok(block);
+  block.messages.at(-1).quickReplies = [{ label: "候補", text: "{{reply_later_text}}" }];
+  assert.throws(() => validateScenarioParts(worker), /初期履歴envに必要な変数が開始時に未取得です: reply_later_text/u);
+  worker.stateVariableParts.reply_later_text = "base";
+  assert.doesNotThrow(() => validateScenarioParts(worker));
 });
 
 test("talk sourceのfalseと通常talkの/inputを維持する", () => {

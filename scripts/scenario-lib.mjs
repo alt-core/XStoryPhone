@@ -1,3 +1,4 @@
+import { quickReplyLabel, quickReplyTemplateTexts } from "../src/shared/quickReplies.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -148,18 +149,26 @@ function splitList(value) {
 function quickRepliesFromCell(value, label, errors) {
   const source = String(value ?? "");
   if (!source) return [];
-  const replies = source.split(/\r?\n/u).map((item) => item.trim().normalize("NFC"));
-  if (replies.some((item) => !item)) {
-    errors.push(`${label}: quick_replies に空の選択肢を含められません。`);
-  }
+  const replies = source.split(/\r?\n/u).map((item) => {
+    const line = item.trim().normalize("NFC");
+    const separator = line.search(/(?<!\\)=>/u);
+    const literal = (text) => text.replaceAll("\\=>", "=>").trim();
+    return separator < 0 ? literal(line) : {
+      label: literal(line.slice(0, separator)), text: literal(line.slice(separator + 2))
+    };
+  });
   const seen = new Set();
   for (const reply of replies) {
-    if (seen.has(reply)) errors.push(`${label}: quick_replies が重複しています: ${reply}`);
-    seen.add(reply);
-    validateTextLength(`${label}: quick_replies`, reply, MAX_TALK_INPUT_LENGTH, errors);
-    validateTemplateSyntax(`${label}: quick_replies`, reply, errors);
+    const button = quickReplyLabel(reply);
+    if (!button) errors.push(`${label}: quick_replies に空の選択肢を含められません。`);
+    if (seen.has(button)) errors.push(`${label}: quick_replies が重複しています: ${button}`);
+    seen.add(button);
+    for (const text of quickReplyTemplateTexts(reply)) {
+      validateTextLength(`${label}: quick_replies`, text, MAX_TALK_INPUT_LENGTH, errors);
+      validateTemplateSyntax(`${label}: quick_replies`, text, errors);
+    }
   }
-  return replies.filter(Boolean);
+  return replies.filter((reply) => quickReplyLabel(reply));
 }
 
 function normalizeSearchTerms(value) {
@@ -268,7 +277,7 @@ function blockTemplateKeys(block) {
   return [...new Set((block?.messages ?? []).flatMap((message) => [
     ...templateKeys(message.body),
     ...(message.segments ?? []).flatMap((segment) => segment.kind === "text" ? templateKeys(segment.text) : []),
-    ...(message.quickReplies ?? []).flatMap(templateKeys)
+    ...(message.quickReplies ?? []).flatMap(quickReplyTemplateTexts).flatMap(templateKeys)
   ]))];
 }
 

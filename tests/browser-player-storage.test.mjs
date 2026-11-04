@@ -168,6 +168,41 @@ async function replaceCurrentToken(projectId, token) {
 }
 
 test("browser player storage", async (suite) => {
+  for (const mode of ["persistent", "memory"]) {
+    await suite.test(`${mode}: Quick Replyのlabelと発言、明示空を初期履歴と差分履歴に保持する`, async () => {
+      globalThis.indexedDB = new IDBFactory();
+      installBrowserStorage();
+      const options = { enabled: true, projectId: `reply-options-${mode}`, clientRevision: "client-current", storage: { mode, prefix: "" } };
+      let storage = await freshStorageModule();
+      await storage.initializeBrowserPlayerStorage(options);
+      const quickReplies = ["従来の候補", { label: "はい", text: "はい、お願いします" }, { label: "続きを読む", text: "" }];
+      const initial = { ...smsMessage(1), quickReplies };
+      const message = { ...smsMessage(3), quickReplies };
+      const search = { ...searchMessage(2), quickReplies };
+      await storage.commitBrowserPlayerResponse(null, playerState({
+        token: "token-1", talkLastSeq: 3, searchLastSeq: 2, initialMessages: [initial],
+        deltas: [
+          { kind: "sms", talkId: "guide", transcriptKey: "talk-key", messages: [smsMessage(2), message] },
+          { kind: "search_agent", talkId: SEARCH_AGENT_PUBLIC_TALK_ID, transcriptKey: "search-key", messages: [searchMessage(1), search] }
+        ]
+      }), { replaceStreams: true });
+      if (mode === "persistent") {
+        storage = await freshStorageModule();
+        await storage.initializeBrowserPlayerStorage(options);
+      }
+      const restored = storage.loadCachedBrowserPlayerState();
+      assert.deepEqual(restored.visibleDeviceState.messages[0].messages.find((item) => item.seq === 1).quickReplies, quickReplies);
+      assert.deepEqual(restored.smsMessages.at(-1).quickReplies, quickReplies);
+      assert.deepEqual(restored.searchAgentMessages.at(-1).quickReplies, quickReplies);
+      await assert.rejects(storage.commitBrowserPlayerResponse("token-1", playerState({
+        token: "token-2", talkLastSeq: 3, searchLastSeq: 2, initialMessages: [initial],
+        deltas: [{ kind: "sms", talkId: "guide", transcriptKey: "talk-key", messages: [{ ...message, quickReplies: [{ label: "不正", text: null }] }] }]
+      })), (error) => error instanceof storage.BrowserPlayerStorageError && error.kind === "corrupt");
+      assert.deepEqual(storage.loadCachedBrowserPlayerState().smsMessages.at(-1).quickReplies, quickReplies);
+      assert.equal(await storage.prepareBrowserPlayerRequest(), "token-1");
+    });
+  }
+
   await suite.test("作中の発話表示時刻は進行tokenとともに保存され、再読込と時計変更で変わらない", async () => {
     globalThis.indexedDB = new IDBFactory();
     installBrowserStorage();

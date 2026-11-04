@@ -1,3 +1,4 @@
+import { quickReplyTemplateTexts } from "./quickReplies.ts";
 import type { ScenarioTalkBlockMessage } from "./scenario.ts";
 
 export function templateVariableNames(value: string) {
@@ -9,6 +10,6 @@ export function messageTemplateKeys(message: Pick<ScenarioTalkBlockMessage, "bod
   return message.initialTemplateKeys ?? [...new Set([
     ...templateVariableNames(message.body),
     ...(message.segments ?? []).flatMap(segment => segment.kind === "text" ? templateVariableNames(segment.text) : []),
-    ...(message.quickReplies ?? []).flatMap(templateVariableNames)
+    ...(message.quickReplies ?? []).flatMap(quickReplyTemplateTexts).flatMap(templateVariableNames)
   ])];
 }

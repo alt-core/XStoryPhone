@@ -11,6 +11,7 @@
   import UserAvatar from "../system/UserAvatar.svelte";
   import VideoStillFrame from "../system/VideoStillFrame.svelte";
   import { resourceUrl } from "../system/resourceUrls";
+  import { quickReplyLabel, quickReplyText, type QuickReply, type TalkSendOptions } from "../../shared/quickReplies.ts";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
   import {
     queuedTalkMessageDelayMs,
@@ -48,7 +49,7 @@
 
   export let threads: MessageThread[] = [];
   export let photos: PhotoItem[] = [];
-  export let onSend: (talkId: string, message: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
+  export let onSend: (talkId: string, message: string, options?: TalkSendOptions) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"
   });
@@ -182,7 +183,7 @@
   $: selectedThreadCanPost = resolvedInput.canSubmit;
   $: quickReplyPlacement = sending
     ? undefined
-    : latestQuickReplyPlacement(selectedThread?.messages ?? [], visibleMessageIds, selectedThreadCanPost);
+    : latestQuickReplyPlacement(selectedThread?.messages ?? [], visibleMessageIds, selectedThreadCanPost, selectedThreadInput?.quickRepliesClosedSeq);
   $: latestMessageId = selectedThread?.messages[selectedThread.messages.length - 1]?.id ?? "";
   $: quickReplySignature = quickReplyPlacement?.messageId ?? "";
   $: historySignature = selectedThread
@@ -407,7 +408,7 @@
     }
   }
 
-  async function sendQuickReply(reply: string) {
+  async function sendQuickReply(reply: QuickReply, quickReplySeq?: number) {
     if (!selectedThread || selectedThread.corrupted || !selectedThreadCanPost || sending) {
       return;
     }
@@ -420,7 +421,9 @@
     const outgoingDraft = composer;
     composer.error = "";
     try {
-      const result = await onSend(talkId, reply);
+      const result = typeof reply === "string"
+        ? await onSend(talkId, reply)
+        : await onSend(talkId, quickReplyLabel(reply), { display: quickReplyText(reply), quickReplySeq });
       if (!result.ok) {
         outgoingDraft.error = result.error ?? "送信に失敗しました。";
         return;
@@ -942,7 +945,7 @@
                   </article>
                   {#if quickReplyPlacement?.messageId === message.id}
                     <div class="history-quick-replies">
-                      <QuickReplies replies={quickReplyPlacement.replies} accent="#5cc8a7" onSelect={sendQuickReply} />
+                      <QuickReplies replies={quickReplyPlacement.replies} accent="#5cc8a7" onSelect={(reply) => sendQuickReply(reply, message.seq)} />
                     </div>
                   {/if}
                   {#if readDividerAfterMessageId === message.id}

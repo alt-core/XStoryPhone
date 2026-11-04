@@ -1,3 +1,4 @@
+import type { QuickReply } from "../../shared/quickReplies.ts";
 import type { AppId } from "../../shared/appRegistry.ts";
 import type { ProjectAppId } from "../../generated/projectAppIds.generated";
 import type { ProjectAppContent } from "../system/projectAppTypes";
@@ -113,7 +114,7 @@ export type Message = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment?: MessageAttachment;
-  quickReplies?: string[];
+  quickReplies?: QuickReply[];
 };
 
 export type BrokenTalkHistoryRange = {
@@ -253,7 +254,7 @@ export type ChatAppMessage = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment?: MessageAttachment;
-  quickReplies?: string[];
+  quickReplies?: QuickReply[];
 };
 
 export type ChatAppThread = {
@@ -313,7 +314,7 @@ export type SearchAgentMessage =
       kind: "message";
       body: string;
       segments?: MessageSegment[];
-      quickReplies?: string[];
+      quickReplies?: QuickReply[];
     }
   | SearchAgentItemBase & {
       kind: "search_results";
@@ -327,6 +328,7 @@ export type TalkInputState = {
   inputVisibleAfterSeq: number;
   inputEnabled: boolean;
   inputEnabledAfterSeq: number;
+  quickRepliesClosedSeq?: number;
 };
 
 export type SearchAgentTalkView = TalkInputState & {

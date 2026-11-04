@@ -1,3 +1,4 @@
+import type { QuickReply } from "./quickReplies.ts";
 import type { ConditionStateDefinition } from "./condition";
 
 export type ContentInitialState = "normal" | "repairable" | "hidden";
@@ -141,7 +142,7 @@ export type ScenarioTalkBlockMessage = {
   attachmentId: string;
   sentAt: string;
   delayMs?: number;
-  quickReplies?: readonly string[];
+  quickReplies?: readonly QuickReply[];
   notes: string;
   updatedAt: string;
   source: string;
@@ -300,7 +301,7 @@ export type StoredTalkMessage = {
   segments?: readonly ScenarioMessageSegment[];
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
-  quickReplies?: readonly string[];
+  quickReplies?: readonly QuickReply[];
   attachment: ScenarioMessageAttachment | null;
   sentAt: string;
   // 作中日時の表示だけに使う。記録順序・既読判定はsentAtとseqを維持する。

@@ -1,3 +1,5 @@
+import { quickReplyLabel, quickReplyTemplateTexts } from "../shared/quickReplies.ts";
+import type { QuickReply } from "../shared/quickReplies.ts";
 import { renderTemplate } from "../shared/condition.ts";
 import { messageTemplateKeys, templateVariableNames } from "../shared/messageTemplateKeys.ts";
 import type { ScenarioMessageAttachment, ScenarioMessageSegment } from "../shared/scenario.ts";
@@ -19,7 +21,7 @@ export type ResolvedTalkMessage = {
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
   attachment: ScenarioMessageAttachment | null;
-  quickReplies?: readonly string[];
+  quickReplies?: readonly QuickReply[];
   sentAt: string;
   displayTime?: string;
 };
@@ -32,7 +34,7 @@ export type ResolvedSearchAgentTimelineItem = {
   segments?: readonly ScenarioMessageSegment[];
   delayMs?: number;
   delayOnFirstDisplay?: boolean;
-  quickReplies?: readonly string[];
+  quickReplies?: readonly QuickReply[];
   sentAt: string;
 } | {
   type: "search_result";
@@ -78,14 +80,16 @@ export function createTalkEventsRuntime(templates: TalkTemplates) {
   function isoWithOffset(baseIso: string, offsetMs: number) {
     return new Date(Date.parse(baseIso) + offsetMs).toISOString();
   }
-  function renderedQuickReplies(values: readonly string[] | undefined, env: Record<string, string>) {
+  function renderedQuickReplies(values: readonly QuickReply[] | undefined, env: Record<string, string>) {
     const seen = new Set<string>();
     return (values ?? []).flatMap((value) => {
-      const rendered = renderTemplate(value, env).normalize("NFC").trim().slice(0, 500);
+      const rendered = renderTemplate(quickReplyLabel(value), env).normalize("NFC").trim().slice(0, 500);
       if (!rendered || seen.has(rendered))
         return [];
       seen.add(rendered);
-      return [rendered];
+      if (typeof value === "string") return [rendered] as QuickReply[];
+      const text = value.text === "" ? "" : renderTemplate(value.text, env).normalize("NFC").trim().slice(0, 500) || rendered;
+      return [{ label: rendered, text }] as QuickReply[];
     });
   }
   function resolveTalkEvent(row: TalkEventRow, displayBlockId = row.block_id ?? ""): ResolvedTalkMessage[] {
@@ -173,7 +177,7 @@ export function createTalkEventsRuntime(templates: TalkTemplates) {
     if (!template)
       return undefined;
     const keys = new Set(templateVariableNames(template.body));
-    for (const quickReply of template.quickReplies ?? []) {
+    for (const quickReply of (template.quickReplies ?? []).flatMap(quickReplyTemplateTexts)) {
       for (const key of templateVariableNames(quickReply))
         keys.add(key);
     }

@@ -1,3 +1,4 @@
+import { isQuickReply } from "../../shared/quickReplies.ts";
 import type { SearchAgentMessage } from "../scenario-runtime/types.ts";
 import type {
   PlayerState,
@@ -77,7 +78,7 @@ function messageSeq(value: unknown) {
 function validMessage(value: unknown, kind: StreamRecord["kind"]) {
   if (!isRecord(value) || !isNonEmptyString(value.id) || typeof value.sentAt !== "string") return false;
   if (value.displayTime !== undefined && typeof value.displayTime !== "string") return false;
-  if (value.quickReplies !== undefined && (!Array.isArray(value.quickReplies) || value.quickReplies.some((reply) => typeof reply !== "string"))) {
+  if (value.quickReplies !== undefined && (!Array.isArray(value.quickReplies) || value.quickReplies.some((reply) => !isQuickReply(reply)))) {
     return false;
   }
   if (kind === "search_agent") {

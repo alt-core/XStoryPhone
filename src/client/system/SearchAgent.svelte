@@ -25,6 +25,7 @@
   import { appCatalog, getAppById, type AppCatalogItem } from "./appCatalog";
   import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
   import { resourceUrl } from "./resourceUrls";
+  import { quickReplyLabel, quickReplyText, type QuickReply, type TalkSendOptions } from "../../shared/quickReplies.ts";
 
   type ContentStateSnapshot = {
     contentId: string;
@@ -52,7 +53,7 @@
   $: spriteSource = spriteUrl && spriteUrl !== failedSpriteUrl ? spriteUrl : "/search-agent/search-agent-spritesheet.svg";
   export let deviceState: DeviceState;
   export let contentStates: ContentStateSnapshot[] = [];
-  export let onSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
+  export let onSend: (body: string, options?: TalkSendOptions) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"
   });
@@ -91,6 +92,8 @@
   let lastServerMessageKey = "";
   let visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
   let messageListElement: HTMLDivElement | undefined;
+  let followingMessageListBottom = false;
+  let lastMessageListScrollTop = 0;
   let inputElement: HTMLInputElement | undefined;
   let loadingOlderHistory = false;
   let openingResult = false;
@@ -147,7 +150,7 @@
   // 開封失敗の一時案内は会話を進めないため、台本の選択肢を無効にしない。
   $: quickReplyPlacement = pending
     ? undefined
-    : latestQuickReplyPlacement(messages, visibleMessageIds, composerEnabled);
+    : latestQuickReplyPlacement(messages, visibleMessageIds, composerEnabled, talk?.quickRepliesClosedSeq);
   $: quickReplySignature = quickReplyPlacement?.messageId ?? "";
   $: if (quickReplySignature !== lastQuickReplySignature) {
     const wasNearBottom = isMessageListNearBottom();
@@ -171,6 +174,23 @@
       return;
     }
     messageListElement.scrollTop = messageListElement.scrollHeight;
+    followingMessageListBottom = true;
+    lastMessageListScrollTop = messageListElement.scrollTop;
+    reportScrollPosition();
+  }
+
+  function handleResultImageLoad(event: Event) {
+    if (destroyed || !expanded || !messageListElement
+      || restoringScrollRequestId !== undefined || loadingOlderHistory
+      || !messageListElement.contains(event.currentTarget as Node)) return;
+    // scroll通知より先に画像が届いても、利用者が上へ戻した位置を優先する。
+    if (messageListElement.scrollTop < lastMessageListScrollTop) {
+      followingMessageListBottom = isMessageListNearBottom();
+    }
+    if (!followingMessageListBottom) return;
+    // 読込後の高さで末尾判定せず、画像が届く前の追従状態を使う。
+    messageListElement.scrollTop = messageListElement.scrollHeight;
+    lastMessageListScrollTop = messageListElement.scrollTop;
     reportScrollPosition();
   }
 
@@ -185,6 +205,7 @@
     }
 
     loadingOlderHistory = true;
+    followingMessageListBottom = false;
     const requestId = panelViewRequestId;
     const list = messageListElement;
     const previousHeight = messageListElement.scrollHeight;
@@ -194,6 +215,7 @@
     loadingOlderHistory = false;
     if (destroyed || !expanded || requestId !== panelViewRequestId || messageListElement !== list) return;
     list.scrollTop = list.scrollHeight - previousHeight + previousTop;
+    lastMessageListScrollTop = list.scrollTop;
     reportScrollPosition();
   }
 
@@ -202,6 +224,11 @@
       return;
     }
 
+    // 自分で設定した位置のscroll通知では、復元・履歴追加の方針を変えない。
+    if (messageListElement.scrollTop !== lastMessageListScrollTop) {
+      followingMessageListBottom = isMessageListNearBottom();
+      lastMessageListScrollTop = messageListElement.scrollTop;
+    }
     reportScrollPosition();
 
     if (messageListElement.scrollTop <= 28) {
@@ -225,6 +252,7 @@
   function openExpanded() {
     panelViewRequestId += 1;
     restoringScrollRequestId = undefined;
+    followingMessageListBottom = false;
     openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
@@ -265,6 +293,7 @@
     }
     const requestId = ++panelViewRequestId;
     restoringScrollRequestId = requestId;
+    followingMessageListBottom = false;
     openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = request.visibleMessageCount !== undefined && Number.isFinite(request.visibleMessageCount)
@@ -279,6 +308,9 @@
     messageListElement.scrollTop = request.scrollTop !== undefined && Number.isFinite(request.scrollTop)
       ? Math.max(0, request.scrollTop)
       : messageListElement.scrollHeight;
+    // 明示された復元位置は、未読込画像で末尾へ引き戻さない。
+    followingMessageListBottom = request.scrollTop === undefined || !Number.isFinite(request.scrollTop);
+    lastMessageListScrollTop = messageListElement.scrollTop;
     reportScrollPosition();
   }
 
@@ -454,31 +486,31 @@
     clearMessageDelayTimer();
   });
 
-  async function sendBody(body: string, clearInput: boolean) {
+  async function sendBody(body: string, clearInput: boolean, options?: TalkSendOptions) {
     if (!body || pending || !composerEnabled) {
       return;
     }
 
-    const requestId = crypto.randomUUID();
-    const sentAt = new Date().toISOString();
-    const userMessage: SearchAgentMessage = {
-      kind: "message",
-      seq: (messages[messages.length - 1]?.seq ?? 0) + 1,
-      id: `searchAgent-pending-${requestId}:user`,
-      talkId: talk?.talkId ?? "search_agent",
-      sender: "owner",
-      body,
-      sentAt
-    };
-
-    transientMessages = [...transientMessages, userMessage];
+    const display = options?.display ?? body;
+    if (display) {
+      const userMessage: SearchAgentMessage = {
+        kind: "message",
+        seq: (messages[messages.length - 1]?.seq ?? 0) + 1,
+        id: `searchAgent-pending-${crypto.randomUUID()}:user`,
+        talkId: talk?.talkId ?? "search_agent",
+        sender: "owner",
+        body: display,
+        sentAt: new Date().toISOString()
+      };
+      transientMessages = [...transientMessages, userMessage];
+    }
     if (clearInput) input = "";
     pending = true;
     sendError = "";
     void scrollMessagesToBottom();
 
     try {
-      const result = await onSend(body);
+      const result = options ? await onSend(body, options) : await onSend(body);
       if (!result.ok) {
         if (clearInput && !input) input = body;
         sendError = result.error ?? "送信に失敗しました。";
@@ -497,8 +529,12 @@
     await sendBody(input.trim(), true);
   }
 
-  async function sendQuickReply(reply: string) {
-    await sendBody(reply, false);
+  async function sendQuickReply(reply: QuickReply, quickReplySeq?: number) {
+    if (typeof reply === "string") {
+      await sendBody(reply, false);
+    } else {
+      await sendBody(quickReplyLabel(reply), false, { display: quickReplyText(reply), quickReplySeq });
+    }
   }
 
   async function openMessageLink(message: Extract<SearchAgentMessage, { kind: "message" }>, segmentIndex: number) {
@@ -656,7 +692,7 @@
                           {/if}
                         </span>
                         {#if result.thumbnailUrl}
-                          <img src={resourceUrl(result.thumbnailUrl)} alt="" />
+                          <img src={resourceUrl(result.thumbnailUrl)} alt="" on:load={handleResultImageLoad} on:error={handleResultImageLoad} />
                         {:else if title}
                           <strong>{title}</strong>
                         {/if}
@@ -668,7 +704,7 @@
             </article>
             {#if quickReplyPlacement?.messageId === message.id}
               <div class="history-quick-replies">
-                <QuickReplies replies={quickReplyPlacement.replies} accent="#8fd2ff" onSelect={sendQuickReply} />
+                <QuickReplies replies={quickReplyPlacement.replies} accent="#8fd2ff" onSelect={(reply) => sendQuickReply(reply, message.seq)} />
               </div>
             {/if}
           {/if}

@@ -78,6 +78,41 @@ async function send(execution, state, message) {
   return request(execution, "/api/talk/send", { talkId: talk.talkId, turnKey: talk.turnKey, message });
 }
 
+test("staticも無発言のQuick Replyを発話seqなしで消費し、再読込・resetへ反映する", async t => {
+  const f = await filesFixture(t, ({ worker }) => {
+    const talk = worker.talks.find(item => item.kind === "search_agent");
+    const initialBlock = worker.talkBlocks.find(block => block.id === talk.startSteps.find(step => step.kind === "block").blockId);
+    initialBlock.messages.at(-1).quickReplies = [{ label: "続きを読む", text: "" }];
+    talk.rules.unshift({
+      id: "silent-quick-reply", order: 0, type: "match", part: "base", from: talk.initialFrom,
+      isDefault: false, cond: "", intent: "", criteria: '"続きを読む"', match: "",
+      outputSteps: [{ kind: "input", action: "hide" }], nextBlocks: [], nextFromId: talk.initialFrom,
+      loadParts: [], set: [], mode: "stay", notes: "", example: "続きを読む"
+    });
+  });
+  const execution = createStaticPlayerExecution(f.options);
+  await execution.initialize();
+  const started = (await request(execution, "/api/session/start")).playerState;
+  const talk = started.talks.find(item => item.kind === "search_agent");
+  const candidate = started.searchAgentMessages.filter(item => item.quickReplies?.length).at(-1);
+  assert.ok(candidate);
+  assert.deepEqual(candidate.quickReplies, [{ label: "続きを読む", text: "" }]);
+  const sent = (await request(execution, "/api/talk/send", {
+    talkId: talk.talkId, turnKey: talk.turnKey, message: "続きを読む", display: "", quickReplySeq: candidate.seq
+  })).playerState;
+  const after = sent.talks.find(item => item.talkId === talk.talkId);
+  assert.equal(after.lastMessageSeq, talk.lastMessageSeq);
+  assert.equal(after.quickRepliesClosedSeq, candidate.seq);
+  assert.notEqual(after.turnKey, talk.turnKey);
+  assert.deepEqual(sent.searchAgentMessages, started.searchAgentMessages);
+  const reloaded = (await request(execution, "/api/player-state")).playerState;
+  assert.equal(reloaded.talks.find(item => item.talkId === talk.talkId).quickRepliesClosedSeq, candidate.seq);
+  await request(execution, "/api/reset-for-testing");
+  const restarted = (await request(execution, "/api/session/start")).playerState;
+  assert.equal(restarted.talks.find(item => item.kind === "search_agent").quickRepliesClosedSeq, undefined);
+  assert.ok(f.requests.every(url => !url.includes("/api/")));
+});
+
 test("APIなしのmemory実行は誤答で取得せず、secret取得・hook・修復・再読込を共通処理で進める", async t => {
   const f = await filesFixture(t);
   const base = fs.readFileSync(path.join(f.outputDir, f.manifest.base), "utf8");

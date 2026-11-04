@@ -1308,6 +1308,13 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     const message = talk && isDeviceTalk(talk) ? internalizeTalkCommand(rawMessage) : rawMessage;
     if (!talk || !message || !turnKey)
       return operationResult({ ok: false, error: "invalid" }, 400);
+    if (body?.display !== undefined && typeof body.display !== "string")
+      return operationResult({ ok: false, error: "invalid" }, 400);
+    const display = body?.display === undefined ? message : cleanText(body.display, 1000);
+    const quickReplySeq = typeof body?.quickReplySeq === "number" && Number.isSafeInteger(body.quickReplySeq) && body.quickReplySeq > 0
+      ? body.quickReplySeq : undefined;
+    if ((body?.quickReplySeq !== undefined || !display) && quickReplySeq === undefined)
+      return operationResult({ ok: false, error: "invalid" }, 400);
     let readState = copyStoredPlayerState(player.state);
     const readChanged = await syncTalkReadCursors(c, player, readState, body);
     const storedTalk = readState.talks[talk.id];
@@ -1320,6 +1327,8 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       }
       return operationResult({ ok: true, stale: true, playerState: await stateJson(c, player) });
     }
+    if (quickReplySeq !== undefined && quickReplySeq > storedTalk.lastMessageSeq)
+      return operationResult({ ok: false, error: "invalid" }, 400);
     if (!talkCanPost(talk, readState)) {
       const current = readChanged ? await commitPlayer(c, player, { state: readState }) : { ok: true as const, player };
       if (!current.ok)
@@ -1353,6 +1362,11 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     }
     const activated = await activateParts(readState, selection.rule.loadParts ?? []);
     readState = activated.state;
+    if (!display && quickReplySeq !== undefined && selection.rule.mode !== "game_over") {
+      // 成功候補のstateだけを更新し、予約hookなどが追加した次の選択肢まで閉じない。
+      const nextTalk = readState.talks[talk.id];
+      nextTalk.quickRepliesClosedSeq = Math.max(nextTalk.quickRepliesClosedSeq ?? 0, quickReplySeq);
+    }
     if (isSearchAgentTalk(talk)) {
       if (selection.rule.mode === "game_over")
         return operationResult({ ok: false, error: "invalid" }, 400);
@@ -1373,17 +1387,17 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
         search: (query) => searchScenario(query, nextState)
       });
       const turnHash = (await sha256(`${player.id}:search_agent:${turnKey}`)).slice(0, 32);
-      const ownerEvent = searchAgentPlayerMessageEvent({
+      const ownerEvents = display ? [searchAgentPlayerMessageEvent({
         id: `search_agent_player_${turnHash}`,
         seq: nextTalk.lastMessageSeq + 1,
-        body: message,
+        body: display,
         deliveredAt: now
-      });
+      })] : [];
       const rendered = searchAgentTimelineForOutputs({
         outputs: evaluated.outputs,
         previousCounts: nextTalk.blockDisplayCounts,
         formatEnv: evaluated.env,
-        startSeq: ownerEvent.seq,
+        startSeq: nextTalk.lastMessageSeq + ownerEvents.length,
         inputVisible: nextTalk.inputVisible ?? true,
         inputVisibleAfterSeq: nextTalk.inputVisibleAfterSeq ?? 0,
         inputEnabled: nextTalk.inputEnabled ?? true,
@@ -1408,7 +1422,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       const transcriptAppends: TranscriptAppend[] = [{
         streamId: SEARCH_AGENT_STREAM_ID,
         transcriptKey: nextTalk.transcriptKey,
-        messages: [ownerEvent, ...rendered.events]
+        messages: [...ownerEvents, ...rendered.events]
       }];
       const talkHookResult = await applyHookEvents(c, player.id, nextState, [...partLoadedEvents(activated.added), {
         eventId: "talk_turn_completed",
@@ -1475,27 +1489,28 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     nextTalk.from = nextFrom;
     nextTalk.turnKey = await nextTalkTurnKey(player.id, talk.id, turnKey, nextFrom);
     const turnHash = await talkTurnHash(player.id, talk.kind, talk.id, turnKey);
-    const ownerEvent: import("./store.ts").StoredTalkEvent = {
-      id: `${talk.kind}_player_${turnHash}`,
+    const ownerEventId = `${talk.kind}_player_${turnHash}`;
+    const ownerEvents: StoredTalkEvent[] = display ? [{
+      id: ownerEventId,
       kind: talk.kind,
       talk_id: talk.id,
       event_type: "player_message",
-      body: message,
+      body: display,
       block_id: null,
       format_env_json: talkEventFormatEnv(undefined, ownerDisplayTime),
       delivered_at: now
-    };
-    const ownerMessage: StoredTalkMessage = {
+    }] : [];
+    const ownerMessages: StoredTalkMessage[] = display ? [{
       seq: nextTalk.lastMessageSeq + 1,
-      id: ownerEvent.id,
+      id: ownerEventId,
       talkId: talk.publicId,
       sender: "owner" as const,
-      body: message,
+      body: display,
       ...(talk.kind === "chat" ? { senderName: "あなた" } : {}),
       attachment: null,
       sentAt: now,
       ...(ownerDisplayTime ? { displayTime: talkDisplayTimeLabel(ownerDisplayTime) } : {})
-    };
+    }] : [];
     const replyStateValues = effectiveStateValues(runtime.workerScenario.stateVariables, nextState.stateValues);
     const reply = messagesForTalkOutputSteps({
       talk,
@@ -1508,7 +1523,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       },
       baseSentAt: new Date(Date.parse(now) + 1000).toISOString(),
       idPrefix: `${talk.kind}_block_${turnHash}`,
-      startSeq: ownerMessage.seq,
+      startSeq: nextTalk.lastMessageSeq + ownerMessages.length,
       inputVisible: nextTalk.inputVisible,
       inputVisibleAfterSeq: nextTalk.inputVisibleAfterSeq,
       inputEnabled: nextTalk.inputEnabled,
@@ -1522,9 +1537,9 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       nextTalk.inputEnabled = reply.inputEnabled;
       nextTalk.inputEnabledAfterSeq = reply.inputEnabledAfterSeq;
       nextTalk.blockDisplayCounts = reply.blockDisplayCounts;
-      const messages = [ownerMessage, ...reply.messages];
+      const messages = [...ownerMessages, ...reply.messages];
       nextTalk.lastMessageSeq = Math.max(nextTalk.lastMessageSeq, ...messages.map((item) => item.seq));
-      nextTalk.lastDeliveredAt = latestTalkDeliveredAt(nextTalk.lastDeliveredAt, [ownerEvent, ...reply.events], messages);
+      nextTalk.lastDeliveredAt = latestTalkDeliveredAt(nextTalk.lastDeliveredAt, [...ownerEvents, ...reply.events], messages);
       nextTalk.lastOtherMessageId = [...messages].reverse().find((item) => item.sender === "other")?.id
         ?? nextTalk.lastOtherMessageId;
       const revealed = revealTalkMessages(nextState, talk.id, messages);
@@ -1533,7 +1548,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
       talkTranscriptAppends = [{
         streamId: `talk:${talk.id}`,
         transcriptKey: nextTalk.transcriptKey,
-        messages: [ownerEvent, ...reply.events],
+        messages: [...ownerEvents, ...reply.events],
         resolvedMessages: messages
       }];
     }
@@ -1567,7 +1582,7 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
             messages: reply.messages.map((item) => ({ sender: item.sender, body: item.body }))
           }
         }, dependencies(c).config.playerInputLogging === true).catch((error) => console.error("[player_input_events]", error));
-      const gameOverMessages: PublicPresentationTalkMessage[] = [ownerMessage, ...reply.messages].map((item) => {
+      const gameOverMessages: PublicPresentationTalkMessage[] = [...ownerMessages, ...reply.messages].map((item) => {
         const publicMessage = publicTalkMessage(item);
         const { quickReplies: _quickReplies, ...presentationMessage } = publicMessage;
         return {

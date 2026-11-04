@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { TalkSendOptions } from "../shared/quickReplies.ts";
   import { onMount, tick } from "svelte";
   import ProjectStage from "../project/ProjectStage.svelte";
   import type { PhonePresentation, ProjectStageContext } from "../project/projectStage";
@@ -3161,7 +3162,7 @@
     }
   }
 
-  async function handleSearchAgentSend(message: string) {
+  async function handleSearchAgentSend(message: string, options: TalkSendOptions = {}) {
     const talk = searchAgentTalkView;
     if (!uiState.sessionToken || !talk || !talk.canPost) {
       return { ok: false, error: "今は送信できません。" };
@@ -3182,7 +3183,7 @@
           });
     let result: Awaited<ReturnType<typeof sendTalkMessage>>;
     try {
-      result = await sendTalkMessage(uiState.sessionToken, talk.talkId, turnKey, message, [], recentMessages);
+      result = await sendTalkMessage(uiState.sessionToken, talk.talkId, turnKey, message, [], recentMessages, options);
     } catch {
       return { ok: false, error: "送信に失敗しました。" };
     }
@@ -3270,7 +3271,8 @@
       inputVisible: talk.inputVisible,
       inputVisibleAfterSeq: talk.inputVisibleAfterSeq,
       inputEnabled: talk.inputEnabled,
-      inputEnabledAfterSeq: talk.inputEnabledAfterSeq
+      inputEnabledAfterSeq: talk.inputEnabledAfterSeq,
+      ...(talk.quickRepliesClosedSeq ? { quickRepliesClosedSeq: talk.quickRepliesClosedSeq } : {})
     };
   }
 
@@ -3321,7 +3323,7 @@
 
     pendingTalkMessages = [
       ...pendingTalkMessages.filter((item) => !(item.kind === kind && item.talkId === talkId)),
-      pendingMessage
+      ...(message ? [pendingMessage] : [])
     ];
     replyDelayAnchorsByThread = {
       ...replyDelayAnchorsByThread,
@@ -3355,7 +3357,8 @@
           inputVisible: talk.inputVisible,
           inputVisibleAfterSeq: talk.inputVisibleAfterSeq,
           inputEnabled: talk.inputEnabled,
-          inputEnabledAfterSeq: talk.inputEnabledAfterSeq
+          inputEnabledAfterSeq: talk.inputEnabledAfterSeq,
+          ...(talk.quickRepliesClosedSeq ? { quickRepliesClosedSeq: talk.quickRepliesClosedSeq } : {})
         } satisfies TalkInputState])
     ) as Record<string, TalkInputState>;
   }
@@ -3626,7 +3629,7 @@
     });
   }
 
-  async function handleTalkSend(kind: TalkKind, talkId: string, message: string, cannotPostError: string) {
+  async function handleTalkSend(kind: TalkKind, talkId: string, message: string, cannotPostError: string, options: TalkSendOptions = {}) {
     if (!uiState.sessionToken) {
       return { ok: false, error: "送信できません。" };
     }
@@ -3640,7 +3643,7 @@
       return { ok: false, error: "送信状態を更新してください。" };
     }
 
-    startPendingTalkSend(kind, talkId, message);
+    startPendingTalkSend(kind, talkId, options.display ?? message);
 
     let result: Awaited<ReturnType<typeof sendTalkMessage>>;
     const talkReadCursors = pendingTalkReadCursorPayload();
@@ -3651,7 +3654,8 @@
         turnKey,
         message,
         talkReadCursors,
-        recentMessagesForTalk(kind, talkId)
+        recentMessagesForTalk(kind, talkId),
+        options
       );
     } catch {
       finishPendingTalkSend(kind, talkId);
@@ -3687,8 +3691,8 @@
     return { ok: true };
   }
 
-  async function handleSmsSend(talkId: string, message: string) {
-    return handleTalkSend("sms", talkId, message, "この会話には返信できません。");
+  async function handleSmsSend(talkId: string, message: string, options: TalkSendOptions = {}) {
+    return handleTalkSend("sms", talkId, message, "この会話には返信できません。", options);
   }
 
   async function requestContentUnlock(contentId: string, password: string): Promise<Awaited<ReturnType<typeof unlockContent>>> {
@@ -3808,8 +3812,8 @@
     return openTalkMessageLink(talkId, messageRef, segmentIndex, { backLinkSource: null, linkId });
   }
 
-  async function handleChatSend(talkId: string, message: string) {
-    return handleTalkSend("chat", talkId, message, "このルームには投稿できません。");
+  async function handleChatSend(talkId: string, message: string, options: TalkSendOptions = {}) {
+    return handleTalkSend("chat", talkId, message, "このルームには投稿できません。", options);
   }
 
   function handleRadioShareContent(target: TalkShareTarget, content: { contentId: string; title: string }) {

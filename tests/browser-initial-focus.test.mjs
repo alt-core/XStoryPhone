@@ -186,16 +186,18 @@ function pageDocument(path, title = "ページの題名") {
 }
 
 function frameFor(document = null) {
+  const navigations = [];
   const frame = {
     contentDocument: document,
     contentWindow: { location: { replace(url) {
+      navigations.push(url);
       const current = frame.contentDocument;
       const next = new URL(url);
       const previous = current && new URL(current.location.href);
       if (previous && next.origin === previous.origin && next.pathname === previous.pathname && next.search === previous.search) current.location.href = url;
     } } }
   };
-  return { frame };
+  return { frame, navigations };
 }
 
 test("許可された転送先のloadは現在の段を置換し、元URLへ戻るループを作らない", () => {
@@ -244,4 +246,103 @@ test("hash移動と戻るはクリック捕捉とHTMLの題名を保ち、その
   assert.equal(browser.harness.evaluate("pageTitle"), "HTMLの題名");
   assert.equal(document.click("#three"), true, "別ページから戻った後もリンクを捕捉する");
   browser.harness.destroy();
+});
+
+for (const fragment of ["#top", "#見出し", "#"]) {
+  test(`同じ${fragment}への再クリックは文書を差し替えず、履歴も増やさずに位置を指定し直す`, (t) => {
+    const document = pageDocument("/first.html", "HTMLの題名");
+    const { frame, navigations } = frameFor(document);
+    const browser = browserAppHarness({ tabs }, { resourceUrl, frame });
+    t.after(() => browser.harness.destroy());
+    browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+    const frameRequestId = browser.harness.evaluate("frameRequestId");
+    const target = new URL(fragment, document.location.href).href;
+
+    assert.equal(document.click(fragment), true);
+    assert.equal(document.location.href, target);
+    assert.deepEqual(navigations, [target]);
+    assert.equal(browser.pageEvents.length, 1);
+    assert.equal(browser.harness.evaluate("openPage.urls.length"), 2);
+
+    assert.equal(document.click(fragment), true);
+    assert.deepEqual(navigations, [target, target], "スクロール後の再選択も標準のfragment移動に渡す");
+    assert.equal(browser.pageEvents.length, 1);
+    assert.equal(browser.harness.evaluate("openPage.urls.length"), 2);
+    assert.equal(browser.harness.evaluate("frameRequestId"), frameRequestId);
+    assert.equal(document.added, 1);
+    assert.equal(document.removed, 0);
+    assert.equal(browser.harness.evaluate("pageTitle"), "HTMLの題名");
+  });
+}
+
+test("#topから空fragmentへ移動して戻っても履歴と実文書のURLが一致する", (t) => {
+  const document = pageDocument("/first.html");
+  const { frame, navigations } = frameFor(document);
+  const browser = browserAppHarness({ tabs }, { resourceUrl, frame });
+  t.after(() => browser.harness.destroy());
+  browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+  document.click("#top");
+  document.click("#");
+  assert.equal(document.location.href, "http://localhost/first.html#");
+  assert.equal(browser.harness.evaluate("openUrl"), "/first.html#");
+  assert.equal(browser.harness.evaluate("openPage.urls.length"), 3);
+  browser.harness.evaluate("navigateBack();");
+  assert.equal(navigations.at(-1), "http://localhost/first.html#top");
+  assert.equal(document.location.href, "http://localhost/first.html#top");
+  assert.equal(browser.harness.evaluate("openUrl"), "/first.html#top");
+});
+
+for (const fragment of ["#top", "#"]) {
+  test(`同じ${fragment}の再選択は符号化pathを保ち、実文書の位置がずれていても要求位置へ移る`, (t) => {
+    const document = pageDocument(`/first.html${fragment}`);
+    const { frame, navigations } = frameFor(document);
+    const browser = browserAppHarness({ tabs, pages: { first: { urls: [`/%66irst.html${fragment}`], index: 0 } } }, { resourceUrl, frame });
+    t.after(() => browser.harness.destroy());
+    browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+
+    assert.equal(document.click(`/%66irst.html${fragment}`), true);
+    assert.deepEqual(navigations, [`http://localhost/first.html${fragment}`], "実文書のpathを保ち、再読込を避ける");
+    document.location.href = "http://localhost/first.html#other";
+    assert.equal(document.click(`/%66irst.html${fragment}`), true);
+    assert.equal(document.location.href, `http://localhost/first.html${fragment}`, "要求したfragmentを適用する");
+    assert.equal(navigations.length, 2);
+    assert.equal(browser.pageEvents.length, 0);
+    assert.equal(browser.harness.evaluate("openPage.urls[0]"), `/%66irst.html${fragment}`);
+    assert.equal(document.removed, 0);
+  });
+}
+
+test("移動先の読込中に同じfragmentを再指定しても古い文書へ適用しない", (t) => {
+  const document = pageDocument("/first.html");
+  const { frame, navigations } = frameFor(document);
+  const browser = browserAppHarness({ tabs }, { resourceUrl, frame });
+  t.after(() => browser.harness.destroy());
+  browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+  assert.equal(document.click("/first-next.html#top"), true);
+  assert.deepEqual(navigations, ["http://localhost/first-next.html#top"]);
+  browser.harness.evaluate('navigateWithinTab(openTab, "http://localhost/first-next.html#top");');
+  assert.equal(navigations.length, 1, "進行中の読み込みを古い文書へのfragment移動で取り消さない");
+  assert.equal(browser.pageEvents.length, 1);
+
+  const loadedDocument = pageDocument("/first-next.html#top");
+  frame.contentDocument = loadedDocument;
+  browser.harness.evaluate("handleFrameLoad();");
+  assert.equal(loadedDocument.click("#top"), true);
+  assert.deepEqual(navigations, ["http://localhost/first-next.html#top", "http://localhost/first-next.html#top"]);
+  assert.equal(browser.pageEvents.length, 1);
+
+  frame.contentDocument = pageDocument("/first-next.html#top");
+  browser.harness.evaluate('navigateWithinTab(openTab, "http://localhost/first-next.html#top");');
+  assert.equal(navigations.length, 2, "load前に文書だけが切り替わっても旧文書のURLを適用しない");
+});
+
+test("fragmentのない同じページへのリンクは再読込せず、履歴も増やさない", (t) => {
+  const document = pageDocument("/first.html");
+  const { frame, navigations } = frameFor(document);
+  const browser = browserAppHarness({ tabs }, { resourceUrl, frame });
+  t.after(() => browser.harness.destroy());
+  browser.harness.evaluate("frameElement = frame; handleFrameLoad();");
+  assert.equal(document.click("/first.html"), true);
+  assert.deepEqual(navigations, []);
+  assert.equal(browser.pageEvents.length, 0);
 });

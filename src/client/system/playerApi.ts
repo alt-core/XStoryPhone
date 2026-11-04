@@ -1,3 +1,4 @@
+import type { QuickReply, TalkSendOptions } from "../../shared/quickReplies.ts";
 import type {
   AppId,
   AssistantMessage,
@@ -46,7 +47,7 @@ type StoredTalkMessageBase = {
   delayOnFirstDisplay?: boolean;
   historyRepairId?: string;
   attachment: MessageAttachment | null;
-  quickReplies?: string[];
+  quickReplies?: QuickReply[];
   sentAt: string;
   displayTime?: string;
 };
@@ -121,6 +122,7 @@ export type PublicPlayerState = {
     inputVisibleAfterSeq: number;
     inputEnabled: boolean;
     inputEnabledAfterSeq: number;
+    quickRepliesClosedSeq?: number;
   } | {
     transcriptKey: string;
     talkId: string;
@@ -134,6 +136,7 @@ export type PublicPlayerState = {
     inputVisibleAfterSeq: number;
     inputEnabled: boolean;
     inputEnabledAfterSeq: number;
+    quickRepliesClosedSeq?: number;
   }>;
 };
 
@@ -670,7 +673,8 @@ export async function sendTalkMessage(
   turnKey: string,
   message: string,
   talkReadCursors: TalkReadCursorPayload[] = [],
-  recentMessages: readonly { speaker: string; body: string }[] = []
+  recentMessages: readonly { speaker: string; body: string }[] = [],
+  options: TalkSendOptions = {}
 ) {
   return playerRequest<{ ok: true; playerState: PlayerState; stale?: boolean } & PresentationResponse>("/api/talk/send", sessionToken, {
     method: "POST",
@@ -681,6 +685,8 @@ export async function sendTalkMessage(
       talkId,
       turnKey,
       message,
+      ...(options.display !== undefined ? { display: options.display } : {}),
+      ...(options.quickReplySeq !== undefined ? { quickReplySeq: options.quickReplySeq } : {}),
       ...(recentMessages.length ? { recentMessages } : {}),
       ...(talkReadCursors.length ? { talkReadCursors } : {})
     })

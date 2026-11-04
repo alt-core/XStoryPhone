@@ -3,11 +3,12 @@ import test from "node:test";
 import { createApp } from "../src/server/app.ts";
 import { accessCodeCheckDigits } from "../src/server/accessCode.ts";
 import { decodeBrowserProgress, encodeBrowserProgress } from "../src/server/browserProgress.ts";
-import { mergeTranscriptAppend } from "../src/server/store.ts";
+import { copyStoredPlayerState, mergeTranscriptAppend, normalizeStoredState } from "../src/server/store.ts";
 import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import { staticAudioSample } from "../src/shared/staticAudio.ts";
 import { projectGeneratedAudioProviders } from "../src/project/generatedAudioProviders.ts";
 import { createInitialPlayerState, nextTalkTurnKey, reconcileScenarioState, workerScenario } from "../src/worker/scenario.ts";
+import { latestQuickReplyPlacement } from "../src/client/system/talkInputState.ts";
 
 const configuredPlayerMode = workerScenario.playerMode;
 test.before(() => { workerScenario.playerMode = "server"; });
@@ -3655,4 +3656,283 @@ test("同一turnのCAS敗者はhookのevent IDや表示回数を余分に確定�
     delete workerScenario.stateVariables.test_hook_id_cas_done;
     delete scenarioHookHandlers[hook.handler];
   }
+});
+
+async function quickReplyApiFixture(kind = "sms") {
+  const store = new MemoryStore();
+  if (kind === "chat") {
+    store.player.state.stateValues.sealed_note_unlocked = true;
+    store.player.state.stateValues.chat_auth_verified = true;
+    store.player.state.repairedAppIds.push("chat");
+  }
+  const talkId = kind === "sms" ? "guide" : kind === "chat" ? "chat_receiver" : "search_agent";
+  const talk = workerScenario.talks.find((item) => item.id === talkId);
+  const app = createApp({ store, config: { appEnv: "development", playerInputLogging: true, llm: {} } });
+  const headers = { authorization: "Bearer memory-token", "content-type": "application/json" };
+  const started = await app.request("http://localhost/api/session/start", {
+    method: "POST", headers, body: JSON.stringify({ serialCode: "1234" })
+  });
+  assert.equal(started.status, 200);
+  const initialSeq = store.player.state.talks[talkId].lastMessageSeq;
+  const streamId = `talk:${talkId}`;
+  const send = (fields = {}) => app.request("http://localhost/api/talk/send", {
+    method: "POST", headers,
+    body: JSON.stringify({ talkId: talk.publicId, turnKey: store.player.state.talks[talkId].turnKey, message: "選択ボタン", ...fields })
+  });
+  const messages = (payload) => payload.playerState.transcriptDeltas.find((delta) => delta.talkId === talk.publicId)?.messages ?? [];
+  const rawEvents = () => store.transcripts.get(`${store.player.id}\0${streamId}`)?.messages ?? [];
+  const fetchAfter = async (after = initialSeq) => {
+    const response = await app.request(`http://localhost/api/transcript/${talk.publicId}?after=${after}`, { headers });
+    assert.equal(response.status, 200);
+    return (await response.json()).delta.messages;
+  };
+  return { app, store, talk, initialSeq, headers, send, messages, rawEvents, fetchAfter };
+}
+
+function quickReplyApiRule(t, talk, changes = {}) {
+  const base = talk.rules.find((rule) => rule.from === talk.initialFrom && rule.isDefault);
+  assert.ok(base);
+  const rule = { ...base, id: `test-quick-reply-${talk.id}`, type: "match", criteria: "/^選択ボタン$/u", isDefault: false, mode: "stay", ...changes };
+  talk.rules.unshift(rule);
+  t.after(() => talk.rules.splice(talk.rules.indexOf(rule), 1));
+  return rule;
+}
+
+for (const kind of ["sms", "chat", "search_agent"]) {
+  test(`${kind}のQuick Replyは表示発言だけを替え、分岐・hook・入力ログにはボタンの文字を渡す`, async (t) => {
+    const fixture = await quickReplyApiFixture(kind);
+    const rule = quickReplyApiRule(t, fixture.talk);
+    const captured = [];
+    const hook = { event: "talk_turn_completed", target: fixture.talk.id, handler: `test_quick_reply_${kind}`, cond: "", needsAi: false };
+    workerScenario.hooks.push(hook);
+    scenarioHookHandlers[hook.handler] = (_context, event) => captured.push(structuredClone(event));
+    t.after(() => {
+      workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+      delete scenarioHookHandlers[hook.handler];
+    });
+    const response = await fixture.send({ display: "はい、お願いします" });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const owner = fixture.messages(payload).filter((message) => message.sender === "owner" || message.role === "user");
+    assert.deepEqual(owner.map((message) => message.body ?? message.text), ["はい、お願いします"]);
+    assert.equal(captured[0]?.playerInput, "選択ボタン");
+    assert.equal(captured[0]?.ruleId, rule.id);
+    assert.equal(fixture.store.recordedInputEvents[0]?.userInput, "選択ボタン");
+    assert.equal(fixture.store.recordedInputEvents[0]?.ruleId, rule.id);
+    assert.equal(fixture.rawEvents().find((event) => event.event_type === "player_message")?.body, "はい、お願いします");
+    assert.equal(fixture.store.player.state.talks[fixture.talk.id].quickRepliesClosedSeq, undefined, "非空displayの送信にはsource seqを要求しない");
+    assert.equal((await fixture.fetchAfter())[0].seq, fixture.initialSeq + 1);
+    assert.equal((await fixture.send({ display: "もう一度お願いします", quickReplySeq: fixture.initialSeq })).status, 200);
+    assert.equal(fixture.store.player.state.talks[fixture.talk.id].quickRepliesClosedSeq, undefined, "非空displayではsource seqを渡しても専用stateを追加しない");
+  });
+
+  test(`${kind}の空displayはowner発話とseqを作らず、押した候補だけを閉じる`, async (t) => {
+    const fixture = await quickReplyApiFixture(kind);
+    quickReplyApiRule(t, fixture.talk);
+    const turnKey = fixture.store.player.state.talks[fixture.talk.id].turnKey;
+    const response = await fixture.send({ display: "", quickReplySeq: fixture.initialSeq });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const messages = fixture.messages(payload);
+    assert.ok(messages.length > 0);
+    assert.equal(messages.some((message) => message.sender === "owner" || message.role === "user"), false);
+    assert.equal(fixture.rawEvents().some((event) => event.event_type === "player_message"), false);
+    assert.equal(messages[0].seq, fixture.initialSeq + 1);
+    assert.equal(fixture.store.player.state.talks[fixture.talk.id].quickRepliesClosedSeq, fixture.initialSeq);
+    assert.equal(fixture.store.player.state.talks[fixture.talk.id].lastMessageSeq, messages.at(-1).seq);
+    assert.equal(fixture.store.recordedInputEvents[0]?.userInput, "選択ボタン");
+    assert.deepEqual((await fixture.fetchAfter()).map((message) => message.seq), messages.map((message) => message.seq));
+
+    const replay = await fixture.send({ turnKey, display: "", quickReplySeq: messages.at(-1).seq });
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json()).stale, true);
+    assert.equal(fixture.store.player.state.talks[fixture.talk.id].quickRepliesClosedSeq, fixture.initialSeq, "再送で後から出た候補を閉じない");
+  });
+}
+
+test("空displayはsource seqを必須にし、不正な値や未来のseqでは会話を消費しない", async () => {
+  const fixture = await quickReplyApiFixture();
+  const before = structuredClone(fixture.store.player.state.talks.guide);
+  for (const quickReplySeq of [undefined, 0, -1, 1.5, "1", fixture.initialSeq + 1]) {
+    const response = await fixture.send({ display: "", quickReplySeq });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "invalid");
+    assert.deepEqual(fixture.store.player.state.talks.guide, before);
+  }
+  assert.equal((await fixture.send({ display: {} })).status, 400);
+  assert.equal(fixture.rawEvents().some((event) => event.event_type === "player_message"), false);
+});
+
+test("空displayで出力も無い送信はseqを増やさず、既に閉じた候補の水位を戻さない", async (t) => {
+  const fixture = await quickReplyApiFixture();
+  quickReplyApiRule(t, fixture.talk, { outputSteps: [], nextBlocks: [] });
+  fixture.store.player.state.talks.guide.quickRepliesClosedSeq = fixture.initialSeq;
+  const beforeEvents = structuredClone(fixture.rawEvents());
+  const response = await fixture.send({ display: "", quickReplySeq: 1 });
+  assert.equal(response.status, 200);
+  assert.deepEqual(fixture.messages(await response.json()), []);
+  assert.equal(fixture.store.player.state.talks.guide.lastMessageSeq, fixture.initialSeq);
+  assert.equal(fixture.store.player.state.talks.guide.quickRepliesClosedSeq, fixture.initialSeq);
+  assert.deepEqual(fixture.rawEvents(), beforeEvents);
+});
+
+for (const failure of ["hook拒否", "LLM未設定", "保存競合"]) {
+  test(`空displayの${failure}では候補・seq・owner発話を消費しない`, async (t) => {
+    const fixture = await quickReplyApiFixture();
+    quickReplyApiRule(t, fixture.talk, failure === "LLM未設定" ? { type: "ai", criteria: "選択された内容を判定する" } : {});
+    if (failure === "hook拒否") {
+      const hook = { event: "talk_turn_completed", target: "guide", handler: "test_quick_reply_deny", cond: "", needsAi: false };
+      workerScenario.hooks.push(hook);
+      scenarioHookHandlers[hook.handler] = (context) => context.form.deny("quick_reply_rejected");
+      t.after(() => {
+        workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+        delete scenarioHookHandlers[hook.handler];
+      });
+    }
+    if (failure === "保存競合") fixture.store.saveConflictsRemaining = 1;
+    const before = structuredClone(fixture.store.player.state.talks.guide);
+    const beforeEvents = structuredClone(fixture.rawEvents());
+    const response = await fixture.send({ display: "", quickReplySeq: fixture.initialSeq });
+    assert.equal(response.status, failure === "hook拒否" ? 422 : failure === "LLM未設定" ? 503 : 409);
+    assert.deepEqual(fixture.store.player.state.talks.guide, before);
+    assert.deepEqual(fixture.rawEvents(), beforeEvents);
+    assert.equal(fixture.store.recordedInputEvents.length, 0);
+  });
+}
+
+test("送信前の予約hookが追加した候補も、押した旧source seqより後なら閉じない", async (t) => {
+  const fixture = await quickReplyApiFixture();
+  quickReplyApiRule(t, fixture.talk, { outputSteps: [], nextBlocks: [] });
+  const hook = { event: "scheduled_event", target: "test_quick_reply_due", handler: "test_quick_reply_due", cond: "", needsAi: false };
+  workerScenario.hooks.push(hook);
+  scenarioHookHandlers[hook.handler] = (context) => context.talk.addBlock("guide", "message_reply", { mode: "stay" });
+  t.after(() => {
+    workerScenario.hooks.splice(workerScenario.hooks.indexOf(hook), 1);
+    delete scenarioHookHandlers[hook.handler];
+  });
+  await fixture.store.queueScheduledEvent(fixture.store.player.id, "quick-reply-due", hook.target, {}, new Date().toISOString());
+  const response = await fixture.send({ display: "", quickReplySeq: fixture.initialSeq });
+  assert.equal(response.status, 200);
+  const added = fixture.messages(await response.json());
+  assert.equal(added.length, 1);
+  assert.ok(added[0].quickReplies.length > 0);
+  assert.equal(added[0].seq, fixture.initialSeq + 1);
+  assert.equal(fixture.store.player.state.talks.guide.quickRepliesClosedSeq, fixture.initialSeq);
+});
+
+for (const display of ["終了します", ""]) {
+  test(`game_overの${display ? "表示を替えた発言" : "空display"}もpresentationと保存を分ける`, async (t) => {
+    const fixture = await quickReplyApiFixture();
+    quickReplyApiRule(t, fixture.talk, { mode: "game_over" });
+    const response = await fixture.send({ display, ...(display ? {} : { quickReplySeq: fixture.initialSeq }) });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const messages = payload.presentation.sequence.talk.messages;
+    assert.equal(payload.presentation.sequence.type, "game_over");
+    assert.deepEqual(messages.filter((message) => message.sender === "owner").map((message) => message.body), display ? [display] : []);
+    assert.equal(messages[0].seq, fixture.initialSeq + 1);
+    assert.equal(fixture.store.player.state.talks.guide.lastMessageSeq, fixture.initialSeq);
+    assert.equal(fixture.rawEvents().some((event) => event.event_type === "player_message"), false);
+    assert.equal(fixture.store.player.state.talks.guide.quickRepliesClosedSeq, undefined, "やりなおす元の候補は消費しない");
+  });
+}
+
+for (const kind of ["sms", "chat"]) {
+  test(`${kind}: 無発言のgame_overからやりなおしても入力欄なしで別の候補を選べる`, async (t) => {
+    const talk = workerScenario.talks.find((item) => item.id === (kind === "sms" ? "guide" : "chat_receiver"));
+    const template = workerScenario.talkBlocks.find((block) => block.id === talk.startBlocks.at(-1)).messages.at(-1);
+    const original = { sender: template.sender, quickReplies: template.quickReplies };
+    const replies = [{ label: "選択ボタン", text: "" }, { label: "安全な選択", text: "" }];
+    template.sender = kind === "sms" ? "guide" : "visitor";
+    template.quickReplies = replies;
+    t.after(() => Object.assign(template, original));
+    const fixture = await quickReplyApiFixture(kind);
+    fixture.store.player.state.talks[talk.id].inputVisible = false;
+    const messagesFromState = (state) => (kind === "sms" ? state.visibleDeviceState.messages : state.visibleDeviceState.chatThreads)
+      .find((thread) => thread.id === talk.publicId).messages;
+    const initialResponse = await fixture.app.request("http://localhost/api/player-state", {
+      method: "POST", headers: fixture.headers, body: "{}"
+    });
+    assert.equal(initialResponse.status, 200);
+    const menu = messagesFromState((await initialResponse.json()).playerState).at(-1);
+    quickReplyApiRule(t, talk, { mode: "game_over" });
+    quickReplyApiRule(t, talk, { id: `test-quick-reply-safe-${kind}`, criteria: "/^安全な選択$/u", outputSteps: [], nextBlocks: [] });
+
+    const ended = await fixture.send({ display: "", quickReplySeq: menu.seq });
+    assert.equal(ended.status, 200);
+    assert.equal((await ended.json()).presentation.sequence.type, "game_over");
+    // やりなおし時と同じstate再取得後も、保存しない一時会話の前の候補へ戻る。
+    const refreshed = await fixture.app.request("http://localhost/api/player-state", {
+      method: "POST", headers: fixture.headers, body: "{}"
+    });
+    assert.equal(refreshed.status, 200);
+    const state = (await refreshed.json()).playerState;
+    const restoredTalk = state.talks.find((item) => item.talkId === talk.publicId);
+    assert.equal(restoredTalk.inputVisible, false);
+    assert.equal(restoredTalk.quickRepliesClosedSeq, undefined);
+    const restoredMessages = messagesFromState(state);
+    const placement = latestQuickReplyPlacement(restoredMessages, new Set(restoredMessages.map((message) => message.id)), true, restoredTalk.quickRepliesClosedSeq);
+    assert.deepEqual(placement?.replies, replies);
+    assert.equal(placement.messageId, menu.id);
+    const safeReply = placement.replies[1];
+    const continued = await fixture.send({
+      turnKey: restoredTalk.turnKey, message: safeReply.label, display: safeReply.text, quickReplySeq: menu.seq
+    });
+    assert.equal(continued.status, 200);
+    const payload = await continued.json();
+    assert.equal(payload.stale, undefined);
+    assert.notEqual(payload.presentation?.sequence?.type, "game_over");
+    assert.equal(fixture.store.player.state.talks[talk.id].quickRepliesClosedSeq, menu.seq, "通常成功時は元の候補を消費する");
+  });
+}
+
+test("Quick Replyの閉じたseqはstate正規化とcopyで保持し、旧stateには追加しない", async () => {
+  const state = (await reconcileScenarioState(createInitialPlayerState(), "quick-reply-normalize")).state;
+  assert.equal(Object.hasOwn(normalizeStoredState(state).talks.guide, "quickRepliesClosedSeq"), false);
+  state.talks.guide.quickRepliesClosedSeq = 3;
+  assert.equal(copyStoredPlayerState(normalizeStoredState(state)).talks.guide.quickRepliesClosedSeq, 3);
+  state.talks.guide.quickRepliesClosedSeq = -1;
+  assert.equal(Object.hasOwn(normalizeStoredState(state).talks.guide, "quickRepliesClosedSeq"), false);
+});
+
+test("browserのQuick Replyも同じ送信処理でdisplayと閉じたsource seqを進行tokenへ保持する", async (t) => {
+  const previousMode = workerScenario.playerMode;
+  workerScenario.playerMode = "browser";
+  t.after(() => { workerScenario.playerMode = previousMode; });
+  const secret = "quick-reply-browser-progress-secret";
+  const store = new MemoryStore();
+  const app = createApp({ store, config: { appEnv: "development", browserStateSecret: secret, playerInputLogging: false, llm: {} } });
+  const started = await app.request("http://localhost/api/session/start", { method: "POST" });
+  assert.equal(started.status, 200);
+  let state = (await started.json()).playerState;
+  const send = async (fields) => {
+    const talk = state.talks.find((item) => item.kind === "search_agent");
+    const response = await app.request("http://localhost/api/talk/send", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ progressToken: state.progressToken, talkId: talk.talkId, turnKey: talk.turnKey, message: "ヘルプ", ...fields })
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    state = payload.playerState;
+    return payload;
+  };
+  await send({ display: "詳しい説明をお願いします" });
+  let delta = state.transcriptDeltas.find((item) => item.kind === "search_agent");
+  assert.equal(delta.messages[0].sender, "owner");
+  assert.equal(delta.messages[0].body, "詳しい説明をお願いします");
+  const source = state.talks.find((item) => item.kind === "search_agent");
+  const sent = await send({ display: "", quickReplySeq: source.lastMessageSeq });
+  delta = state.transcriptDeltas.find((item) => item.kind === "search_agent");
+  assert.equal(delta.messages.some((item) => item.sender === "owner"), false);
+  assert.equal(delta.messages[0].seq, source.lastMessageSeq + 1);
+  let progress = await decodeBrowserProgress(secret, workerScenario.project.id, state.progressToken);
+  assert.equal(progress.state.talks.search_agent.quickRepliesClosedSeq, source.lastMessageSeq);
+  const stale = await send({ turnKey: source.turnKey, display: "", quickReplySeq: state.talks.find((item) => item.kind === "search_agent").lastMessageSeq });
+  assert.equal(stale.stale, true);
+  progress = await decodeBrowserProgress(secret, workerScenario.project.id, stale.playerState.progressToken);
+  assert.equal(progress.state.talks.search_agent.quickRepliesClosedSeq, source.lastMessageSeq);
+  assert.equal(sent.ok, true);
+  assert.equal(store.createCalls, 0);
+  assert.equal(store.playerCalls, 0);
+  assert.equal(store.transcripts.size, 0);
 });

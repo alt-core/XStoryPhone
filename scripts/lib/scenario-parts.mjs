@@ -1,3 +1,4 @@
+import { quickReplyTemplateTexts } from "../../src/shared/quickReplies.ts";
 import { validateConditionExpression } from "../../src/shared/condition.ts";
 import ts from "typescript";
 import { mediaAttachmentIds, usesStandardMedia } from "../../src/shared/scenarioMedia.ts";
@@ -67,7 +68,7 @@ export function validateScenarioParts(worker, { workbook, hookScripts = {} } = {
       if (!startupParts.has(owner(block)) && !worker.contents.some(content => content.record.talk === talk.id && content.record.block === id && content.initialState === "repairable")) {
         errors.push(`${talk.id}/${block.blockKey}: 未取得の初期blockはtalk_historyの破損枠として定義してください。`);
       }
-      const values = block.messages.flatMap(message => [message.body, ...(message.quickReplies ?? []), ...(message.segments ?? []).flatMap(segment => segment.kind === "text" ? [segment.text] : [])]);
+      const values = block.messages.flatMap(message => [message.body, ...(message.quickReplies ?? []).flatMap(quickReplyTemplateTexts), ...(message.segments ?? []).flatMap(segment => segment.kind === "text" ? [segment.text] : [])]);
       if (startupParts.has(owner(block))) for (const message of block.messages) {
         const attachment = worker.attachments.find(item => item.id === message.attachmentId);
         if (attachment && !startupParts.has(owner(attachment))) {

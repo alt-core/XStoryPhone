@@ -10,6 +10,38 @@ import { runStaticBuild, staticBuildArguments } from "../scripts/build-static.mj
 import { finalizeStaticAssets, manifestForStaticBase, staticBuildAssets } from "../scripts/static-build-assets.ts";
 import { resolveClientStorageSettings } from "../src/shared/clientStorage.ts";
 import { normalizeHttpOrigin, normalizeStaticBase, pathnameKey } from "../src/shared/deploymentUrls.ts";
+import { auditStaticDistribution } from "../scripts/lib/static-audit.mjs";
+import { workerScenario } from "../src/generated/workerScenario.generated.ts";
+
+test("未取得partのQuick Reply発言だけが先行JSへ混入してもstatic監査で検出する", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "xstoryphone-static-quick-reply-"));
+  try {
+    const worker = structuredClone(workerScenario);
+    worker.parts = [...new Set([...(worker.parts ?? ["base"]), "reply_private"])];
+    const privateText = "未取得の選択肢発言マーカー763194";
+    const original = worker.talkBlocks.find((block) => block.id === "guide::message_reply");
+    worker.talkBlocks.push({
+      ...original, id: "guide::private_quick_reply", blockKey: "private_quick_reply", part: "reply_private",
+      messages: [{ ...original.messages.at(-1), id: "private_quick_reply", quickReplies: [{ label: "続きを読む", text: privateText }] }]
+    });
+    mkdirSync(path.join(directory, "assets"));
+    mkdirSync(path.join(directory, "scenario/test/base"), { recursive: true });
+    writeFileSync(path.join(directory, "index.html"), "<!doctype html>");
+    writeFileSync(path.join(directory, "static-entry.json"), JSON.stringify({
+      projectId: worker.project.id, clientRevision: worker.clientRevision, base: "scenario/test/base/part.json"
+    }));
+    writeFileSync(path.join(directory, "scenario/test/base/part.json"), JSON.stringify({ id: "base", rules: [], definition: { project: { lockScreen: { method: "none" } } } }));
+    writeFileSync(path.join(directory, "assets/client.js"), 'globalThis.ready = true;');
+    assert.deepEqual(auditStaticDistribution(directory, worker), []);
+    writeFileSync(path.join(directory, "assets/client.js"), `globalThis.replyText = ${JSON.stringify(privateText)};`);
+    const failures = auditStaticDistribution(directory, worker);
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /未取得partの値が先行取得範囲へ混入/u);
+    assert.ok(failures[0].includes(privateText));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("静的ビルドはVite引数と境界監査を分離し、AWS固有監査を呼ばない", () => {
   const calls = [];

@@ -1,3 +1,4 @@
+import { quickReplySummary } from "../src/shared/quickReplies.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -95,7 +96,7 @@ function responsePreview(rule) {
     const block = scenario.worker.talkBlocks.find((item) => item.id === blockId);
     return [...prefix, ...(block?.messages ?? []).map((message) => {
       const person = scenario.worker.talkPeople.find((item) => item.id === message.sender);
-      const quickReply = message.quickReplies?.length ? ` [Quick Reply: ${message.quickReplies.join(" / ")}]` : "";
+      const quickReply = message.quickReplies?.length ? ` [Quick Reply: ${message.quickReplies.map(quickReplySummary).join(" / ")}]` : "";
       return `${person?.name ?? message.sender}: ${message.body || "[attachment]"}${quickReply}`;
     })];
   }).slice(0, 12);

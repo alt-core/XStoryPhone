@@ -36,7 +36,27 @@
       return undefined;
     }
 
-    const vertexShader = compileShader(gl, gl.VERTEX_SHADER, `
+    let vertexShader: WebGLShader | undefined;
+    let fragmentShader: WebGLShader | undefined;
+    let program: WebGLProgram | null = null;
+    let buffer: WebGLBuffer | null = null;
+    let animationFrame = 0;
+    let stopped = false;
+
+    const cleanup = () => {
+      if (stopped) return;
+      stopped = true;
+      shaderActive = false;
+      window.cancelAnimationFrame(animationFrame);
+      gl.deleteBuffer(buffer);
+      gl.deleteProgram(program);
+      if (vertexShader) gl.deleteShader(vertexShader);
+      if (fragmentShader) gl.deleteShader(fragmentShader);
+      // 捨てるcanvasの文脈を明示終了し、作品側のWebGLを圧迫しない。
+      if (!gl.isContextLost()) gl.getExtension("WEBGL_lose_context")?.loseContext();
+    };
+
+    vertexShader = compileShader(gl, gl.VERTEX_SHADER, `
       attribute vec2 a_position;
       varying vec2 v_uv;
 
@@ -45,7 +65,7 @@
         gl_Position = vec4(a_position, 0.0, 1.0);
       }
     `);
-    const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, `
+    fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, `
       precision highp float;
 
       varying vec2 v_uv;
@@ -67,11 +87,13 @@
     `);
 
     if (!vertexShader || !fragmentShader) {
+      cleanup();
       return undefined;
     }
 
-    const program = gl.createProgram();
+    program = gl.createProgram();
     if (!program) {
+      cleanup();
       return undefined;
     }
 
@@ -80,17 +102,17 @@
     gl.linkProgram(program);
 
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      gl.deleteProgram(program);
+      cleanup();
       return undefined;
     }
 
-    const buffer = gl.createBuffer();
+    buffer = gl.createBuffer();
     const positionLocation = gl.getAttribLocation(program, "a_position");
     const timeLocation = gl.getUniformLocation(program, "u_time");
     const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
 
     if (!buffer || positionLocation < 0 || !timeLocation || !resolutionLocation) {
-      gl.deleteProgram(program);
+      cleanup();
       return undefined;
     }
 
@@ -102,8 +124,6 @@
     );
 
     shaderActive = true;
-    let animationFrame = 0;
-    let stopped = false;
     const startedAt = performance.now();
 
     const render = (now: number) => {
@@ -129,15 +149,7 @@
 
     animationFrame = window.requestAnimationFrame(render);
 
-    return () => {
-      stopped = true;
-      shaderActive = false;
-      window.cancelAnimationFrame(animationFrame);
-      gl.deleteBuffer(buffer);
-      gl.deleteProgram(program);
-      gl.deleteShader(vertexShader);
-      gl.deleteShader(fragmentShader);
-    };
+    return cleanup;
   }
 
   function compileShader(gl: WebGLRenderingContext, type: number, source: string) {

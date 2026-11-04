@@ -165,9 +165,20 @@
       onNoise();
       return;
     }
-    const next = navigateBrowserPage(openPage, normalizeBrowserDisplayUrl(targetUrl));
+    const url = normalizeBrowserDisplayUrl(targetUrl);
+    const next = navigateBrowserPage(openPage, url);
     if (next !== openPage) {
       onNavigatePage(browserTabContentId(tab), next, "push");
+    } else if (url.includes("#") && frameDocument) {
+      try {
+        const loadedUrl = frameDocument.location.href;
+        if (frameElement?.contentDocument === frameDocument && browserDocumentKey(loadedUrl) === browserDocumentKey(url)) {
+          // 実文書のpathとqueryを保ち、符号化表記の違いで再読込せず指定位置へ移る。
+          replaceFrameDocument(`${loadedUrl.split("#")[0]}${url.slice(url.indexOf("#"))}`, true);
+        }
+      } catch {
+        onNoise();
+      }
     }
   }
 

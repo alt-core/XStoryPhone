@@ -7,9 +7,14 @@ export function browserTabContentId(tab: Pick<BrowserTabItem, "id" | "contentId"
   return tab.contentId ?? tab.id;
 }
 
+function browserUrlFragment(url: URL) {
+  // 空のfragmentも先頭への移動を表すため、fragmentのないURLと区別する。
+  return url.hash || (url.href.endsWith("#") ? "#" : "");
+}
+
 export function normalizeBrowserDisplayUrl(value: string) {
   const url = new URL(value, window.location.origin);
-  return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.href;
+  return url.origin === window.location.origin ? `${url.pathname}${url.search}${browserUrlFragment(url)}` : url.href;
 }
 
 export function browserDocumentKey(value: string, includeHash = false) {
@@ -17,7 +22,7 @@ export function browserDocumentKey(value: string, includeHash = false) {
     const url = new URL(value, window.location.origin);
     const path = pathnameKey(url.pathname);
     return path !== null && url.origin === window.location.origin
-      ? `${path}${url.search}${includeHash ? url.hash : ""}`
+      ? `${path}${url.search}${includeHash ? browserUrlFragment(url) : ""}`
       : "";
   } catch {
     return "";

@@ -4,12 +4,15 @@ import { SEARCH_AGENT_STREAM_ID, SEARCH_AGENT_TALK_ID } from "../src/shared/sear
 import { scenarioHookHandlers } from "../src/generated/scenarioHooks.generated.ts";
 import {
   createInitialPlayerState,
+  initializeTalkState,
   materializedTalkMessagesForEvents,
   messagesForTalkBlocks,
   messagesForTalkOutputSteps,
+  publicSearchAgentTimelineItems,
   reconcileScenarioState,
   searchAgentTimelineForOutputs,
   talkCanPost,
+  visibleTalkMessagesForState,
   workerScenario
 } from "../src/worker/scenario.ts";
 import { runScenarioHooks } from "../src/worker/services/scenarioHooks.ts";
@@ -46,6 +49,107 @@ test("通常talkの/inputはcompact block eventを変えず表示境界と受理
   assert.equal(rendered.inputVisibleAfterSeq, rendered.lastMessageSeq);
   assert.equal(rendered.inputEnabled, false);
   assert.equal(rendered.inputEnabledAfterSeq, 0);
+});
+
+const pairedQuickReplies = [
+  { label: " {{reply_label}} ", text: " {{reply_text}} " },
+  { label: "{{reply_duplicate}}", text: "重複候補の発言は使わない" },
+  { label: "{{reply_empty}}", text: "空候補の発言は使わない" },
+  { label: "続きを読む", text: "" },
+  { label: "戻る", text: "{{reply_empty}}" },
+  "あとで"
+];
+const replyEnv = { reply_label: "か\u3099", reply_duplicate: "が", reply_text: "丁寧な発言です", reply_empty: "  " };
+const renderedPairedQuickReplies = [
+  { label: "が", text: "丁寧な発言です" },
+  { label: "続きを読む", text: "" },
+  { label: "戻る", text: "戻る" },
+  "あとで"
+];
+
+test("Quick Replyは両側のtemplate値を捕捉し、labelの空・重複を除いても発言との組を保つ", () => {
+  const talk = guideTalk();
+  const block = workerScenario.talkBlocks.find((item) => item.id === "guide::message_reply");
+  const message = block.messages.at(-1);
+  const previous = message.quickReplies;
+  message.quickReplies = pairedQuickReplies;
+  try {
+    const rendered = messagesForTalkBlocks({
+      talk, blockIds: [block.id], previousCounts: {}, formatEnv: { ...replyEnv, unused: "保存しない" },
+      baseSentAt: "2026-08-30T10:00:00.000Z", idPrefix: "test_quick_reply_pair"
+    });
+    assert.deepEqual(rendered.messages.at(-1).quickReplies, renderedPairedQuickReplies);
+    assert.deepEqual(JSON.parse(rendered.events[0].format_env_json), replyEnv);
+    const reloaded = materializedTalkMessagesForEvents(talk, rendered.events);
+    assert.deepEqual(reloaded.at(-1).quickReplies, renderedPairedQuickReplies);
+    assert.equal("quickReplies" in rendered.events[0], false, "イベントには選択肢の全文を複製しない");
+    const missingTextEnv = { ...replyEnv };
+    delete missingTextEnv.reply_text;
+    assert.throws(() => messagesForTalkBlocks({
+      talk, blockIds: [block.id], previousCounts: {}, formatEnv: missingTextEnv,
+      baseSentAt: "2026-08-30T10:00:00.000Z", idPrefix: "test_missing_quick_reply_text"
+    }), /reply_text/u, "発言だけで使う未取得templateも拒否する");
+  } finally {
+    message.quickReplies = previous;
+  }
+});
+
+test("Quick Replyの初期履歴は両側のtemplateを開始時に固定し、再読込でも同じ組を復元する", () => {
+  const talk = guideTalk();
+  const block = workerScenario.talkBlocks.find((item) => item.id === talk.startBlocks.at(-1));
+  const message = block.messages.at(-1);
+  const previous = message.quickReplies;
+  message.quickReplies = pairedQuickReplies;
+  try {
+    const initialized = initializeTalkState(talk, "test-initial-reply-turn", { ...workerScenario.stateVariables, ...replyEnv });
+    assert.deepEqual(initialized.messages.at(-1).quickReplies, renderedPairedQuickReplies);
+    for (const [key, value] of Object.entries(replyEnv)) assert.equal(initialized.state.initialFormatEnv[key], value);
+    const state = createInitialPlayerState();
+    state.talks[talk.id] = initialized.state;
+    state.stateValues.reply_text = "後から変わった文";
+    assert.deepEqual(visibleTalkMessagesForState(talk, state).at(-1).quickReplies, renderedPairedQuickReplies);
+  } finally {
+    message.quickReplies = previous;
+  }
+});
+
+test("検索AIのQuick Replyも両側のtemplateと明示空をイベントから復元する", () => {
+  const block = workerScenario.talkBlocks.find((item) => item.id === "search_agent::intro");
+  const message = block.messages.at(-1);
+  const previous = message.quickReplies;
+  message.quickReplies = pairedQuickReplies;
+  try {
+    const rendered = searchAgentTimelineForOutputs({
+      outputs: [{ kind: "block", blockId: block.id }], previousCounts: {}, formatEnv: { ...replyEnv, unused: "保存しない" },
+      startSeq: 3, inputVisible: true, inputVisibleAfterSeq: 0, inputEnabled: true, inputEnabledAfterSeq: 0,
+      baseSentAt: "2026-08-30T10:00:00.000Z", idPrefix: "test_search_reply_pair"
+    });
+    assert.deepEqual(rendered.messages.at(-1).quickReplies, renderedPairedQuickReplies);
+    assert.deepEqual(JSON.parse(rendered.events.at(-1).format_env_json), replyEnv);
+    assert.deepEqual(publicSearchAgentTimelineItems(rendered.events, SEARCH_AGENT_TALK_ID).at(-1).quickReplies, renderedPairedQuickReplies);
+  } finally {
+    message.quickReplies = previous;
+  }
+});
+
+test("Quick Replyの両側を500文字へ揃え、切り詰めでlabelが重複しても最初の発言を保つ", () => {
+  const talk = guideTalk();
+  const block = workerScenario.talkBlocks.find((item) => item.id === "guide::message_reply");
+  const message = block.messages.at(-1);
+  const previous = message.quickReplies;
+  message.quickReplies = [
+    { label: "{{long_label}}", text: "{{long_text}}" },
+    { label: "{{long_label}}後半違い", text: "採用しない発言" }
+  ];
+  try {
+    const rendered = messagesForTalkBlocks({
+      talk, blockIds: [block.id], previousCounts: {}, formatEnv: { long_label: "長".repeat(510), long_text: "文".repeat(510) },
+      baseSentAt: "2026-08-30T10:00:00.000Z", idPrefix: "test_quick_reply_limits"
+    });
+    assert.deepEqual(rendered.messages.at(-1).quickReplies, [{ label: "長".repeat(500), text: "文".repeat(500) }]);
+  } finally {
+    message.quickReplies = previous;
+  }
 });
 
 test("showとenableは既に有効なら遅延境界を動かさない", () => {

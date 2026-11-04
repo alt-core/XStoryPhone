@@ -1,10 +1,11 @@
+import type { QuickReply } from "../../shared/quickReplies.ts";
 import type { TalkInputState } from "../scenario-runtime/types.ts";
 
 type SequencedTalkItem = {
   id: string;
   seq?: number;
   sender: "owner" | "other";
-  quickReplies?: string[];
+  quickReplies?: QuickReply[];
 };
 
 function itemSeq(item: SequencedTalkItem, index: number) {
@@ -38,11 +39,15 @@ export function resolvedTalkInputState(
 export function latestQuickReplyPlacement(
   items: readonly SequencedTalkItem[],
   visibleItemIds: ReadonlySet<string>,
-  canSubmit: boolean
+  canSubmit: boolean,
+  quickRepliesClosedSeq = 0
 ) {
   if (!canSubmit) return undefined;
   const latest = items[items.length - 1];
   if (!latest || latest.sender !== "other" || !visibleItemIds.has(latest.id) || !latest.quickReplies?.length) {
+    return undefined;
+  }
+  if (quickRepliesClosedSeq > 0 && itemSeq(latest, items.length - 1) <= quickRepliesClosedSeq) {
     return undefined;
   }
   return { messageId: latest.id, replies: latest.quickReplies };

@@ -1,3 +1,4 @@
+import { quickReplyTemplateTexts } from "../shared/quickReplies.ts";
 import type { WorkerScenario } from "../shared/scenario.ts";
 import { mediaAttachmentIds, resolveMediaRecord, usesStandardMedia } from "../shared/scenarioMedia.ts";
 import { projectApps } from "../project/apps.ts";
@@ -209,7 +210,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
       for (const segment of template.segments ?? [])
         if (segment.kind === "text")
           requireTemplateValues(segment.text, values);
-      for (const reply of template.quickReplies ?? [])
+      for (const reply of (template.quickReplies ?? []).flatMap(quickReplyTemplateTexts))
         requireTemplateValues(reply, values);
     }
   }
@@ -1304,6 +1305,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
           transcriptKey: stored?.transcriptKey ?? "",
           lastMessageSeq: stored?.lastMessageSeq ?? 0,
           historyRevision: 0 as const,
+          ...(stored?.quickRepliesClosedSeq ? { quickRepliesClosedSeq: stored.quickRepliesClosedSeq } : {}),
           inputVisible: stored?.inputVisible ?? talk.inputVisible,
           inputVisibleAfterSeq: stored?.inputVisibleAfterSeq ?? 0,
           inputEnabled: stored?.inputEnabled ?? talk.inputEnabled,
@@ -1317,6 +1319,7 @@ export function createScenarioRuntime(workerScenario: WorkerScenario) {
           transcriptKey: stored?.transcriptKey ?? "",
           lastMessageSeq: publicTalkLastMessageSeq(talk, state),
           historyRevision: talkHistoryRevision(talk, state),
+          ...(stored?.quickRepliesClosedSeq ? { quickRepliesClosedSeq: stored.quickRepliesClosedSeq } : {}),
           inputVisible: stored?.inputVisible ?? talk.inputVisible,
           inputVisibleAfterSeq: stored?.inputVisibleAfterSeq ?? 0,
           inputEnabled: stored?.inputEnabled ?? talk.inputEnabled,

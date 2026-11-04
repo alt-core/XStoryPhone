@@ -1,3 +1,4 @@
+import { quickReplySummary } from "../../shared/quickReplies.ts";
 import { evaluateCondition } from "../../shared/condition.ts";
 import { parseRegexCriteria } from "../../shared/conversation.ts";
 import type { ScenarioTalk, TalkOutputStep, TalkRule } from "../../shared/scenario.ts";
@@ -97,7 +98,7 @@ function blockPreviewMessages(blockId: string) {
       updatedAt: message.updatedAt
     }),
     ...(message.quickReplies?.length
-      ? [line(`[Quick Reply] ${message.quickReplies.join(" / ")}`, "SYSTEM")]
+      ? [line(`[Quick Reply] ${message.quickReplies.map(quickReplySummary).join(" / ")}`, "SYSTEM")]
       : [])
   ]);
 }

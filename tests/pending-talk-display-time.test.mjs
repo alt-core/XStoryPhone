@@ -83,3 +83,26 @@ test("作中時計変更後の次の送信は新しい日時を捕捉し、自�
   assert.equal(c.pendingTalkMessages[1].displayTime, "3/1 夕方");
   assert.ok(c.pendingTalkMessages.every(message => message.sentAt === realSentAt));
 });
+
+for (const kind of ["sms", "chat"]) {
+  test(`${kind}: 無発言の送信は仮の吹き出しを作らず、応答待ちだけを開始する`, () => {
+    const c = pendingHarness();
+    c.startPendingTalkSend(kind, "room", "");
+    assert.equal(c.pendingTalkMessages.length, 0);
+    assert.equal(c.replyDelayAnchorsByThread.room.waiting, true);
+    c.finishPendingTalkSend(kind, "room");
+    assert.equal(Object.keys(c.replyDelayAnchorsByThread).length, 0);
+  });
+
+  test(`${kind}: 履歴を画面へ統合してもボタンと発言の組を保持する`, () => {
+    const c = pendingHarness();
+    const replies = [{ label: "はい", text: "はい、お願いします" }, { label: "続きを読む", text: "" }];
+    c.playerState[kind === "sms" ? "smsMessages" : "chatMessages"] = [{
+      seq: 1, id: "choices", talkId: "room", sender: "other", body: "選んでください", quickReplies: replies,
+      attachment: null, sentAt: realSentAt
+    }];
+    const merge = kind === "sms" ? c.mergeSmsMessages : c.mergeChatMessages;
+    const messages = merge([{ id: "room", messages: [] }], c.playerState, [], [], [], [])[0].messages;
+    assert.deepEqual(messages[0].quickReplies, replies);
+  });
+}

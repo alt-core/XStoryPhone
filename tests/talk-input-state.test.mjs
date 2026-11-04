@@ -78,3 +78,26 @@ test("Quick Replyは最新のNPC messageが表示済みかつ送信可能な時�
     undefined
   );
 });
+
+test("消費済みseqまでのQuick Replyを閉じ、後続の表示済み候補は出す", () => {
+  const visible = new Set(["one", "two"]);
+  for (const closedSeq of [2, 3]) {
+    assert.equal(latestQuickReplyPlacement(items, visible, true, closedSeq), undefined);
+  }
+  for (const closedSeq of [undefined, 0, -1, 1]) {
+    assert.equal(latestQuickReplyPlacement(items, visible, true, closedSeq)?.messageId, "two");
+  }
+  const next = { id: "three", seq: 3, sender: "other", quickReplies: [{ label: "次へ", text: "" }] };
+  assert.equal(latestQuickReplyPlacement([...items, next], visible, true, 2), undefined, "遅延表示中は前の候補へ戻らない");
+  visible.add(next.id);
+  const placement = latestQuickReplyPlacement([...items, next], visible, true, 2);
+  assert.equal(placement?.messageId, next.id);
+  assert.equal(placement?.replies, next.quickReplies, "ラベルと発言の組を分解せず渡す");
+  assert.equal(latestQuickReplyPlacement([...items, next], visible, false, 2), undefined);
+});
+
+test("seqのない旧履歴でもQuick Replyの消費境界は従来の並び順で扱う", () => {
+  const legacy = items.map(({ seq, ...item }) => item);
+  assert.equal(latestQuickReplyPlacement(legacy, new Set(["one", "two"]), true, 2), undefined);
+  assert.equal(latestQuickReplyPlacement(legacy, new Set(["one", "two"]), true, 1)?.messageId, "two");
+});

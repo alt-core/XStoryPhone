@@ -1,7 +1,9 @@
 <script lang="ts">
-  export let replies: string[] = [];
+  import { quickReplyLabel, type QuickReply } from "../../shared/quickReplies.ts";
+
+  export let replies: QuickReply[] = [];
   export let accent = "#8fd2ff";
-  export let onSelect: (reply: string) => void | Promise<void> = () => {};
+  export let onSelect: (reply: QuickReply) => void | Promise<void> = () => {};
 
   const DRAG_START_PX = 6;
 
@@ -61,7 +63,7 @@
     if (!dragging && pointerId === event.pointerId) pointerId = undefined;
   }
 
-  function selectReply(event: MouseEvent, reply: string) {
+  function selectReply(event: MouseEvent, reply: QuickReply) {
     if (suppressClick) {
       event.preventDefault();
       return;
@@ -83,8 +85,8 @@
     on:pointercancel={finishDrag}
     on:pointerleave={cancelPendingDrag}
   >
-    {#each replies as reply, index (`${index}:${reply}`)}
-      <button type="button" on:click={(event) => selectReply(event, reply)}>{reply}</button>
+    {#each replies as reply, index (`${index}:${quickReplyLabel(reply)}`)}
+      <button type="button" on:click={(event) => selectReply(event, reply)}>{quickReplyLabel(reply)}</button>
     {/each}
   </div>
 {/if}

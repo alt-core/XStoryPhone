@@ -3,13 +3,14 @@ import { resourceUrl } from "../src/client/system/resourceUrls.ts";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { compile } from "svelte/compiler";
+import { compile, parse } from "svelte/compiler";
 import * as serverRuntime from "svelte/internal/server";
 import { render } from "svelte/server";
 import ts from "typescript";
 import { deviceViewFor } from "../src/client/system/deviceView.ts";
 import { hasAssistantCandidate } from "../src/shared/assistantMessages.ts";
 import { latestQuickReplyPlacement, resolvedTalkInputState } from "../src/client/system/talkInputState.ts";
+import { quickReplyLabel, quickReplyText } from "../src/shared/quickReplies.ts";
 import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
 const baseViewInput = {
@@ -118,6 +119,7 @@ function searchAgentHarness(props = {}, dependencies = {}) {
     saveTalkDelaySeenMessages() {},
     resolvedTalkInputState: () => ({ visible: true, canSubmit: true }),
     latestQuickReplyPlacement: () => undefined,
+    quickReplyLabel, quickReplyText,
     ...dependencies
   });
 }
@@ -250,6 +252,159 @@ test("検索の復元位置がなければ末尾を開き、スクロール時�
   assert.deepEqual(events.slice(-2), [
     { scrollTop: 420, visibleMessageCount: 40 }, { open: false, source: "user" }
   ], "履歴を閉じた状態に更新する前に位置を保存できる");
+});
+
+function searchAgentScrollHarness(dependencies = {}) {
+  let top = 0;
+  const image = {};
+  const list = {
+    scrollHeight: 1000,
+    clientHeight: 400,
+    get scrollTop() { return top; },
+    set scrollTop(value) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
+    contains: (node) => node === image
+  };
+  const positions = [];
+  const harness = searchAgentHarness({ onScrollChange: (position) => positions.push({ ...position }) }, {
+    list, imageEvent: { currentTarget: image }, ...dependencies
+  });
+  harness.evaluate("messageListElement = list");
+  return { harness, list, positions };
+}
+
+test("末尾にいた検索一覧は遅延画像が48pxを超えて伸びても追従し、複数画像と失敗時も末尾を保つ", async () => {
+  const { harness, list, positions } = searchAgentScrollHarness();
+  harness.evaluate("openExpanded()");
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 600);
+  for (const height of [1082, 1164, 1140]) {
+    list.scrollHeight = height;
+    if (height === 1082) assert.equal(harness.evaluate("isMessageListNearBottom()"), false);
+    harness.evaluate("handleResultImageLoad(imageEvent)");
+    assert.equal(list.scrollTop, height - 400);
+    assert.equal(positions.at(-1).scrollTop, height - 400);
+  }
+  harness.destroy();
+});
+
+test("検索一覧を上へ戻している間は画像の読込で末尾へ移らず、末尾へ戻れば追従を再開する", async () => {
+  const { harness, list } = searchAgentScrollHarness();
+  harness.evaluate("openExpanded()");
+  await new Promise(setImmediate);
+  list.scrollTop = 300;
+  harness.evaluate("handleMessageListScroll()");
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 300);
+  list.scrollTop = list.scrollHeight - list.clientHeight;
+  harness.evaluate("handleMessageListScroll()");
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 764);
+  harness.destroy();
+});
+
+test("検索画像の読込がscroll通知に先行しても、利用者が直前に戻した位置を奪わない", async () => {
+  const { harness, list } = searchAgentScrollHarness();
+  harness.evaluate("openExpanded()");
+  await new Promise(setImmediate);
+  list.scrollTop = 300;
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 300);
+  harness.destroy();
+});
+
+test("画像補正はtickを待たず完了し、後続の上読みを非同期で上書きしない", async () => {
+  const ticks = [];
+  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
+  harness.evaluate("openExpanded()");
+  ticks.splice(0).forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 682);
+  assert.equal(ticks.length, 0);
+  list.scrollTop = 300;
+  harness.evaluate("handleMessageListScroll()");
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 300);
+  harness.destroy();
+});
+
+test("検索の明示復元位置は画像の読込と復元由来のscroll通知で末尾へ引き戻されない", async () => {
+  const { harness, list } = searchAgentScrollHarness();
+  harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 900, visibleMessageCount: 80 } });
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 600, "未読込時の高さに収まる位置までブラウザーが制限する");
+  harness.evaluate("handleMessageListScroll()");
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 600, "見かけ上は末尾でも明示された復元位置を優先する");
+  harness.update({ restoreRequest: { id: 2, open: true } });
+  await new Promise(setImmediate);
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 764, "位置指定のない復元は通常の末尾表示にする");
+  harness.destroy();
+});
+
+test("過去の検索履歴追加は位置補正を維持し、その画像の読込で末尾へ飛ばない", async () => {
+  const ticks = [];
+  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
+  harness.evaluate("openExpanded()");
+  ticks.splice(0).forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  list.scrollTop = 20;
+  harness.evaluate("hasOlderHistory = true; visibleServerMessages = Array(100).fill({}); handleMessageListScroll()");
+  list.scrollHeight += 500;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 20, "履歴追加の位置計算が済む前に画像補正を割り込ませない");
+  ticks.splice(0).forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 520);
+  harness.evaluate("handleMessageListScroll()");
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 520);
+  harness.destroy();
+});
+
+test("閉じた検索・古い画像・破棄後の画像通知は新しい一覧や履歴の位置を変えない", async () => {
+  const { harness, list, positions } = searchAgentScrollHarness();
+  harness.evaluate("openExpanded()");
+  await new Promise(setImmediate);
+  harness.evaluate("closeExpanded()");
+  const closedReports = positions.length;
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 600);
+  assert.equal(positions.length, closedReports);
+  harness.evaluate("openExpanded()");
+  await new Promise(setImmediate);
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad({ currentTarget: {} })");
+  assert.equal(list.scrollTop, 682, "今の一覧に属さない古い画像通知を捨てる");
+  harness.destroy();
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 682);
+});
+
+test("画像通知と古い末尾移動は検索の履歴復元中と復元後の指定位置を上書きしない", async () => {
+  const ticks = [];
+  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
+  harness.evaluate("openExpanded()");
+  harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 173, visibleMessageCount: 80 } });
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 0);
+  ticks.splice(0).reverse().forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 173);
+  list.scrollHeight += 82;
+  harness.evaluate("handleResultImageLoad(imageEvent)");
+  assert.equal(list.scrollTop, 173);
+  harness.destroy();
 });
 
 test("hide=closeは背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {
@@ -451,6 +606,123 @@ test("入力欄を隠した検索会話でも、開封失敗後にQuick Replyで
     harness.update({ talk: { ...talk, messages: [...talk.messages, { ...menu, id: "next", seq: 2, quickReplies: undefined }] } });
     assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "新しい台本メッセージに選択肢がなければ旧選択肢は残さない");
   } finally { harness.destroy(); }
+});
+
+test("検索の発言を変える候補はラベルで送信し、空発言の仮吹き出しを出さず失敗後に候補を戻す", async () => {
+  for (const text of ["はい、お願いします", ""]) {
+    const reply = { label: "はい", text };
+    const menu = { kind: "message", id: "menu", seq: 12, talkId: "search", sender: "other", body: "選んでください", sentAt: "2026-01-01T00:00:00Z", quickReplies: [reply] };
+    const talk = { talkId: "search", messages: [menu], inputVisible: false, inputEnabled: true, inputVisibleAfterSeq: 0, inputEnabledAfterSeq: 0, canPost: true };
+    const transmissions = [];
+    const completions = [];
+    const harness = searchAgentHarness({
+      talk, onSend: (message, options) => {
+        transmissions.push({ message, options: { ...options } });
+        return new Promise((resolve) => completions.push(resolve));
+      }
+    }, {
+      crypto: globalThis.crypto, MAX_SEARCH_AGENT_QUERY_LENGTH: 500,
+      loadTalkDelaySeenMessages: () => ({ search: new Set([menu.id]) }),
+      latestQuickReplyPlacement, resolvedTalkInputState, shouldQueueTalkMessage: () => false
+    });
+    try {
+      harness.evaluate('input = "未送信の下書き"; openExpanded()');
+      harness.flush();
+      const pending = harness.evaluate("sendQuickReply(quickReplyPlacement.replies[0], 12)");
+      harness.flush();
+      assert.equal(harness.evaluate("pending"), true);
+      assert.equal(harness.evaluate("typingVisible"), true);
+      assert.equal(harness.evaluate("quickReplyPlacement"), undefined);
+      assert.equal(harness.evaluate("input"), "未送信の下書き");
+      assert.equal(harness.evaluate("transientMessages.length"), text ? 1 : 0);
+      if (text) assert.equal(harness.evaluate("transientMessages[0].body"), text);
+      assert.deepEqual(transmissions, [{ message: "はい", options: { display: text, quickReplySeq: 12 } }]);
+      completions.shift()({ ok: false, error: "候補を送信できませんでした。" });
+      await pending;
+      harness.flush();
+      assert.equal(harness.evaluate("pending"), false);
+      assert.equal(harness.evaluate("sendError"), "候補を送信できませんでした。");
+      assert.equal(harness.evaluate("quickReplyPlacement.replies[0]"), reply);
+      assert.equal(harness.evaluate("transientMessages.length"), 0);
+      const retry = harness.evaluate("sendQuickReply(quickReplyPlacement.replies[0], 12)");
+      harness.update({ talk: { ...talk, quickRepliesClosedSeq: 12 } });
+      completions.shift()({ ok: true });
+      await retry;
+      harness.flush();
+      assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "成功消費した候補は相手の発話が同じでも閉じる");
+      assert.equal(harness.evaluate("input"), "未送信の下書き");
+      harness.evaluate("closeExpanded(); openExpanded()");
+      harness.flush();
+      assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "再表示しても消費済み候補を戻さない");
+    } finally { harness.destroy(); }
+  }
+});
+
+test("検索Quick Replyの描画callbackは後から届いた最新発話でseqを置き換えない", async () => {
+  const calls = [];
+  const harness = searchAgentHarness({ onSend: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); } }, {
+    crypto: globalThis.crypto
+  });
+  const source = readFileSync(searchAgentUrl, "utf8");
+  let callback;
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    if (node.type === "Component" && node.name === "QuickReplies") {
+      callback = node.attributes.find((attribute) => attribute.name === "onSelect")?.value.expression;
+      return;
+    }
+    for (const child of Object.values(node)) {
+      if (child && typeof child === "object") for (const item of Array.isArray(child) ? child : [child]) visit(item);
+    }
+  }
+  visit(parse(source, { modern: true }).fragment);
+  assert.ok(callback);
+  const select = harness.evaluate(`((message) => (${source.slice(callback.start, callback.end)}))({ seq: 12 })`);
+  harness.evaluate('messages = [{ seq: 99 }]; composerEnabled = true');
+  await select({ label: "続きを読む", text: "" });
+  assert.equal(calls[0][0], "続きを読む");
+  assert.deepEqual({ ...calls[0][1] }, { display: "", quickReplySeq: 12 });
+  harness.destroy();
+});
+
+test("検索の従来文字列候補は追加optionsを付けず1引数で送る", async () => {
+  const calls = [];
+  const harness = searchAgentHarness({ onSend: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); } }, {
+    crypto: globalThis.crypto
+  });
+  harness.evaluate("composerEnabled = true");
+  await harness.evaluate('sendQuickReply("従来の候補", 12)');
+  assert.deepEqual(calls, [["従来の候補"]]);
+  harness.destroy();
+});
+
+test("Quick Replyボタンはラベルだけを描画し、選択時はラベルと発言の組を保つ", () => {
+  const quickRepliesUrl = new URL("../src/client/system/QuickReplies.svelte", import.meta.url);
+  const source = readFileSync(quickRepliesUrl, "utf8");
+  const compiled = ts.transpileModule(compile(source, { filename: "QuickReplies.svelte", generate: "server" }).js.code, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  const sandbox = {
+    exports: {},
+    require(name) {
+      if (name === "svelte/internal/server") return serverRuntime;
+      if (name === "../../shared/quickReplies.ts") return { quickReplyLabel };
+      throw new Error(`想定外の依存: ${name}`);
+    }
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(compiled, sandbox);
+  const reply = { label: "短いボタン", text: "履歴に残す丁寧な発言" };
+  const rendered = render(sandbox.exports.default, { props: { replies: ["従来の候補", reply, { label: "続きを読む", text: "" }] } });
+  assert.match(rendered.body, />従来の候補<|>従来の候補<!--/u);
+  assert.match(rendered.body, /短いボタン/u);
+  assert.match(rendered.body, /続きを読む/u);
+  assert.doesNotMatch(rendered.body, /履歴に残す丁寧な発言|\[object Object\]/u);
+  const selected = [];
+  const harness = componentScriptHarness(quickRepliesUrl, { replies: [reply], onSelect: (value) => selected.push(value) }, { quickReplyLabel, chosen: reply });
+  harness.evaluate("selectReply({ preventDefault() {} }, chosen)");
+  assert.equal(selected[0], reply);
+  harness.destroy();
 });
 
 test("強制閉じ後に届いた古い検索結果は開き直した状態を上書きしない", async () => {

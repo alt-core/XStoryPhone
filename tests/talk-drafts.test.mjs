@@ -5,6 +5,8 @@ import vm from "node:vm";
 import ts from "typescript";
 import { createTalkDrafts, restoreFailedTalkDraft } from "../src/client/apps/talkDrafts.ts";
 import { talkForFocusedContent } from "../src/client/apps/talkContentFocus.ts";
+import { quickReplyLabel, quickReplyText } from "../src/shared/quickReplies.ts";
+import { parse } from "svelte/compiler";
 
 const emptyDraft = { text: "", photoId: "", share: null, error: "" };
 const share = { appId: "notes", contentId: "note-a", title: "Aの共有" };
@@ -19,8 +21,8 @@ function deferred() {
 // 実componentの送信・選択handlerを使い、通信の完了順だけを固定する。
 // DOM描画は扱わず、ルーム切替時は実ソースのリアクティブ代入を実行する。
 function composerHarness(app) {
-  const source = readFileSync(new URL(`../src/client/apps/${app}.svelte`, import.meta.url), "utf8")
-    .match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+  const componentSource = readFileSync(new URL(`../src/client/apps/${app}.svelte`, import.meta.url), "utf8");
+  const source = componentSource.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
   const parsed = ts.createSourceFile(`${app}.ts`, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const names = new Set([
     "submitMessage", "sendQuickReply", "selectThread", "selectPhoto", "applyInitialShareDraft",
@@ -50,7 +52,7 @@ function composerHarness(app) {
       id, contentId: `content-${id}`, messages: [{ attachment: { contentId: `attachment-${id}` } }]
     })),
     selectedThreadId: "A", selectedThread: undefined, composer: draftForThread("A"),
-    draftForThread, restoreFailedTalkDraft, selectedThreadCanPost: true, sending: false,
+    draftForThread, restoreFailedTalkDraft, quickReplyLabel, quickReplyText, selectedThreadCanPost: true, sending: false,
     get selectedPhoto() { return this.composer.photoId ? { id: this.composer.photoId } : undefined; },
     readDividerArmed: true, readDividerAfterMessageId: "", pickerOpen: false, photoPickerOpen: false,
     focusContentId: "", focusContentRequestId: 0, focusHistoryRepairId: "",
@@ -63,7 +65,10 @@ function composerHarness(app) {
       focusCalls.push(contentId);
       return talkForFocusedContent(threads, contentId);
     },
-    onSend(talkId, body) { transmissions.push({ talkId, body }); return response.promise; },
+    onSend(talkId, body, options) {
+      transmissions.push({ talkId, body, ...(options ? { options: { ...options } } : {}) });
+      return response.promise;
+    },
     scrollHistoryToBottom() { scrollCount += 1; }
   };
   vm.createContext(context);
@@ -72,6 +77,24 @@ function composerHarness(app) {
   return {
     context, response, transmissions,
     get scrollCount() { return scrollCount; },
+    renderedQuickReplyHandler(message) {
+      // 実テンプレートのcallbackを、描画時の発話に結び付けて実行する。
+      let callback;
+      function visit(node) {
+        if (!node || typeof node !== "object") return;
+        if (node.type === "Component" && node.name === "QuickReplies") {
+          callback = node.attributes.find((attribute) => attribute.name === "onSelect")?.value.expression;
+          return;
+        }
+        for (const child of Object.values(node)) {
+          if (child && typeof child === "object") for (const item of Array.isArray(child) ? child : [child]) visit(item);
+        }
+      }
+      visit(parse(componentSource, { modern: true }).fragment);
+      assert.ok(callback);
+      context.renderedMessage = message;
+      return vm.runInContext(`((message) => (${componentSource.slice(callback.start, callback.end)}))(renderedMessage)`, context);
+    },
     select(talkId, via = "一覧") {
       if (via === "通知" || via === "添付検索") {
         context.focusContentId = `${via === "添付検索" ? "attachment" : "content"}-${talkId}`;
@@ -181,6 +204,49 @@ for (const app of ["MessagesApp", "ChatApp"]) {
     assert.equal(context.composer.text, "Aの未送信本文");
     assert.equal(context.composer.error, "候補の送信失敗");
     assert.deepEqual(transmissions, [{ talkId: "A", body: "Aの候補" }]);
+  });
+
+  test(`${app}: 発言を変える候補は描画した発話のseqを送り、通常下書きを消さない`, async () => {
+    for (const text of ["はい、お願いします", ""]) {
+      const harness = composerHarness(app);
+      const { context, response, transmissions } = harness;
+      context.composer.text = "Aの未送信本文";
+      context.composer.photoId = "photo-a";
+      const select = harness.renderedQuickReplyHandler({ seq: 42 });
+      context.selectedThread.messages.push({ seq: 99, sender: "other", body: "遅れて届いた発話" });
+      const pending = select({ label: "はい", text });
+      assert.deepEqual(transmissions, [{ talkId: "A", body: "はい", options: { display: text, quickReplySeq: 42 } }]);
+      assert.equal(context.composer.text, "Aの未送信本文");
+      assert.equal(context.composer.photoId, "photo-a");
+      await context.sendQuickReply({ label: "二度目", text: "" }, 99);
+      assert.equal(transmissions.length, 1, "送信待ち中は無発言の候補も二重送信しない");
+      response.resolve({ ok: true });
+      await pending;
+      assert.equal(context.sending, false);
+      assert.equal(context.composer.text, "Aの未送信本文");
+    }
+  });
+
+  test(`${app}: 無発言候補の失敗は元ルームだけに残し、別ルームと元の本文・添付を保つ`, async () => {
+    for (const rejected of [false, true]) {
+      const harness = composerHarness(app);
+      const { context, response, transmissions } = harness;
+      Object.assign(context.composer, { text: "Aの未送信本文", share });
+      const pending = context.sendQuickReply({ label: "続きを読む", text: "" }, 42);
+      harness.select("B", "通知");
+      context.composer.text = "Bの未送信本文";
+      if (rejected) response.reject(new Error("通信切断"));
+      else response.resolve({ ok: false, error: "無発言候補の送信失敗" });
+      await pending;
+      assert.deepEqual(context.composer, { ...emptyDraft, text: "Bの未送信本文" });
+      assert.equal(harness.scrollCount, 0);
+      harness.select("A");
+      assert.deepEqual(context.composer, {
+        ...emptyDraft, text: "Aの未送信本文", share,
+        error: rejected ? "送信に失敗しました。" : "無発言候補の送信失敗"
+      });
+      assert.deepEqual(transmissions, [{ talkId: "A", body: "続きを読む", options: { display: "", quickReplySeq: 42 } }]);
+    }
   });
 }
 
