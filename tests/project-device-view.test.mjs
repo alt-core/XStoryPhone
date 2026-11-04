@@ -151,6 +151,107 @@ test("検索の手動開閉は実expandedの更新直後に通知する", () => 
   assert.deepEqual(opened, [true, false, true, false], "後から古いtrueを再通知しない");
 });
 
+test("検索の開閉通知は手動操作と強制閉じ・破棄を区別する", async () => {
+  const opened = [];
+  const harness = searchAgentHarness({
+    onOpenChange: (open, source) => opened.push([open, source]),
+    onOpenSearchAgentResult: async () => true
+  });
+  harness.evaluate("openExpanded(); closeExpanded(); openExpanded()");
+  harness.update({ closeRequestId: 1 });
+  harness.evaluate("openExpanded()");
+  await harness.evaluate('openResult({ appId: "notes", contentId: "note" })');
+  harness.destroy();
+  assert.deepEqual(opened, [
+    [true, "user"], [false, "user"], [true, "user"], [false, "system"],
+    [true, "user"], [false, "system"], [false, "system"]
+  ]);
+});
+
+test("検索の履歴復元は画面変更・強制閉じの後に開き、表示件数と位置を復元してfocusを動かさない", async () => {
+  const opened = [];
+  const positions = [];
+  let focused = 0;
+  const restoredList = { scrollTop: 0, scrollHeight: 2000, clientHeight: 400 };
+  const harness = searchAgentHarness({
+    onOpenChange: (open, source) => opened.push([open, source]),
+    onScrollChange: (position) => positions.push({ ...position })
+  }, {
+    restoredList,
+    restoredInput: { focus() { focused += 1; } },
+    window: { clearTimeout() {}, matchMedia: () => ({ matches: true }) }
+  });
+  harness.evaluate("messageListElement = restoredList; inputElement = restoredInput");
+  harness.update({
+    surfaceKey: "notes", closeRequestId: 1,
+    restoreRequest: { id: 1, open: true, scrollTop: 173, visibleMessageCount: 120 }
+  });
+  await new Promise(setImmediate);
+  assert.equal(harness.evaluate("expanded"), true);
+  assert.equal(harness.evaluate("visibleMessageCount"), 120);
+  assert.equal(restoredList.scrollTop, 173);
+  assert.equal(focused, 0);
+  assert.deepEqual(opened, [[false, "system"], [false, "system"], [true, "system"]]);
+  assert.deepEqual(positions.at(-1), { scrollTop: 173, visibleMessageCount: 120 });
+  harness.flush();
+  await new Promise(setImmediate);
+  assert.equal(restoredList.scrollTop, 173, "同じ復元要求や自動スクロールで位置を変えない");
+  harness.update({ restoreRequest: { id: 2, open: false } });
+  assert.equal(harness.evaluate("expanded"), false);
+  assert.deepEqual(opened.at(-1), [false, "system"]);
+});
+
+test("検索の履歴復元は古いtick待ちの末尾移動・focus・復元位置を無効にする", async () => {
+  const ticks = [];
+  let focused = 0;
+  const restoredList = { scrollTop: 0, scrollHeight: 2000, clientHeight: 400 };
+  const harness = searchAgentHarness({}, {
+    tick: () => new Promise((resolve) => ticks.push(resolve)),
+    restoredList,
+    restoredInput: { focus() { focused += 1; } },
+    window: { clearTimeout() {}, matchMedia: () => ({ matches: true }) }
+  });
+  harness.evaluate("messageListElement = restoredList; inputElement = restoredInput; openExpanded()");
+  harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 300, visibleMessageCount: 80 } });
+  harness.update({ restoreRequest: { id: 2, open: true, scrollTop: 600, visibleMessageCount: 120 } });
+  ticks.splice(0).reverse().forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  assert.equal(restoredList.scrollTop, 600);
+  assert.equal(harness.evaluate("visibleMessageCount"), 120);
+  assert.equal(focused, 0);
+  harness.update({ restoreRequest: { id: 1, open: false } });
+  assert.equal(harness.evaluate("expanded"), true, "後から届いた古い復元要求は適用しない");
+
+  harness.update({ restoreRequest: { id: 3, open: true, scrollTop: 900 } });
+  harness.evaluate("closeExpanded()");
+  ticks.splice(0).forEach((resolve) => resolve());
+  await new Promise(setImmediate);
+  assert.equal(harness.evaluate("expanded"), false);
+  assert.equal(restoredList.scrollTop, 600, "復元を待つ間の手動閉じを優先する");
+});
+
+test("検索の復元位置がなければ末尾を開き、スクロール時と閉じる直前に最新位置を通知する", async () => {
+  const events = [];
+  const restoredList = { scrollTop: 0, scrollHeight: 2000, clientHeight: 400 };
+  const harness = searchAgentHarness({
+    onOpenChange: (open, source) => events.push({ open, source }),
+    onScrollChange: (position) => events.push({ ...position })
+  }, { restoredList });
+  harness.evaluate("messageListElement = restoredList");
+  harness.update({ restoreRequest: { id: 1, open: true } });
+  await new Promise(setImmediate);
+  assert.equal(restoredList.scrollTop, 2000);
+  assert.equal(harness.evaluate("visibleMessageCount"), 40);
+  restoredList.scrollTop = 250;
+  harness.evaluate("handleMessageListScroll()");
+  assert.deepEqual(events.at(-1), { scrollTop: 250, visibleMessageCount: 40 });
+  restoredList.scrollTop = 420;
+  harness.evaluate("closeExpanded()");
+  assert.deepEqual(events.slice(-2), [
+    { scrollTop: 420, visibleMessageCount: 40 }, { open: false, source: "user" }
+  ], "履歴を閉じた状態に更新する前に位置を保存できる");
+});
+
 test("hide=closeは背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {
   const harness = searchAgentHarness({
     peeking: true, surfaceKey: "home",
@@ -425,15 +526,19 @@ function renderedSearchAgentProps(props) {
   return children;
 }
 
-test("PhoneFrameは表示中の検索だけに開閉callbackをそのまま渡す", () => {
+test("PhoneFrameは表示中の検索だけに復元要求と開閉・スクロールcallbackをそのまま渡す", () => {
   const onSearchAgentOpenChange = () => {};
+  const onSearchAgentScrollChange = () => {};
+  const searchAgentRestoreRequest = { id: 1, open: true, scrollTop: 200, visibleMessageCount: 80 };
   const props = {
     assistantVisible: true,
     searchAgentTalk: { talkId: "search", messages: [] },
-    onSearchAgentOpenChange
+    onSearchAgentOpenChange, onSearchAgentScrollChange, searchAgentRestoreRequest
   };
   const [child] = renderedSearchAgentProps(props);
   assert.equal(child.onOpenChange, onSearchAgentOpenChange);
+  assert.equal(child.onScrollChange, onSearchAgentScrollChange);
+  assert.equal(child.restoreRequest, searchAgentRestoreRequest);
   assert.equal(renderedSearchAgentProps({ ...props, assistantVisible: false }).length, 0);
   assert.equal(renderedSearchAgentProps({ ...props, searchAgentTalk: null }).length, 0);
 });

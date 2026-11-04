@@ -59,14 +59,20 @@
   } from "./system/clientPlayerStorage.ts";
   import {
     goBackInPhoneHistory,
+    consumePhoneHistoryPop,
+    currentPhoneHistoryState,
     phoneHistoryMarkerFrom,
     phoneHistoryStateFrom,
     pushPhoneHistoryRoute,
     replacePhoneHistoryRoute,
+    replacePhoneHistoryView,
+    samePhoneHistoryPage,
     samePhoneHistoryRoute,
     type BrowserPageHistory,
-    type PhoneHistoryRoute
+    type PhoneHistoryRoute,
+    type PhoneHistoryState
   } from "./system/phoneHistory";
+  import { capturePhoneHistoryScroll, restorePhoneHistoryScroll, trackPhoneHistoryScroll } from "./system/phoneHistoryScroll";
   import { browserPageAtStart, browserTabContentId, initialBrowserPage } from "./system/browserPages.ts";
   import { localPlayerMemoryKey, playerSessionChanged } from "./system/playerSession";
   import AllClearOverlay from "./system/AllClearOverlay.svelte";
@@ -318,6 +324,11 @@
   let phoneHistoryNavigationId = 0;
   let searchAgentCloseRequestId = 0;
   let searchAgentOpen = false;
+  let searchAgentRestoreRequest: { id: number; open: boolean; scrollTop?: number; visibleMessageCount?: number } | null = null;
+  let searchAgentRestoreRequestId = 0;
+  let phoneHistorySurface: HTMLDivElement | null = null;
+  let phoneHistoryViewRestoring = false;
+  let phoneHistoryScrollCleanup: (() => void) | undefined;
   let contentNavigationRequestId = 0;
   // 固定PINが正解する前にsession_startedや予約イベントを動かさないため、端末外で入力した値はメモリだけに置く。
   let pendingPlayerPasscode = "";
@@ -497,6 +508,7 @@
     void preloadAudioSegments([{ url: incomingCallBellAudioUrl }]).catch(() => undefined);
 
     return () => {
+      phoneHistoryScrollCleanup?.();
       removeAudioUnlockListeners();
       window.removeEventListener("error", handleWindowError);
       window.removeEventListener("unhandledrejection", handleUnhandledRejection);
@@ -1332,7 +1344,10 @@
   }
 
   function currentPhoneRoute(): PhoneHistoryRoute {
-    return activeAppId ? appRoute(activeAppId, focusedContentId) : { kind: "home" };
+    if (!activeAppId) return { kind: "home" };
+    // focusは外部からの表示要求。アプリ内で選択した後は実際の表示通知を優先する。
+    const displayed = displayedContent?.appId === activeAppId ? displayedContent : displayedTalkTarget;
+    return appRoute(activeAppId, displayed?.appId === activeAppId ? displayed.contentId : focusedContentId);
   }
 
   function isListDetailApp(appId: AppId) {
@@ -1358,7 +1373,7 @@
   }
 
   function currentHistoryRoute() {
-    return phoneHistoryStateFrom(window.history.state, phoneHistoryScope)?.route ?? null;
+    return currentPhoneHistoryState(window.history, phoneHistoryScope)?.route ?? null;
   }
 
   function initializePhoneHistory() {
@@ -1371,6 +1386,7 @@
 
   function resetPhoneHistoryBoundary(route: PhoneHistoryRoute = { kind: "home" }) {
     phoneHistoryNavigationId += 1;
+    cancelPhoneHistoryViewRestore();
     if (!phoneHistoryReady || qaMode) {
       return;
     }
@@ -1378,12 +1394,15 @@
     replacePhoneHistoryRoute(window.history, phoneHistoryScope, route);
   }
 
-  function pushCurrentPhoneRoute(route: PhoneHistoryRoute) {
+  function pushCurrentPhoneRoute(route: PhoneHistoryRoute, preserveView = false) {
     phoneHistoryNavigationId += 1;
     if (!phoneHistoryReady || qaMode) {
       return;
     }
-    pushPhoneHistoryRoute(window.history, phoneHistoryScope, route);
+    saveCurrentPhoneHistoryView();
+    const view = preserveView ? currentPhoneHistoryState(window.history, phoneHistoryScope)?.view : undefined;
+    cancelPhoneHistoryViewRestore();
+    pushPhoneHistoryRoute(window.history, phoneHistoryScope, route, view);
   }
 
   function replaceCurrentPhoneRoute(route: PhoneHistoryRoute) {
@@ -1399,7 +1418,7 @@
     if (current?.kind !== "app" || current.appId !== appId) {
       return;
     }
-    const next = appRoute(appId, contentId);
+    const next = { ...appRoute(appId, contentId), ...(current.searchAgentOpen ? { searchAgentOpen: true } : {}) };
     if (!samePhoneHistoryRoute(current, next)) {
       replaceCurrentPhoneRoute(next);
     }
@@ -1407,6 +1426,71 @@
 
   function requestSearchAgentClose() {
     searchAgentCloseRequestId += 1;
+    searchAgentOpen = false;
+    searchAgentRestoreRequest = null;
+  }
+
+  function handleSearchAgentOpenChange(open: boolean, source: "user" | "system" = "user") {
+    const changed = searchAgentOpen !== open;
+    searchAgentOpen = open;
+    if (source === "user" || open || !phoneHistoryViewRestoring) searchAgentRestoreRequest = null;
+    if (!changed || source !== "user") return;
+    const route = currentPhoneRoute();
+    const current = currentHistoryRoute();
+    const samePage = current !== null && samePhoneHistoryPage(current, route);
+    const { searchAgentOpen: _previousOpen, ...page } = route;
+    pushCurrentPhoneRoute({ ...page, ...(open ? { searchAgentOpen: true } : {}) }, samePage);
+    if (!samePage) saveCurrentPhoneHistoryView();
+  }
+
+  function handleSearchAgentScrollChange(position: { scrollTop: number; visibleMessageCount: number }) {
+    if (!phoneHistoryReady || qaMode || phoneHistoryViewRestoring || !searchAgentOpen) return;
+    const state = currentPhoneHistoryState(window.history, phoneHistoryScope);
+    if (!state || !samePhoneHistoryPage(state.route, currentPhoneRoute())) return;
+    replacePhoneHistoryView(window.history, phoneHistoryScope, { ...state.view, searchAgent: position });
+  }
+
+  function saveCurrentPhoneHistoryView() {
+    if (!phoneHistoryReady || qaMode || phoneHistoryViewRestoring || !phoneHistorySurface) return;
+    const state = currentPhoneHistoryState(window.history, phoneHistoryScope);
+    if (!state) return;
+    replacePhoneHistoryView(window.history, phoneHistoryScope, {
+      ...state.view,
+      appScroll: capturePhoneHistoryScroll(phoneHistorySurface)
+    });
+  }
+
+  function handlePhoneHistoryScroll() {
+    const route = currentHistoryRoute();
+    if (route && samePhoneHistoryPage(route, currentPhoneRoute())) saveCurrentPhoneHistoryView();
+  }
+
+  function cancelPhoneHistoryViewRestore() {
+    phoneHistoryScrollCleanup?.();
+    phoneHistoryScrollCleanup = undefined;
+    phoneHistoryViewRestoring = false;
+  }
+
+  async function restorePhoneHistoryView(state: PhoneHistoryState, navigationId: number, closeRequestId: number) {
+    await tick();
+    if (navigationId !== phoneHistoryNavigationId) return;
+    if (!samePhoneHistoryPage(state.route, currentPhoneRoute())) {
+      phoneHistoryViewRestoring = false;
+      return;
+    }
+    phoneHistoryScrollCleanup = restorePhoneHistoryScroll(phoneHistorySurface, state.view?.appScroll ?? []);
+    // 各アプリの初期表示に伴うスクロールが終わってから、保存位置を確定する。
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    if (navigationId !== phoneHistoryNavigationId) return;
+    phoneHistoryScrollCleanup?.();
+    phoneHistoryScrollCleanup = restorePhoneHistoryScroll(phoneHistorySurface, state.view?.appScroll ?? []);
+    searchAgentRestoreRequest = {
+      id: ++searchAgentRestoreRequestId,
+      open: closeRequestId === searchAgentCloseRequestId && Boolean(state.route.searchAgentOpen),
+      ...state.view?.searchAgent
+    };
+    await tick();
+    if (navigationId === phoneHistoryNavigationId) phoneHistoryViewRestoring = false;
   }
 
   function captureContentNavigation() {
@@ -1437,21 +1521,31 @@
   }
 
   function handlePhoneHistoryPop(event: PopStateEvent) {
-    const state = phoneHistoryStateFrom(event.state);
+    let state = phoneHistoryStateFrom(event.state);
     if (qaMode) return;
     // 新しいページには古いmemory履歴の中身がない。他サイトの履歴には触れない。
     if (!state && !(isMemoryStorage && phoneHistoryMarkerFrom(event.state))) return;
 
+    if (consumePhoneHistoryPop(window.history, event.state)) return;
+    if (state && state.scope === phoneHistoryScope) state = currentPhoneHistoryState(window.history, phoneHistoryScope) ?? state;
+
     if (!state || state.scope !== phoneHistoryScope || uiState.locked || !uiState.sessionToken || outOfGameVisible || gameOverVisible || allClearVisible || activeIncomingCall) {
       phoneHistoryNavigationId += 1;
+      cancelPhoneHistoryViewRestore();
       clearPhoneRoute();
       replaceCurrentPhoneRoute({ kind: "home" });
       return;
     }
 
+    const samePage = samePhoneHistoryPage(state.route, currentPhoneRoute());
+    cancelPhoneHistoryViewRestore();
+    phoneHistoryViewRestoring = true;
     requestSearchAgentClose();
+    const closeRequestId = searchAgentCloseRequestId;
     const navigationId = ++phoneHistoryNavigationId;
-    void restorePhoneHistoryRoute(state.route, navigationId);
+    const targetState = state;
+    const restored = samePage ? Promise.resolve() : restorePhoneHistoryRoute(targetState.route, navigationId);
+    void restored.then(() => restorePhoneHistoryView(targetState, navigationId, closeRequestId));
   }
 
   async function restorePhoneHistoryRoute(route: PhoneHistoryRoute, navigationId: number) {
@@ -1678,7 +1772,7 @@
     }
     const current = currentHistoryRoute();
     if (current?.kind === "app" && current.appId === "browser" && current.contentId === contentId) {
-      replaceCurrentPhoneRoute(appRoute("browser", contentId));
+      replaceCurrentPhoneRoute({ ...appRoute("browser", contentId), ...(current.searchAgentOpen ? { searchAgentOpen: true } : {}) });
     }
   }
 
@@ -3880,7 +3974,9 @@
           searchAgentTalk={searchAgentTalkView}
           searchAgentDelayMemoryKey={localPlayerMemoryKey(playerMode, uiState.sessionToken)}
           {searchAgentCloseRequestId}
-          onSearchAgentOpenChange={(open) => (searchAgentOpen = open)}
+          {searchAgentRestoreRequest}
+          onSearchAgentOpenChange={handleSearchAgentOpenChange}
+          onSearchAgentScrollChange={handleSearchAgentScrollChange}
           contentStates={playerState?.contentStates ?? []}
           incomingCall={activeIncomingCall}
           wallpaperUrl={deviceState.wallpaperUrl ?? ""}
@@ -3896,7 +3992,7 @@
           onOpenSearchAgentResult={handleOpenSearchAgentResult}
         >
       {#key routeKey}
-        <div class="route-surface">
+        <div class="route-surface" bind:this={phoneHistorySurface} use:trackPhoneHistoryScroll={handlePhoneHistoryScroll}>
           {#if uiState.locked}
             <LockScreen
               {deviceState}

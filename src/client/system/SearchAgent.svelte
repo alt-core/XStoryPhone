@@ -33,6 +33,14 @@
     updatedAt: string;
   };
 
+  type SearchAgentScrollPosition = { scrollTop: number; visibleMessageCount: number };
+  type SearchAgentRestoreRequest = {
+    id: number;
+    open: boolean;
+    scrollTop?: number;
+    visibleMessageCount?: number;
+  };
+
   const SEARCH_HISTORY_PAGE_SIZE = 40;
   const DELAY_MEMORY_SCOPE = "search_agent";
 
@@ -61,7 +69,9 @@
   export let surfaceKey = "home";
   export let closeRequestId = 0;
   export let surfaceMessage: AssistantMessage | undefined = undefined;
-  export let onOpenChange: (open: boolean) => void = () => {};
+  export let restoreRequest: SearchAgentRestoreRequest | null = null;
+  export let onOpenChange: (open: boolean, source?: "user" | "system") => void = () => {};
+  export let onScrollChange: (position: SearchAgentScrollPosition) => void = () => {};
 
   let expanded = false;
   let destroyed = false;
@@ -72,6 +82,9 @@
   let dismissedSurfaceMessageKey = "";
   let lastSurfaceKey = surfaceKey;
   let lastCloseRequestId = closeRequestId;
+  let lastRestoreRequestId: number | undefined;
+  let panelViewRequestId = 0;
+  let restoringScrollRequestId: number | undefined;
   let expandedFromVisible = false;
   let openedSurfaceMessageKey = "";
   let agentAction: SearchAgentAction = "idle";
@@ -93,12 +106,17 @@
 
   $: if (surfaceKey !== lastSurfaceKey) {
     lastSurfaceKey = surfaceKey;
-    closeExpanded();
+    closePanel("system");
     dismissedSurfaceMessageKey = "";
   }
   $: if (closeRequestId !== lastCloseRequestId) {
     lastCloseRequestId = closeRequestId;
-    closeExpanded();
+    closePanel("system");
+  }
+  // 同時に届いた画面変更・強制閉じの後で、最新の履歴復元を適用する。
+  $: if (restoreRequest && (lastRestoreRequestId === undefined || restoreRequest.id > lastRestoreRequestId)) {
+    lastRestoreRequestId = restoreRequest.id;
+    void restoreExpanded(restoreRequest);
   }
   $: surfaceMessageKey = surfaceMessage ? `${surfaceKey}:${surfaceMessage.id}` : "";
   $: surfaceBubbleVisible = Boolean(
@@ -146,11 +164,19 @@
   }
 
   async function scrollMessagesToBottom() {
+    if (restoringScrollRequestId !== undefined) return;
+    const requestId = panelViewRequestId;
     await tick();
-    if (!messageListElement) {
+    if (destroyed || !expanded || requestId !== panelViewRequestId || !messageListElement || restoringScrollRequestId !== undefined) {
       return;
     }
     messageListElement.scrollTop = messageListElement.scrollHeight;
+    reportScrollPosition();
+  }
+
+  function reportScrollPosition() {
+    if (!expanded || !messageListElement) return;
+    onScrollChange({ scrollTop: messageListElement.scrollTop, visibleMessageCount });
   }
 
   async function loadOlderHistory() {
@@ -159,18 +185,24 @@
     }
 
     loadingOlderHistory = true;
+    const requestId = panelViewRequestId;
+    const list = messageListElement;
     const previousHeight = messageListElement.scrollHeight;
     const previousTop = messageListElement.scrollTop;
     visibleMessageCount = Math.min(visibleServerMessages.length, visibleMessageCount + SEARCH_HISTORY_PAGE_SIZE);
     await tick();
-    messageListElement.scrollTop = messageListElement.scrollHeight - previousHeight + previousTop;
     loadingOlderHistory = false;
+    if (destroyed || !expanded || requestId !== panelViewRequestId || messageListElement !== list) return;
+    list.scrollTop = list.scrollHeight - previousHeight + previousTop;
+    reportScrollPosition();
   }
 
   function handleMessageListScroll() {
     if (!messageListElement) {
       return;
     }
+
+    reportScrollPosition();
 
     if (messageListElement.scrollTop <= 28) {
       void loadOlderHistory();
@@ -182,18 +214,22 @@
   }
 
   async function focusInput() {
+    const requestId = panelViewRequestId;
     await tick();
+    if (destroyed || !expanded || requestId !== panelViewRequestId) return;
     if (shouldAutoFocusTextInput()) {
       inputElement?.focus({ preventScroll: true });
     }
   }
 
   function openExpanded() {
+    panelViewRequestId += 1;
+    restoringScrollRequestId = undefined;
     openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
     expanded = true;
-    onOpenChange(true);
+    onOpenChange(true, "user");
     void scrollMessagesToBottom();
     void focusInput();
   }
@@ -208,11 +244,42 @@
   }
 
   function closeExpanded() {
+    closePanel("user");
+  }
+
+  function closePanel(source: "user" | "system") {
+    reportScrollPosition();
+    panelViewRequestId += 1;
+    restoringScrollRequestId = undefined;
     if (expanded && openedSurfaceMessageKey && openedSurfaceMessageKey === surfaceMessageKey) dismissSurfaceMessage("close");
     openedSurfaceMessageKey = "";
     expanded = false;
     expandedFromVisible = false;
-    onOpenChange(false);
+    onOpenChange(false, source);
+  }
+
+  async function restoreExpanded(request: SearchAgentRestoreRequest) {
+    if (!request.open) {
+      closePanel("system");
+      return;
+    }
+    const requestId = ++panelViewRequestId;
+    restoringScrollRequestId = requestId;
+    openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
+    expandedFromVisible = !agentPeeking;
+    visibleMessageCount = request.visibleMessageCount !== undefined && Number.isFinite(request.visibleMessageCount)
+      ? Math.max(SEARCH_HISTORY_PAGE_SIZE, Math.floor(request.visibleMessageCount))
+      : SEARCH_HISTORY_PAGE_SIZE;
+    expanded = true;
+    onOpenChange(true, "system");
+    await tick();
+    if (destroyed || !expanded || requestId !== panelViewRequestId) return;
+    restoringScrollRequestId = undefined;
+    if (!messageListElement) return;
+    messageListElement.scrollTop = request.scrollTop !== undefined && Number.isFinite(request.scrollTop)
+      ? Math.max(0, request.scrollTop)
+      : messageListElement.scrollHeight;
+    reportScrollPosition();
   }
 
   function dismissSurfaceMessage(reason: "outside" | "close") {
@@ -379,8 +446,10 @@
   }
 
   onDestroy(() => {
+    reportScrollPosition();
+    panelViewRequestId += 1;
     destroyed = true;
-    onOpenChange(false);
+    onOpenChange(false, "system");
     markVisibleMessagesSeen();
     clearMessageDelayTimer();
   });
@@ -467,7 +536,7 @@
       // 破棄後のpropsは更新されないため、新しいパネルへ旧応答の開閉通知を渡さない。
       if (destroyed || requestId !== closeRequestId) return;
       if (opened) {
-        closeExpanded();
+        closePanel("system");
         return;
       }
 

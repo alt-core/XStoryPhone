@@ -21,6 +21,12 @@
   export let searchAgentTalk: SearchAgentTalkView | null = null;
   export let searchAgentDelayMemoryKey = "";
   export let searchAgentCloseRequestId = 0;
+  export let searchAgentRestoreRequest: {
+    id: number;
+    open: boolean;
+    scrollTop?: number;
+    visibleMessageCount?: number;
+  } | null = null;
   export let contentStates: Array<{ contentId: string; state: string; appId: string | null; updatedAt: string }> = [];
   export let incomingCall: IncomingCallItem | undefined = undefined;
   export let osName = "XStoryPhone";
@@ -35,7 +41,8 @@
   export let onOpenRadioPlayback: () => void = () => {};
   export let onToggleShade: () => void = () => {};
   export let onCompleteCall: (callId: string) => void = () => {};
-  export let onSearchAgentOpenChange: (open: boolean) => void = () => {};
+  export let onSearchAgentOpenChange: (open: boolean, source?: "user" | "system") => void = () => {};
+  export let onSearchAgentScrollChange: (position: { scrollTop: number; visibleMessageCount: number }) => void = () => {};
   export let onSearchAgentSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"
@@ -105,11 +112,13 @@
           {contentStates}
           delayMemoryKey={searchAgentDelayMemoryKey}
           closeRequestId={searchAgentCloseRequestId}
+          restoreRequest={searchAgentRestoreRequest}
           peeking={searchAgentPeeking}
           surfaceKey={assistantSurfaceKey}
           surfaceMessage={assistantSurfaceMessage}
           onSend={onSearchAgentSend}
           onOpenChange={onSearchAgentOpenChange}
+          onScrollChange={onSearchAgentScrollChange}
           onOpenMessageLink={onOpenSearchAgentMessageLink}
           {onOpenSearchAgentResult}
           selectOpenFailureMessage={selectSearchOpenFailureMessage}

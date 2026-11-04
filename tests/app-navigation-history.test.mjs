@@ -4,9 +4,14 @@ import { browserPagesModule } from "./helpers/browser-app-harness.mjs";
 import { componentFunctionHarness } from "./helpers/component-script-harness.mjs";
 import {
   goBackInPhoneHistory,
+  consumePhoneHistoryPop,
+  currentPhoneHistoryState,
+  phoneHistoryMarkerFrom,
   phoneHistoryStateFrom,
   pushPhoneHistoryRoute,
   replacePhoneHistoryRoute,
+  replacePhoneHistoryView,
+  samePhoneHistoryPage,
   samePhoneHistoryRoute
 } from "../src/client/system/phoneHistory.ts";
 
@@ -24,6 +29,7 @@ class History {
   replaceState(value) { this.entries[this.index] = structuredClone(value); }
   pushState(value) { this.entries.splice(++this.index); this.entries.push(structuredClone(value)); }
   back() { this.index -= 1; }
+  go(delta) { this.index += delta; }
 }
 
 const deviceState = {
@@ -60,10 +66,19 @@ function setup({ activeAppId = null, focusedContentId = "", lastContentByAppId =
     "captureContentNavigation", "showTalkBackLink", "openTalkBackLink", "restorePhoneHistoryRoute", "openPhoneHistoryContent",
     "beginAppSession", "openApp", "appStartContentId", "clearPhoneRoute", "fallbackPhoneHistoryToHome", "fallbackPhoneHistoryToApp",
     "currentHistoryRoute", "appRoute", "isListDetailApp", "browserTabFor", "setBrowserPage",
+    "currentPhoneRoute", "handleSearchAgentOpenChange", "handleSearchAgentScrollChange", "handlePhoneHistoryPop",
+    "saveCurrentPhoneHistoryView", "handlePhoneHistoryScroll", "cancelPhoneHistoryViewRestore", "restorePhoneHistoryView",
     "PROGRESSION_RETRY_DELAYS_MS", "LIST_START_APP_IDS", "DETAIL_START_APP_IDS"
   ], {
-    window: { history }, phoneHistoryStateFrom, pushPhoneHistoryRoute, replacePhoneHistoryRoute, goBackInPhoneHistory,
-    samePhoneHistoryRoute, ...browserPages,
+    window: { history, requestAnimationFrame(callback) { callback(); } },
+    phoneHistoryStateFrom, phoneHistoryMarkerFrom, pushPhoneHistoryRoute, replacePhoneHistoryRoute, goBackInPhoneHistory,
+    consumePhoneHistoryPop, currentPhoneHistoryState, replacePhoneHistoryView, samePhoneHistoryPage, samePhoneHistoryRoute, ...browserPages,
+    tick: () => Promise.resolve(),
+    capturePhoneHistoryScroll: () => context.scrollPositions,
+    restorePhoneHistoryScroll: (_root, positions) => { context.scrollPositions = plain(positions); return () => {}; },
+    scrollPositions: [], phoneHistorySurface: {}, phoneHistoryViewRestoring: false, phoneHistoryScrollCleanup: undefined,
+    searchAgentRestoreRequest: null, searchAgentRestoreRequestId: 0, searchAgentOpen: false,
+    isMemoryStorage: false, outOfGameVisible: false, gameOverVisible: false, allClearVisible: false, activeIncomingCall: null,
     qaMode: false, phoneHistoryReady: true, phoneHistoryScope: "test", phoneHistoryNavigationId: 0,
     contentNavigationRequestId: 0, searchAgentCloseRequestId: 0,
     uiState: { sessionToken: "session", locked: false, lastContentByAppId },
@@ -462,4 +477,171 @@ test("外からブラウザーのタブを開くと最初のページへ移り�
   h.respond(0); assert.equal(await opened, true);
   assert.deepEqual(plain(c.browserPages.first), { urls: ["/first.html", "/first-next.html", "/first.html"], index: 2 });
   assert.deepEqual(h.route().page, plain(c.browserPages.first));
+});
+
+test("検索AIの開閉だけを戻る・進むで復元するときは、ページを開き直さない", async () => {
+  const h = setup({ activeAppId: "messages", focusedContentId: "thread_a" });
+  const c = h.context;
+  c.scrollPositions = [{ path: [0], top: 240, left: 0 }];
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 125, visibleMessageCount: 80 });
+  assert.equal(h.route().searchAgentOpen, true);
+  const focusRequests = c.focusedContentRequestId;
+
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.open, false);
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 240, left: 0 }]);
+
+  h.history.go(1);
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  assert.deepEqual(plain(c.searchAgentRestoreRequest), {
+    id: 2, open: true, scrollTop: 125, visibleMessageCount: 80
+  });
+  assert.equal(c.focusedContentRequestId, focusRequests);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.refreshes.length, 0);
+});
+
+test("検索結果の別ページから戻ると、元ページと検索AI双方の位置を復元する", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.scrollPositions = [{ path: [0, 1], top: 360, left: 0 }];
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 72, visibleMessageCount: 120 });
+  c.focusAppContent("mail", "mail_b");
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.equal(h.history.entries.length, 4, "ページ移動時の強制閉じで段を増やさない");
+  c.scrollPositions = [{ path: [0], top: 10, left: 0 }];
+
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  h.respond(0);
+  await turn();
+  assert.equal(c.activeAppId, "notes");
+  assert.equal(c.focusedContentId, "note_a");
+  assert.deepEqual(c.scrollPositions, [{ path: [0, 1], top: 360, left: 0 }]);
+  assert.deepEqual(plain(c.searchAgentRestoreRequest), {
+    id: 1, open: true, scrollTop: 72, visibleMessageCount: 120
+  });
+});
+
+test("復元前の検索AIから届く閉じ通知で、復元先のスクロール位置を上書きしない", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 180, visibleMessageCount: 80 });
+  c.focusAppContent("mail", "mail_b");
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  c.handleSearchAgentScrollChange({ scrollTop: 0, visibleMessageCount: 40 });
+  assert.equal(currentPhoneHistoryState(h.history, "test").view.searchAgent.scrollTop, 180);
+  h.respond(0);
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.scrollTop, 180);
+});
+
+test("アプリ内で選んだ項目の検索AIを戻すときも、実表示を保って開閉だけを復元する", async () => {
+  const h = setup({ activeAppId: "notes" });
+  const c = h.context;
+  const opened = h.tapItem("notes", "note_a"); h.respond(0); await opened;
+  assert.equal(c.focusedContentId, "", "外部からのfocus要求は一覧のまま");
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 90, visibleMessageCount: 80 });
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  assert.equal(h.requests.length, 1, "検索AIの復元で項目を開き直さない");
+  assert.equal(c.focusedContentRequestId, 0);
+  assert.equal(c.searchAgentRestoreRequest.open, false);
+});
+
+test("閉→開→閉を繰り返した後の別ページからは、最新の閉じた画面位置へ戻る", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  for (const top of [100, 260, 420]) {
+    c.scrollPositions = [{ path: [0], top, left: 0 }];
+    c.handleSearchAgentOpenChange(true, "user");
+    c.handleSearchAgentOpenChange(false, "user");
+    assert.equal(h.history.entries.length, 2, "開閉の往復を蓄積しない");
+  }
+  c.focusAppContent("mail", "mail_b");
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  h.respond(0);
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 420, left: 0 }]);
+  assert.equal(c.searchAgentRestoreRequest.open, false);
+});
+
+test("別ページへの復元待ちに検索AIを開いた場合は、現在見えているページの履歴にする", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.focusAppContent("notes", "note_b");
+  c.handleDisplayedContentChange("notes", "note_b");
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  c.scrollPositions = [{ path: [0], top: 510, left: 0 }];
+  c.handleSearchAgentOpenChange(true, "user");
+  h.respond(0);
+  await turn();
+  assert.equal(c.focusedContentId, "note_b");
+  assert.deepEqual(h.route(), { kind: "app", appId: "notes", contentId: "note_b", searchAgentOpen: true });
+  assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.appScroll), [{ path: [0], top: 510, left: 0 }]);
+});
+
+test("復元待ち中の強制閉じでは検索AIを開き直さず、古い閉じ通知も次ページへ保存しない", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.focusAppContent("mail", "mail_b");
+  c.handleSearchAgentScrollChange({ scrollTop: 999, visibleMessageCount: 40 });
+  assert.equal(currentPhoneHistoryState(h.history, "test").view?.searchAgent, undefined);
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  c.requestSearchAgentClose();
+  h.respond(0);
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.open, false);
+});
+
+test("検索AIを開いている間のブラウザURL補正は開閉状態を保持する", () => {
+  const h = setup({ activeAppId: "browser", focusedContentId: "first" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleBrowserPageNavigate("first", { urls: ["/first-moved.html"], index: 0 }, "replace");
+  assert.equal(h.route().searchAgentOpen, true);
+  assert.deepEqual(h.route().page, { urls: ["/first-moved.html"], index: 0 });
+});
+
+test("適用済みの検索AI復元要求を破棄し、再マウントで古い開状態を再適用させない", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.phoneHistoryViewRestoring = true;
+  c.searchAgentRestoreRequest = { id: 1, open: true };
+  c.handleSearchAgentOpenChange(true, "system");
+  assert.equal(c.searchAgentRestoreRequest, null);
+  assert.equal(h.history.entries.length, 2, "復元完了通知で履歴を増やさない");
+  c.phoneHistoryViewRestoring = false;
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.equal(c.searchAgentOpen, false);
+  assert.equal(c.searchAgentRestoreRequest, null);
+});
+
+test("会話一覧で検索AIを開いて戻る場合も、以前の会話を開き直さない", async () => {
+  for (const appId of ["messages", "chat"]) {
+    const h = setup({ activeAppId: appId, focusedContentId: appId === "messages" ? "thread_a" : "room_a" });
+    const c = h.context;
+    h.tapList(appId);
+    c.handleSearchAgentOpenChange(true, "user");
+    assert.deepEqual(h.route(), { kind: "app", appId, searchAgentOpen: true });
+    h.history.back();
+    c.handlePhoneHistoryPop({ state: h.history.state });
+    await turn();
+    assert.equal(c.searchAgentRestoreRequest.open, false);
+    assert.equal(h.requests.length, 0);
+    assert.equal(c.focusedContentRequestId, 0);
+  }
 });

@@ -116,6 +116,7 @@ function inFlightNavigationHarness() {
   let requests = 0;
   Object.assign(harness.context, {
     qaMode: false, playerState: { stateVersion: 1, visibleDeviceState: { apps: [] }, contentStates: [] },
+    searchAgentOpen: false, searchAgentRestoreRequest: null,
     apps: [{ id: "notes", available: true }],
     deviceState: { notifications: [{ id: "notification", appId: "notes", targetContentId: "note" }] },
     pendingTalkReadCursorPayload: () => [], clearSyncedTalkReadCursors() {},
