@@ -44,8 +44,9 @@ function ensureGoogleTag() {
   }
 
   window.dataLayer ??= [];
-  window.gtag ??= function gtag(...args) {
-    window.dataLayer?.push(args);
+  // gtag.jsはargumentsオブジェクトとして積まれた項目だけを命令として読む。配列で積むと何も送信されない。
+  window.gtag ??= function gtag() {
+    window.dataLayer?.push(arguments);
   };
 
   if (!document.getElementById(GTAG_SRC_ID)) {

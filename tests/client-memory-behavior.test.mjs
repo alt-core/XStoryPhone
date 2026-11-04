@@ -103,6 +103,25 @@ test("memoryではGA4を設定していても外部スクリプトやCookieへ�
   assert.equal(context.ensureGoogleTag(), undefined);
 });
 
+test("persistentではGA4の命令をgtag.jsが読むargumentsの形で積む", () => {
+  const appended = [];
+  const context = moduleFunctions("../src/client/system/analytics.ts", ["analyticsEnabled", "ensureGoogleTag"], {
+    isMemoryStorage: false, GA4_MEASUREMENT_ID: "G-PERSISTENTTEST", GTAG_SRC_ID: "google-tag",
+    window: {},
+    document: {
+      getElementById: () => null,
+      createElement: () => ({}),
+      head: { appendChild(element) { appended.push(element); } }
+    }
+  });
+  context.ensureGoogleTag()("event", "xstoryphone_test", {});
+  const entries = context.window.dataLayer;
+  assert.ok(entries.every((entry) => Object.prototype.toString.call(entry) === "[object Arguments]"));
+  assert.deepEqual(Array.from(entries, (entry) => entry[0]), ["consent", "js", "config", "event"]);
+  assert.equal(entries[2][1], "G-PERSISTENTTEST");
+  assert.equal(appended[0].src, "https://www.googletagmanager.com/gtag/js?id=G-PERSISTENTTEST");
+});
+
 test("memoryのAPI通信だけCookieとHTTP cacheを使わず、JSON token等の内容は変えない", async () => {
   for (const memory of [false, true]) {
     const requests = [];
