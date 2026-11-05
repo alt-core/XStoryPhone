@@ -91,6 +91,9 @@ type RecordedEffect = {
   talkId: typeof SEARCH_AGENT_TALK_ID;
   query: string;
 } | {
+  type: "talk.resetHistory";
+  talkId: typeof SEARCH_AGENT_TALK_ID;
+} | {
   type: "talk.input";
   talkId: string;
   action: "show" | "hide" | "enable" | "disable";
@@ -128,6 +131,7 @@ export function createScenarioHooksRuntime(runtime: ScenarioRuntime, scenarioHoo
     initializeTalkState,
     initializeSearchAgentTalkState,
     initialTalkTurnKey,
+    nextTalkTurnKey,
     messagesForTalkBlocks,
     isSearchAgentTalk,
     revealTalkMessages,
@@ -415,6 +419,11 @@ export function createScenarioHooksRuntime(runtime: ScenarioRuntime, scenarioHoo
             throw new Error("talk.searchの指定が不正です。");
           effects.push({ type: "talk.search", talkId, query: normalizedQuery });
         },
+        resetHistory(talkId) {
+          if (talkId !== SEARCH_AGENT_TALK_ID)
+            throw new Error("talk.resetHistoryは検索AIの会話にだけ使用できます。");
+          effects.push({ type: "talk.resetHistory", talkId });
+        },
         showInput(talkId) {
           recordTalkInput(talkId, "show");
         },
@@ -689,6 +698,28 @@ export function createScenarioHooksRuntime(runtime: ScenarioRuntime, scenarioHoo
           throw new Error(`hookのtalk.${effect.action}Inputを適用できません: ${effect.talkId}`);
         applyTalkInputAction(current.state, effect.action, talkInputBoundarySeq(current.definition, nextState));
       }
+      else if (effect.type === "talk.resetHistory") {
+        const current = await ensureTalk(effect.talkId);
+        if (!current || !isSearchAgentTalk(current.definition))
+          throw new Error(`hookのtalk.resetHistoryを適用できません: ${effect.talkId}`);
+        // 会話位置や入力設定を維持し、旧履歴に対する送信だけを無効にする。
+        current.state.turnKey = await nextTalkTurnKey(
+          services.playerId ?? "hook-preview", effect.talkId, current.state.turnKey, current.state.from
+        );
+        const previousKey = current.state.transcriptKey;
+        current.state.transcriptKey = crypto.randomUUID();
+        current.state.lastMessageSeq = 0;
+        current.state.inputVisibleAfterSeq = 0;
+        current.state.inputEnabledAfterSeq = 0;
+        // 旧履歴で閉じた選択肢の番号を、新しい履歴へ持ち越さない。
+        delete current.state.quickRepliesClosedSeq;
+        // 同じ実行内でリセット前に記録した追記も、保存・応答の対象から外す。
+        for (let index = transcriptAppends.length - 1; index >= 0; index--) {
+          const append = transcriptAppends[index];
+          if (append.streamId === SEARCH_AGENT_STREAM_ID && append.transcriptKey === previousKey)
+            transcriptAppends.splice(index, 1);
+        }
+      }
       else if (effect.type === "talk.addBlock") {
         const current = await ensureTalk(effect.talkId);
         if (!current)
@@ -715,7 +746,9 @@ export function createScenarioHooksRuntime(runtime: ScenarioRuntime, scenarioHoo
           current.state.lastMessageSeq = rendered.lastSeq;
           if (effect.mode === "advance") {
             current.state.from = effect.blockId;
-            current.state.turnKey = await initialTalkTurnKey(services.playerId ?? "hook-preview", effect.talkId, current.state.from);
+            current.state.turnKey = await nextTalkTurnKey(
+              services.playerId ?? "hook-preview", effect.talkId, current.state.turnKey, current.state.from
+            );
           }
           const revealed = revealTalkMessages(nextState, effect.talkId, rendered.messages.filter((message) => message.type === "message"));
           nextState.revealedMessageLinks = revealed.revealedMessageLinks;

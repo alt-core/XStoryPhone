@@ -85,6 +85,7 @@ export function validateHookReferences(scripts, source, blocks) {
     "content.setState": new Set([...source.contents.map(item => item.id), ...source.talks.map(item => item.id)]),
     "genAudio.prepare": new Set(source.generatedAudio.map(item => item.id)),
     "talk.addBlock": new Set(source.talks.map(item => item.id)),
+    "talk.resetHistory": new Set(["search_agent"]),
     "schedule.after": new Set(source.hooks.filter(item => item.event === "scheduled_event").map(item => item.target))
   };
   for (const [id, script] of Object.entries(scripts)) {

@@ -387,14 +387,17 @@ export function createPlayerOperations(runtime: ScenarioRuntime, hooks: ReturnTy
     assertUniqueHookEffectResources(hookResults);
     const reconciled = await reconcileScenarioState(requestedState, player.id);
     runtime.validatePartState(reconciled.state);
+    // 先行hookや初期表示が旧履歴へ足した追記も、最終的な参照先に合わせて除外する。
+    const currentTranscript = (append: TranscriptAppend) => append.streamId !== SEARCH_AGENT_STREAM_ID
+      || append.transcriptKey === reconciled.state.talks[SEARCH_AGENT_TALK_ID]?.transcriptKey;
     const appends = mergeTranscriptAppends([
       ...transcriptAppends,
       ...reconciled.transcriptAppends
-    ]);
+    ].filter(currentTranscript));
     const responseAppends = mergeTranscriptAppends([
       ...(player.transcriptDeltas ?? []),
       ...appends
-    ]);
+    ].filter(currentTranscript));
     assertBrowserTalkAppendsRemainAvailable(reconciled.state, responseAppends);
     const stateChanged = JSON.stringify(reconciled.state) !== JSON.stringify(player.state);
     const scheduleEffects = hookResults.flatMap((result) => result.scheduleEffects);

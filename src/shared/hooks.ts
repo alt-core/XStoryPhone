@@ -108,6 +108,7 @@ export type ScenarioHookContext<
   talk: {
     addBlock(...args: HookTalkBlockArguments<TalkBlocksByTalk>): void;
     search(talkId: "search_agent", query: string): void;
+    resetHistory(talkId: "search_agent"): void;
     showInput(talkId: TalkId): void;
     hideInput(talkId: TalkId): void;
     enableInput(talkId: TalkId): void;
