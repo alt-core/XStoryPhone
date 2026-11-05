@@ -938,7 +938,7 @@
 
         <div class="history-area">
             <ScrollHint enabled step={116}>
-              <div class="bubble-list" bind:this={historyList} aria-label="会話履歴">
+              <div class="bubble-list" bind:this={historyList} aria-label="会話履歴" data-phone-history-scroll="conversation">
                 {#each selectedThread.messages as message, index}
                   {#each brokenRangesBeforeMessage(selectedThread.messages, selectedThread.brokenHistoryRanges ?? [], index) as _range}
                     <BrokenTalkHistory />

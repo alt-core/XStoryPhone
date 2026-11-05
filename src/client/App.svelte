@@ -67,13 +67,15 @@
     pushPhoneHistoryRoute,
     replacePhoneHistoryRoute,
     replacePhoneHistoryView,
+    savePhoneHistoryViewBeforePop,
     samePhoneHistoryPage,
     samePhoneHistoryRoute,
     type BrowserPageHistory,
     type PhoneHistoryRoute,
-    type PhoneHistoryState
+    type PhoneHistoryState,
+    type PhoneHistoryView
   } from "./system/phoneHistory";
-  import { capturePhoneHistoryScroll, restorePhoneHistoryScroll, trackPhoneHistoryScroll } from "./system/phoneHistoryScroll";
+  import { capturePhoneHistoryScroll, restorePhoneHistoryScroll } from "./system/phoneHistoryScroll";
   import { browserPageAtStart, browserTabContentId, initialBrowserPage } from "./system/browserPages.ts";
   import { localPlayerMemoryKey, playerSessionChanged } from "./system/playerSession";
   import AllClearOverlay from "./system/AllClearOverlay.svelte";
@@ -325,6 +327,7 @@
   let phoneHistoryNavigationId = 0;
   let searchAgentCloseRequestId = 0;
   let searchAgentOpen = false;
+  let searchAgentScrollPosition: PhoneHistoryView["searchAgent"];
   let searchAgentRestoreRequest: { id: number; open: boolean; scrollTop?: number; visibleMessageCount?: number } | null = null;
   let searchAgentRestoreRequestId = 0;
   let phoneHistorySurface: HTMLDivElement | null = null;
@@ -402,7 +405,7 @@
   });
   $: if (activeIncomingCall?.id && activeIncomingCall.id !== interruptedIncomingCallId) {
     interruptedIncomingCallId = activeIncomingCall.id;
-    requestSearchAgentClose();
+    requestSearchAgentClose({ recordHistory: true });
     stopBackgroundMediaPlayback();
     // 着信画面を最優先にし、演出中でも直ちに操作可能な状態へ戻す。
     cancelPresentations();
@@ -1388,6 +1391,7 @@
   function resetPhoneHistoryBoundary(route: PhoneHistoryRoute = { kind: "home" }) {
     phoneHistoryNavigationId += 1;
     cancelPhoneHistoryViewRestore();
+    searchAgentScrollPosition = undefined;
     if (!phoneHistoryReady || qaMode) {
       return;
     }
@@ -1404,6 +1408,7 @@
     const view = preserveView ? currentPhoneHistoryState(window.history, phoneHistoryScope)?.view : undefined;
     cancelPhoneHistoryViewRestore();
     pushPhoneHistoryRoute(window.history, phoneHistoryScope, route, view);
+    searchAgentScrollPosition = undefined;
   }
 
   function replaceCurrentPhoneRoute(route: PhoneHistoryRoute) {
@@ -1425,7 +1430,15 @@
     }
   }
 
-  function requestSearchAgentClose() {
+  function requestSearchAgentClose(options: { recordHistory?: boolean } = {}) {
+    if (options.recordHistory) {
+      const current = currentHistoryRoute();
+      const route = currentPhoneRoute();
+      // 着信で同じ画面のまま閉じた時だけ、利用者による開閉と同じ履歴へ合流する。
+      if (current?.searchAgentOpen && samePhoneHistoryPage(current, route)) {
+        pushCurrentPhoneRoute(route, true);
+      }
+    }
     searchAgentCloseRequestId += 1;
     searchAgentOpen = false;
     searchAgentRestoreRequest = null;
@@ -1433,6 +1446,11 @@
 
   function handleSearchAgentOpenChange(open: boolean, source: "user" | "system" = "user") {
     const changed = searchAgentOpen !== open;
+    // modal等による閉じでも同じ画面の位置を保存し、境界変更後の旧通知は取り込まない。
+    if (changed && !open && source === "system" && searchAgentScrollPosition) {
+      const current = currentHistoryRoute();
+      if (current && samePhoneHistoryPage(current, currentPhoneRoute())) saveCurrentPhoneHistoryView();
+    }
     searchAgentOpen = open;
     if (source === "user" || open || !phoneHistoryViewRestoring) searchAgentRestoreRequest = null;
     if (!changed || source !== "user") return;
@@ -1444,26 +1462,27 @@
     if (!samePage) saveCurrentPhoneHistoryView();
   }
 
-  function handleSearchAgentScrollChange(position: { scrollTop: number; visibleMessageCount: number }) {
+  function captureCurrentPhoneHistoryView(): PhoneHistoryView | undefined {
+    if (!phoneHistoryReady || qaMode || phoneHistoryViewRestoring || !phoneHistorySurface
+      || !phoneHistorySurface.isConnected) return;
+    return {
+      appScroll: capturePhoneHistoryScroll(phoneHistorySurface),
+      ...(searchAgentScrollPosition ? { searchAgent: searchAgentScrollPosition } : {})
+    };
+  }
+
+  function handleSearchAgentScrollChange(position: NonNullable<PhoneHistoryView["searchAgent"]>) {
     if (!phoneHistoryReady || qaMode || phoneHistoryViewRestoring || !searchAgentOpen) return;
-    const state = currentPhoneHistoryState(window.history, phoneHistoryScope);
-    if (!state || !samePhoneHistoryPage(state.route, currentPhoneRoute())) return;
-    replacePhoneHistoryView(window.history, phoneHistoryScope, { ...state.view, searchAgent: position });
+    // パネル自身の通知は定数時間で保持し、履歴への保存は離脱時だけ行う。
+    searchAgentScrollPosition = position;
   }
 
   function saveCurrentPhoneHistoryView() {
-    if (!phoneHistoryReady || qaMode || phoneHistoryViewRestoring || !phoneHistorySurface) return;
+    const view = captureCurrentPhoneHistoryView();
+    if (!view) return;
     const state = currentPhoneHistoryState(window.history, phoneHistoryScope);
     if (!state) return;
-    replacePhoneHistoryView(window.history, phoneHistoryScope, {
-      ...state.view,
-      appScroll: capturePhoneHistoryScroll(phoneHistorySurface)
-    });
-  }
-
-  function handlePhoneHistoryScroll() {
-    const route = currentHistoryRoute();
-    if (route && samePhoneHistoryPage(route, currentPhoneRoute())) saveCurrentPhoneHistoryView();
+    replacePhoneHistoryView(window.history, phoneHistoryScope, { ...state.view, ...view });
   }
 
   function cancelPhoneHistoryViewRestore() {
@@ -1527,7 +1546,11 @@
     // 新しいページには古いmemory履歴の中身がない。他サイトの履歴には触れない。
     if (!state && !(isMemoryStorage && phoneHistoryMarkerFrom(event.state))) return;
 
+    if (state?.scope === phoneHistoryScope) {
+      savePhoneHistoryViewBeforePop(window.history, phoneHistoryScope, currentPhoneRoute(), captureCurrentPhoneHistoryView);
+    }
     if (consumePhoneHistoryPop(window.history, event.state)) return;
+    searchAgentScrollPosition = undefined;
     if (state && state.scope === phoneHistoryScope) state = currentPhoneHistoryState(window.history, phoneHistoryScope) ?? state;
 
     if (!state || state.scope !== phoneHistoryScope || uiState.locked || !uiState.sessionToken || outOfGameVisible || gameOverVisible || allClearVisible || activeIncomingCall) {
@@ -1804,8 +1827,9 @@
     notificationToast = null;
     appModalOpen = false;
     const app = apps.find((item) => item.id === link.sourceAppId);
-    if (app && !goBackInPhoneHistory(window.history, phoneHistoryScope, link.sourceAppId)) {
-      openApp(app);
+    if (app) {
+      saveCurrentPhoneHistoryView();
+      if (!goBackInPhoneHistory(window.history, phoneHistoryScope, link.sourceAppId)) openApp(app);
     }
   }
 
@@ -3996,7 +4020,7 @@
           onOpenSearchAgentResult={handleOpenSearchAgentResult}
         >
       {#key routeKey}
-        <div class="route-surface" bind:this={phoneHistorySurface} use:trackPhoneHistoryScroll={handlePhoneHistoryScroll}>
+        <div class="route-surface" bind:this={phoneHistorySurface}>
           {#if uiState.locked}
             <LockScreen
               {deviceState}

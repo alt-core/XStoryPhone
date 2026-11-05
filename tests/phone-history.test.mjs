@@ -79,11 +79,12 @@ class AsyncFakeHistory extends FakeHistory {
     this.travels.push(delta);
   }
 
-  pop(api) {
+  pop(api, beforeConsume) {
     assert.notEqual(this.travels.length, 0, "処理待ちの履歴移動が必要");
     const delta = this.travels.shift();
     this.position = Math.max(0, Math.min(this.entries.length - 1, this.position + delta));
     const eventState = this.state;
+    beforeConsume?.(eventState);
     return api.consumePhoneHistoryPop(this, eventState);
   }
 
@@ -352,6 +353,20 @@ for (const isMemoryStorage of [false, true]) {
     searchAgent: { scrollTop: top + 10, visibleMessageCount: top / 10 }
   });
 
+  test(`${mode}: 会話の末尾表示の指定を履歴の保存・復元で保持する`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new FakeHistory();
+    const position = { path: [0], top: 1218, left: 0, bottom: true };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "app", appId: "messages" }, { appScroll: [position] });
+    assert.deepEqual(copiedState(api, history).view.appScroll, [position]);
+    api.pushPhoneHistoryRoute(history, "scope", { kind: "home" });
+    history.back();
+    api.consumePhoneHistoryPop(history, history.state);
+    assert.deepEqual(copiedState(api, history).view.appScroll, [position]);
+    api.replacePhoneHistoryView(history, "scope", { appScroll: [{ ...position, bottom: "true" }] });
+    assert.equal(copiedState(api, history).view.appScroll, undefined, "不正な指定は復元しない");
+  });
+
   test(`${mode}: 同じページの閉→開→閉を圧縮し、次の画面から戻ると新しい表示位置を復元する`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
@@ -541,6 +556,121 @@ for (const isMemoryStorage of [false, true]) {
     history.pop(api);
     assert.deepEqual(copiedState(api, history).view, scrollView(220));
     assert.equal(history.replaceCalls, calls);
+  });
+
+  test(`${mode}: native pop直後の離脱位置は出発entryだけに保存し、到着entryを上書きしない`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes" };
+    const photo = { kind: "app", appId: "photos" };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", photo, scrollView(300));
+    const calls = { replace: history.replaceCalls, push: history.pushCalls };
+    let captures = 0;
+
+    history.go(-1);
+    assert.equal(history.pop(api, (eventState) => {
+      assert.equal(api.phoneHistoryMarkerFrom(eventState).index, 1, "Historyは既に到着先を指している");
+      assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", photo, () => {
+        captures += 1;
+        return { appScroll: [{ path: [0], top: 400, left: 0, bottom: false }] };
+      }), true);
+    }), false);
+    assert.equal(captures, 1);
+    assert.deepEqual(copiedState(api, history).view, scrollView(100));
+
+    history.go(1);
+    assert.equal(history.pop(api, () => {
+      assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, () => scrollView(220)), true);
+    }), false);
+    assert.deepEqual(copiedState(api, history).view, {
+      appScroll: [{ path: [0], top: 400, left: 0 }],
+      searchAgent: scrollView(300).searchAgent
+    }, "取得していない検索AI位置は維持し、取得値は既存の正規化を通す");
+    history.go(-1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(220));
+    assert.deepEqual({ replace: history.replaceCalls, push: history.pushCalls }, calls,
+      "離脱位置の取得と保存だけではHistory APIを書かない");
+  });
+
+  test(`${mode}: 離脱位置は未管理・別scope・実表示route不一致では取得せず、取得できなければ元位置を保つ`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes", contentId: "note-1" };
+    let captures = 0;
+    const capture = () => { captures += 1; return scrollView(900); };
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, capture), false);
+    api.replacePhoneHistoryRoute(history, "scope", note, scrollView(100));
+    const calls = { replace: history.replaceCalls, push: history.pushCalls };
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "other", note, capture), false);
+    for (const displayedRoute of [
+      { kind: "home" },
+      { ...note, contentId: "note-2" }
+    ]) {
+      assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", displayedRoute, capture), false);
+    }
+    assert.equal(captures, 0, "scopeと表示routeを確認してからDOMを取得する");
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, () => {
+      captures += 1;
+      return undefined;
+    }), false);
+    assert.equal(captures, 1);
+    assert.deepEqual(copiedState(api, history).view, scrollView(100));
+    assert.deepEqual({ replace: history.replaceCalls, push: history.pushCalls }, calls);
+    api.pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "photos" });
+    history.go(-1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(100));
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", { ...note, searchAgentOpen: true }, capture), true,
+      "パネルの開閉が履歴と異なっても、同じページの位置を保存する");
+    assert.deepEqual(copiedState(api, history).view, scrollView(900));
+  });
+
+  test(`${mode}: 圧縮popと後続queueの待機中は離脱位置を取得せず、投影済み位置を守る`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes" };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", { ...note, searchAgentOpen: true }, scrollView(200));
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(300));
+    let captures = 0;
+    const capture = () => { captures += 1; return scrollView(900); };
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, capture), false);
+    api.replacePhoneHistoryView(history, "scope", scrollView(350));
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, capture), false);
+    assert.equal(captures, 0);
+    history.finish(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(350));
+    api.pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "photos" });
+    history.go(-1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(350));
+  });
+
+  test(`${mode}: 戻るリンクのpop待機中はDOM位置を取り直さず、要求時のsnapshotを守る`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes" };
+    const photo = { kind: "app", appId: "photos" };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", photo, scrollView(300));
+    api.replacePhoneHistoryView(history, "scope", scrollView(400));
+    assert.equal(api.goBackInPhoneHistory(history, "scope"), true);
+    let captures = 0;
+    assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", note, () => {
+      captures += 1;
+      return scrollView(900);
+    }), false);
+    assert.equal(captures, 0, "plannedと表示routeが同じでもpending popでは取得しない");
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).view, scrollView(100));
+    history.go(1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(400));
   });
 
   test(`${mode}: 圧縮待ちの大量スクロールは最後の位置を保持し、forwardの再利用とscope変更で古い位置を混ぜない`, () => {

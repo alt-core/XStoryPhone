@@ -254,157 +254,45 @@ test("検索の復元位置がなければ末尾を開き、スクロール時�
   ], "履歴を閉じた状態に更新する前に位置を保存できる");
 });
 
-function searchAgentScrollHarness(dependencies = {}) {
+test("過去の検索履歴を追加しても読んでいた位置を保ち、追加後の位置を通知する", async () => {
+  const ticks = [];
+  const positions = [];
   let top = 0;
-  const image = {};
   const list = {
     scrollHeight: 1000,
     clientHeight: 400,
     get scrollTop() { return top; },
-    set scrollTop(value) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
-    contains: (node) => node === image
+    set scrollTop(value) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
   };
-  const positions = [];
   const harness = searchAgentHarness({ onScrollChange: (position) => positions.push({ ...position }) }, {
-    list, imageEvent: { currentTarget: image }, ...dependencies
+    tick: () => new Promise((resolve) => ticks.push(resolve)), list
   });
-  harness.evaluate("messageListElement = list");
-  return { harness, list, positions };
-}
-
-test("末尾にいた検索一覧は遅延画像が48pxを超えて伸びても追従し、複数画像と失敗時も末尾を保つ", async () => {
-  const { harness, list, positions } = searchAgentScrollHarness();
-  harness.evaluate("openExpanded()");
-  await new Promise(setImmediate);
-  assert.equal(list.scrollTop, 600);
-  for (const height of [1082, 1164, 1140]) {
-    list.scrollHeight = height;
-    if (height === 1082) assert.equal(harness.evaluate("isMessageListNearBottom()"), false);
-    harness.evaluate("handleResultImageLoad(imageEvent)");
-    assert.equal(list.scrollTop, height - 400);
-    assert.equal(positions.at(-1).scrollTop, height - 400);
-  }
-  harness.destroy();
-});
-
-test("検索一覧を上へ戻している間は画像の読込で末尾へ移らず、末尾へ戻れば追従を再開する", async () => {
-  const { harness, list } = searchAgentScrollHarness();
-  harness.evaluate("openExpanded()");
-  await new Promise(setImmediate);
-  list.scrollTop = 300;
-  harness.evaluate("handleMessageListScroll()");
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 300);
-  list.scrollTop = list.scrollHeight - list.clientHeight;
-  harness.evaluate("handleMessageListScroll()");
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 764);
-  harness.destroy();
-});
-
-test("検索画像の読込がscroll通知に先行しても、利用者が直前に戻した位置を奪わない", async () => {
-  const { harness, list } = searchAgentScrollHarness();
-  harness.evaluate("openExpanded()");
-  await new Promise(setImmediate);
-  list.scrollTop = 300;
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 300);
-  harness.destroy();
-});
-
-test("画像補正はtickを待たず完了し、後続の上読みを非同期で上書きしない", async () => {
-  const ticks = [];
-  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
-  harness.evaluate("openExpanded()");
-  ticks.splice(0).forEach((resolve) => resolve());
-  await new Promise(setImmediate);
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 682);
-  assert.equal(ticks.length, 0);
-  list.scrollTop = 300;
-  harness.evaluate("handleMessageListScroll()");
-  await new Promise(setImmediate);
-  assert.equal(list.scrollTop, 300);
-  harness.destroy();
-});
-
-test("検索の明示復元位置は画像の読込と復元由来のscroll通知で末尾へ引き戻されない", async () => {
-  const { harness, list } = searchAgentScrollHarness();
-  harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 900, visibleMessageCount: 80 } });
-  await new Promise(setImmediate);
-  assert.equal(list.scrollTop, 600, "未読込時の高さに収まる位置までブラウザーが制限する");
-  harness.evaluate("handleMessageListScroll()");
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 600, "見かけ上は末尾でも明示された復元位置を優先する");
-  harness.update({ restoreRequest: { id: 2, open: true } });
-  await new Promise(setImmediate);
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 764, "位置指定のない復元は通常の末尾表示にする");
-  harness.destroy();
-});
-
-test("過去の検索履歴追加は位置補正を維持し、その画像の読込で末尾へ飛ばない", async () => {
-  const ticks = [];
-  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
-  harness.evaluate("openExpanded()");
+  harness.evaluate("messageListElement = list; openExpanded()");
   ticks.splice(0).forEach((resolve) => resolve());
   await new Promise(setImmediate);
   list.scrollTop = 20;
   harness.evaluate("hasOlderHistory = true; visibleServerMessages = Array(100).fill({}); handleMessageListScroll()");
+  assert.equal(harness.evaluate("visibleMessageCount"), 80);
   list.scrollHeight += 500;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 20, "履歴追加の位置計算が済む前に画像補正を割り込ませない");
+  assert.equal(list.scrollTop, 20, "履歴の描画完了までは元の位置を保つ");
   ticks.splice(0).forEach((resolve) => resolve());
   await new Promise(setImmediate);
-  assert.equal(list.scrollTop, 520);
-  harness.evaluate("handleMessageListScroll()");
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 520);
+  assert.equal(list.scrollTop, 520, "先頭に追加した高さの分だけ位置を補正する");
+  assert.deepEqual(positions.at(-1), { scrollTop: 520, visibleMessageCount: 80 });
   harness.destroy();
 });
 
-test("閉じた検索・古い画像・破棄後の画像通知は新しい一覧や履歴の位置を変えない", async () => {
-  const { harness, list, positions } = searchAgentScrollHarness();
-  harness.evaluate("openExpanded()");
-  await new Promise(setImmediate);
-  harness.evaluate("closeExpanded()");
-  const closedReports = positions.length;
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 600);
-  assert.equal(positions.length, closedReports);
-  harness.evaluate("openExpanded()");
-  await new Promise(setImmediate);
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad({ currentTarget: {} })");
-  assert.equal(list.scrollTop, 682, "今の一覧に属さない古い画像通知を捨てる");
+test("検索のDOM破棄後の0位置は最後のスクロール通知を上書きしない", () => {
+  const positions = [];
+  const list = { scrollTop: 456, scrollHeight: 1000, clientHeight: 400, isConnected: true };
+  const harness = searchAgentHarness({ onScrollChange: (position) => positions.push({ ...position }) }, {
+    tick: () => new Promise(() => {}), list
+  });
+  harness.evaluate("messageListElement = list; expanded = true; visibleMessageCount = 120; handleMessageListScroll()");
+  list.isConnected = false;
+  list.scrollTop = 0;
   harness.destroy();
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 682);
-});
-
-test("画像通知と古い末尾移動は検索の履歴復元中と復元後の指定位置を上書きしない", async () => {
-  const ticks = [];
-  const { harness, list } = searchAgentScrollHarness({ tick: () => new Promise((resolve) => ticks.push(resolve)) });
-  harness.evaluate("openExpanded()");
-  harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 173, visibleMessageCount: 80 } });
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 0);
-  ticks.splice(0).reverse().forEach((resolve) => resolve());
-  await new Promise(setImmediate);
-  assert.equal(list.scrollTop, 173);
-  list.scrollHeight += 82;
-  harness.evaluate("handleResultImageLoad(imageEvent)");
-  assert.equal(list.scrollTop, 173);
-  harness.destroy();
+  assert.deepEqual(positions, [{ scrollTop: 456, visibleMessageCount: 120 }]);
 });
 
 test("hide=closeは背景タップで消えず、会話を開いて閉じたときは引っ込む", () => {

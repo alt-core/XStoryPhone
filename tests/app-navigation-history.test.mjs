@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 import { browserPagesModule } from "./helpers/browser-app-harness.mjs";
 import { componentFunctionHarness } from "./helpers/component-script-harness.mjs";
 import {
@@ -11,11 +14,20 @@ import {
   pushPhoneHistoryRoute,
   replacePhoneHistoryRoute,
   replacePhoneHistoryView,
+  savePhoneHistoryViewBeforePop,
   samePhoneHistoryPage,
   samePhoneHistoryRoute
 } from "../src/client/system/phoneHistory.ts";
 
 const appUrl = new URL("../src/client/App.svelte", import.meta.url);
+const appScript = readFileSync(appUrl, "utf8").match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+const appAst = ts.createSourceFile("app.ts", appScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const incomingCallReaction = appAst.statements.find((statement) => (
+  ts.isLabeledStatement(statement) && statement.statement.getText(appAst).includes("activeIncomingCall?.id")
+));
+const incomingCallCode = ts.transpileModule(incomingCallReaction.statement.getText(appAst), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
+}).outputText;
 const turn = () => new Promise(setImmediate);
 // vm内のmoduleが作った値も、構造だけで比べる。
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -30,6 +42,24 @@ class History {
   pushState(value) { this.entries.splice(++this.index); this.entries.push(structuredClone(value)); }
   back() { this.index -= 1; }
   go(delta) { this.index += delta; }
+}
+
+// ブラウザと同じく、履歴移動の完了を着信・通話終了とは別のタイミングで通知する。
+class AsyncHistory extends History {
+  travels = [];
+  back() { this.go(-1); }
+  go(delta) { this.travels.push(delta); }
+  pop(context) {
+    assert.notEqual(this.travels.length, 0, "履歴移動が保留されている");
+    super.go(this.travels.shift());
+    context.handlePhoneHistoryPop({ state: this.state });
+  }
+}
+
+function startIncomingCall(context) {
+  context.incomingCall = context.activeIncomingCall = { id: "call" };
+  // 着信入口も実物のリアクティブ節を通し、履歴を記録する指定漏れを検出する。
+  vm.runInContext(incomingCallCode, context);
 }
 
 const deviceState = {
@@ -49,8 +79,7 @@ const deviceState = {
 };
 
 // Appの遷移関数を実物で動かし、各アプリcomponentの通知(操作・表示・開封報告)だけを手で送る。
-function setup({ activeAppId = null, focusedContentId = "", lastContentByAppId = {} } = {}) {
-  const history = new History();
+function setup({ activeAppId = null, focusedContentId = "", lastContentByAppId = {}, history = new History() } = {}) {
   replacePhoneHistoryRoute(history, "test", { kind: "home" });
   if (activeAppId) {
     pushPhoneHistoryRoute(history, "test", { kind: "app", appId: activeAppId, ...(focusedContentId ? { contentId: focusedContentId } : {}) });
@@ -64,21 +93,25 @@ function setup({ activeAppId = null, focusedContentId = "", lastContentByAppId =
     "handleBlockedContentTap", "replaceCurrentPhoneRoute", "pushCurrentPhoneRoute", "focusAppContent", "focusOpenedContent",
     "requestSearchAgentClose", "suppressNextContentOpenReport", "openContentFromExplicitNavigation", "openAppContent",
     "captureContentNavigation", "showTalkBackLink", "openTalkBackLink", "restorePhoneHistoryRoute", "openPhoneHistoryContent",
-    "beginAppSession", "openApp", "appStartContentId", "clearPhoneRoute", "fallbackPhoneHistoryToHome", "fallbackPhoneHistoryToApp",
+    "beginAppSession", "openApp", "appStartContentId", "clearPhoneRoute", "closeApp", "completeIncomingCall",
+    "fallbackPhoneHistoryToHome", "fallbackPhoneHistoryToApp", "resetPhoneHistoryBoundary",
     "currentHistoryRoute", "appRoute", "isListDetailApp", "browserTabFor", "setBrowserPage",
     "currentPhoneRoute", "handleSearchAgentOpenChange", "handleSearchAgentScrollChange", "handlePhoneHistoryPop",
-    "saveCurrentPhoneHistoryView", "handlePhoneHistoryScroll", "cancelPhoneHistoryViewRestore", "restorePhoneHistoryView",
+    "saveCurrentPhoneHistoryView", "captureCurrentPhoneHistoryView", "cancelPhoneHistoryViewRestore", "restorePhoneHistoryView",
     "PROGRESSION_RETRY_DELAYS_MS", "LIST_START_APP_IDS", "DETAIL_START_APP_IDS"
   ], {
-    window: { history, requestAnimationFrame(callback) { callback(); } },
+    window: { history, requestAnimationFrame(callback) { callback(); }, clearTimeout() {} },
+    crypto: { randomUUID: () => "next-scope" },
     phoneHistoryStateFrom, phoneHistoryMarkerFrom, pushPhoneHistoryRoute, replacePhoneHistoryRoute, goBackInPhoneHistory,
-    consumePhoneHistoryPop, currentPhoneHistoryState, replacePhoneHistoryView, samePhoneHistoryPage, samePhoneHistoryRoute, ...browserPages,
+    consumePhoneHistoryPop, currentPhoneHistoryState, replacePhoneHistoryView, savePhoneHistoryViewBeforePop, samePhoneHistoryPage, samePhoneHistoryRoute, ...browserPages,
     tick: () => Promise.resolve(),
     capturePhoneHistoryScroll: () => context.scrollPositions,
     restorePhoneHistoryScroll: (_root, positions) => { context.scrollPositions = plain(positions); return () => {}; },
-    scrollPositions: [], phoneHistorySurface: {}, phoneHistoryViewRestoring: false, phoneHistoryScrollCleanup: undefined,
+    searchAgentScrollPosition: undefined,
+    scrollPositions: [], phoneHistorySurface: { isConnected: true }, phoneHistoryViewRestoring: false, phoneHistoryScrollCleanup: undefined,
     searchAgentRestoreRequest: null, searchAgentRestoreRequestId: 0, searchAgentOpen: false,
     isMemoryStorage: false, outOfGameVisible: false, gameOverVisible: false, allClearVisible: false, activeIncomingCall: null,
+    incomingCall: undefined, interruptedIncomingCallId: "", locallyCompletedIncomingCallIds: [], noiseVisible: false, noiseTimer: undefined,
     qaMode: false, phoneHistoryReady: true, phoneHistoryScope: "test", phoneHistoryNavigationId: 0,
     contentNavigationRequestId: 0, searchAgentCloseRequestId: 0,
     uiState: { sessionToken: "session", locked: false, lastContentByAppId },
@@ -91,6 +124,8 @@ function setup({ activeAppId = null, focusedContentId = "", lastContentByAppId =
     inFlightContentOpenKeys: [], inFlightMediaObservedKeys: [], suppressedContentOpenKeys: [],
     pendingTalkReadCursorPayload: () => [], clearSyncedTalkReadCursors() {}, queueAlbumMediaAddedAssistant() {},
     enqueuePresentation() {}, applyErrorPlayerState() {}, trackEvent() {},
+    stopBackgroundMediaPlayback() {}, cancelPresentations() {},
+    recordBackgroundScenarioEvent: async () => undefined, refreshPlayerStateOnHomeIfStale() {},
     refreshPlayerStateWithRetry: async () => { refreshes.push(true); return true; },
     showGlobalError() { context.globalErrorVisible = true; }, waitMs: () => Promise.resolve(),
     triggerNoise() { blocked.push("noise"); },
@@ -505,6 +540,120 @@ test("検索AIの開閉だけを戻る・進むで復元するときは、ペー
   assert.equal(h.refreshes.length, 0);
 });
 
+test("ホームでの着信は開閉履歴を閉じ、内部の戻るで端末外へ出ず根元の進むの仕様も保つ", async () => {
+  const history = new AsyncHistory();
+  history.entries = [{ external: true }, null];
+  history.index = 1;
+  const h = setup({ history });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+
+  startIncomingCall(c);
+  assert.equal(c.searchAgentOpen, false);
+  assert.deepEqual(history.travels, [-1]);
+  assert.deepEqual(currentPhoneHistoryState(history, "test").route, { kind: "home" });
+  c.completeIncomingCall("call");
+  history.pop(c);
+  assert.deepEqual(h.route(), { kind: "home" });
+  assert.equal(history.index, 1, "着信による閉じでは端末の根元に留まる");
+  assert.deepEqual(history.entries[0], { external: true });
+  assert.deepEqual(plain(c.locallyCompletedIncomingCallIds), ["call"]);
+
+  c.activeIncomingCall = null;
+  history.go(1);
+  history.pop(c);
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.open, true, "根元に残るForwardの開状態は従来どおり");
+  history.back();
+  history.pop(c);
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.open, false);
+  history.back();
+  history.pop(c);
+  assert.equal(history.index, 0, "利用者の戻るでは端末外へ退出できる");
+});
+
+for (const completeFirst of [false, true]) {
+  test(`アプリでの着信は内部popで画面を変えず、通話完了${completeFirst ? "先行" : "後行"}でも閉じた画面へ戻れる`, async () => {
+    const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
+    const c = h.context;
+    c.scrollPositions = [{ path: [0], top: 410, left: 0 }];
+    c.handleSearchAgentOpenChange(true, "user");
+    c.handleSearchAgentScrollChange({ scrollTop: 125, visibleMessageCount: 80 });
+
+    startIncomingCall(c);
+    assert.deepEqual(h.history.travels, [-2]);
+    assert.equal(currentPhoneHistoryState(h.history, "test").route.searchAgentOpen, undefined);
+    if (completeFirst) c.completeIncomingCall("call");
+    h.history.pop(c);
+    if (!completeFirst) {
+      assert.equal(c.activeAppId, "notes", "着信中の内部popはホームへの退避を起こさない");
+      c.completeIncomingCall("call");
+    }
+    c.activeIncomingCall = null;
+    assert.equal(c.activeAppId, null);
+    assert.deepEqual(h.route(), { kind: "home" });
+    assert.deepEqual(h.history.entries.map((state) => state.route), [
+      { kind: "home" }, { kind: "app", appId: "notes", contentId: "note_a" }, { kind: "home" }
+    ]);
+    assert.deepEqual(h.history.travels, []);
+
+    h.history.back();
+    h.history.pop(c);
+    h.respond(0);
+    await turn();
+    assert.equal(c.activeAppId, "notes");
+    assert.equal(c.focusedContentId, "note_a");
+    assert.equal(c.searchAgentRestoreRequest.open, false);
+    assert.deepEqual(c.scrollPositions, [{ path: [0], top: 410, left: 0 }]);
+    assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.searchAgent), {
+      scrollTop: 125, visibleMessageCount: 80
+    });
+  });
+}
+
+test("同じ画面のパネル復元待ちに着信した場合も履歴を閉じ、古い復元を取り消す", async () => {
+  const h = setup({ history: new AsyncHistory() });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  const openState = currentPhoneHistoryState(h.history, "test");
+  const navigationId = c.phoneHistoryNavigationId;
+  c.searchAgentOpen = false;
+  c.phoneHistoryViewRestoring = true;
+  const restoring = c.restorePhoneHistoryView(openState, navigationId, c.searchAgentCloseRequestId);
+
+  startIncomingCall(c);
+  await restoring;
+  assert.equal(c.phoneHistoryNavigationId, navigationId + 1);
+  assert.equal(c.phoneHistoryViewRestoring, false);
+  assert.equal(c.searchAgentRestoreRequest, null);
+  assert.equal(c.searchAgentOpen, false);
+  h.history.pop(c);
+  assert.deepEqual(h.route(), { kind: "home" });
+});
+
+test("閉じたパネルへの着信では履歴を増やさず、通常の強制閉じと別画面の履歴には干渉しない", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
+  const c = h.context;
+  const closedEntries = plain(h.history.entries);
+  startIncomingCall(c);
+  assert.deepEqual(h.history.entries, closedEntries);
+  assert.deepEqual(h.history.travels, []);
+
+  c.handleSearchAgentOpenChange(true, "user");
+  const openedEntries = plain(h.history.entries);
+  c.requestSearchAgentClose();
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.deepEqual(h.history.entries, openedEntries, "通常の強制閉じは遷移元の開状態を残す");
+  assert.deepEqual(h.history.travels, []);
+
+  const differentRoute = { kind: "app", appId: "mail", contentId: "mail_b", searchAgentOpen: true };
+  pushPhoneHistoryRoute(h.history, "test", differentRoute);
+  c.requestSearchAgentClose({ recordHistory: true });
+  assert.deepEqual(h.route(), differentRoute, "別ページへの復元先を現在の画面で上書きしない");
+  assert.deepEqual(h.history.travels, []);
+});
+
 test("検索結果の別ページから戻ると、元ページと検索AI双方の位置を復元する", async () => {
   const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
   const c = h.context;
@@ -537,6 +686,7 @@ test("復元前の検索AIから届く閉じ通知で、復元先のスクロー
   h.history.back();
   c.handlePhoneHistoryPop({ state: h.history.state });
   c.handleSearchAgentScrollChange({ scrollTop: 0, visibleMessageCount: 40 });
+  c.saveCurrentPhoneHistoryView();
   assert.equal(currentPhoneHistoryState(h.history, "test").view.searchAgent.scrollTop, 180);
   h.respond(0);
   await turn();
@@ -598,6 +748,7 @@ test("復元待ち中の強制閉じでは検索AIを開き直さず、古い閉
   c.handleSearchAgentOpenChange(true, "user");
   c.focusAppContent("mail", "mail_b");
   c.handleSearchAgentScrollChange({ scrollTop: 999, visibleMessageCount: 40 });
+  c.handleSearchAgentOpenChange(false, "system");
   assert.equal(currentPhoneHistoryState(h.history, "test").view?.searchAgent, undefined);
   h.history.back();
   c.handlePhoneHistoryPop({ state: h.history.state });
@@ -644,4 +795,178 @@ test("会話一覧で検索AIを開いて戻る場合も、以前の会話を開
     assert.equal(h.requests.length, 0);
     assert.equal(c.focusedContentRequestId, 0);
   }
+});
+
+test("native backで出発画面の離脱位置だけを保存し、forwardで最新位置を復元する", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.scrollPositions = [{ path: [0], top: 150, left: 0 }];
+  c.focusAppContent("mail", "mail_b");
+  c.scrollPositions = [{ path: [0], top: 720, left: 0 }];
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  h.respond(0);
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 150, left: 0 }]);
+
+  h.history.go(1);
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  h.respond(1);
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 720, left: 0 }]);
+});
+
+test("戻るリンクはpopを待つ前に出発位置を保存し、forwardで元の表示へ戻れる", async () => {
+  const h = setup({ activeAppId: "messages", focusedContentId: "thread_a", history: new AsyncHistory() });
+  const c = h.context;
+  c.focusAppContent("notes", "note_a");
+  c.scrollPositions = [{ path: [0], top: 530, left: 0 }];
+  c.showTalkBackLink("messages", "notes");
+  c.openTalkBackLink();
+  c.scrollPositions = [{ path: [0], top: 999, left: 0 }];
+  h.history.pop(c);
+  h.respond(0);
+  await turn();
+  h.history.go(1);
+  h.history.pop(c);
+  h.respond(1);
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 530, left: 0 }]);
+});
+
+test("検索の位置通知は走査せず最後の値だけを持ち、閉じる時に保存する", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  let captures = 0;
+  c.capturePhoneHistoryScroll = () => { captures += 1; return []; };
+  for (let top = 1; top <= 1000; top += 1) c.handleSearchAgentScrollChange({ scrollTop: top, visibleMessageCount: 80 });
+  assert.equal(captures, 0);
+  assert.equal(currentPhoneHistoryState(h.history, "test").view?.searchAgent, undefined);
+  c.handleSearchAgentOpenChange(false, "user");
+  assert.equal(captures, 1);
+  assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.searchAgent), {
+    scrollTop: 1000, visibleMessageCount: 80
+  });
+  assert.equal(c.searchAgentScrollPosition, undefined);
+});
+
+test("modalによる検索の破棄は最後の通知を保存し、端末DOM全体の破棄では0で上書きしない", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 456, visibleMessageCount: 120 });
+  c.appModalOpen = true;
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.searchAgent), {
+    scrollTop: 456, visibleMessageCount: 120
+  });
+  c.searchAgentOpen = true;
+  c.phoneHistorySurface.isConnected = false;
+  c.scrollPositions = [{ path: [0], top: 0, left: 0 }];
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.searchAgent), {
+    scrollTop: 456, visibleMessageCount: 120
+  });
+});
+
+test("systemで検索を閉じた後の背景ページの離脱位置も、forwardで復元する", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.scrollPositions = [{ path: [0], top: 150, left: 0 }];
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 456, visibleMessageCount: 120 });
+  c.handleSearchAgentOpenChange(false, "system");
+  c.scrollPositions = [{ path: [0], top: 900, left: 0 }];
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  h.history.go(1);
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 900, left: 0 }]);
+  assert.equal(c.searchAgentRestoreRequest.scrollTop, 456);
+  assert.equal(c.searchAgentRestoreRequest.visibleMessageCount, 120);
+});
+
+test("scope切替と検索の新規開閉で旧slotを引き継がず、復元中は既存viewを守る", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 456, visibleMessageCount: 120 });
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  c.handleSearchAgentScrollChange({ scrollTop: 0, visibleMessageCount: 40 });
+  await turn();
+  assert.equal(c.searchAgentScrollPosition, undefined);
+  h.history.go(1);
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  await turn();
+  assert.equal(c.searchAgentRestoreRequest.scrollTop, 456);
+  assert.equal(c.searchAgentRestoreRequest.visibleMessageCount, 120);
+  c.handleSearchAgentOpenChange(true, "system");
+  c.saveCurrentPhoneHistoryView();
+  assert.equal(currentPhoneHistoryState(h.history, "test").view.searchAgent.scrollTop, 456);
+
+  c.resetPhoneHistoryBoundary({ kind: "home" });
+  assert.equal(c.searchAgentScrollPosition, undefined);
+  assert.equal(currentPhoneHistoryState(h.history, "next-scope").view, undefined);
+  c.activeAppId = null;
+  c.searchAgentOpen = false;
+  c.handleSearchAgentOpenChange(true, "user");
+  assert.equal(currentPhoneHistoryState(h.history, "next-scope").view?.searchAgent, undefined);
+});
+
+test("scope切替後に旧検索のsystem閉じが届いても、新しい履歴へ旧DOM位置を保存しない", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.scrollPositions = [{ path: [0], top: 900, left: 0 }];
+  c.handleSearchAgentScrollChange({ scrollTop: 456, visibleMessageCount: 120 });
+  c.resetPhoneHistoryBoundary({ kind: "home" });
+  // 境界変更後も接続中の旧パネルから、閉じる直前の位置通知が届き得る。
+  c.handleSearchAgentScrollChange({ scrollTop: 456, visibleMessageCount: 120 });
+  c.handleSearchAgentOpenChange(false, "system");
+  assert.equal(currentPhoneHistoryState(h.history, "next-scope").view, undefined);
+});
+
+test("内部圧縮のpopでは表示中の新しい検索slotを消さない", () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
+  const c = h.context;
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentOpenChange(false, "user");
+  c.handleSearchAgentOpenChange(true, "user");
+  c.handleSearchAgentScrollChange({ scrollTop: 321, visibleMessageCount: 80 });
+  h.history.pop(c);
+  assert.deepEqual(plain(c.searchAgentScrollPosition), { scrollTop: 321, visibleMessageCount: 80 });
+  c.focusAppContent("mail", "mail_b");
+  h.history.back();
+  h.history.pop(c);
+  assert.deepEqual(plain(currentPhoneHistoryState(h.history, "test").view.searchAgent), {
+    scrollTop: 321, visibleMessageCount: 80
+  });
+});
+
+test("連続popの復元待ちには旧DOMを途中entryへ保存しない", async () => {
+  const h = setup({ activeAppId: "notes", focusedContentId: "note_a" });
+  const c = h.context;
+  c.scrollPositions = [{ path: [0], top: 150, left: 0 }];
+  c.focusAppContent("mail", "mail_b");
+  c.scrollPositions = [{ path: [0], top: 450, left: 0 }];
+  c.focusAppContent("photos", "photo_c");
+  c.scrollPositions = [{ path: [0], top: 700, left: 0 }];
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  let captures = 0;
+  c.capturePhoneHistoryScroll = () => { captures += 1; return c.scrollPositions; };
+  h.history.back();
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  assert.equal(captures, 0);
+  h.respond(0); h.respond(1);
+  await turn();
+  h.history.go(1);
+  c.handlePhoneHistoryPop({ state: h.history.state });
+  h.respond(2);
+  await turn();
+  assert.deepEqual(c.scrollPositions, [{ path: [0], top: 450, left: 0 }]);
 });

@@ -1,4 +1,5 @@
 import type { PhoneHistoryState } from "./phoneHistory.ts";
+import { isConversationNearBottom } from "../apps/conversationScrollMemory.ts";
 
 export type PhoneHistoryScrollPositions = NonNullable<NonNullable<PhoneHistoryState["view"]>["appScroll"]>;
 type ScrollPosition = PhoneHistoryScrollPositions[number];
@@ -12,63 +13,19 @@ function frameDocument(frame: HTMLIFrameElement): Document | null {
   }
 }
 
-// iframe 内の scroll は親文書へ伝わらないため、それぞれの文書でも位置変更を拾う。
-export function trackPhoneHistoryScroll(root: HTMLElement, onScroll: () => void): { destroy(): void } {
-  const documents = new Map<HTMLIFrameElement, Document>();
-
-  function trackFrame(frame: HTMLIFrameElement) {
-    const previous = documents.get(frame);
-    const document = frameDocument(frame);
-    if (previous === document) return;
-    previous?.removeEventListener("scroll", onScroll, true);
-    documents.delete(frame);
-    if (document) {
-      document.addEventListener("scroll", onScroll, true);
-      documents.set(frame, document);
-    }
-  }
-
-  function trackExistingFrames(element: Element) {
-    if (element.tagName === "IFRAME") trackFrame(element as HTMLIFrameElement);
-    for (const child of Array.from(element.children)) trackExistingFrames(child);
-  }
-
-  function handleLoad(event: Event) {
-    // タブ切替などで要素ごと置き換わった文書も保持し続けない。
-    for (const [frame, document] of documents) {
-      if (!root.contains(frame)) {
-        document.removeEventListener("scroll", onScroll, true);
-        documents.delete(frame);
-      }
-    }
-    const element = event.target as Element | null;
-    if (element?.tagName === "IFRAME") trackFrame(element as HTMLIFrameElement);
-  }
-
-  root.addEventListener("scroll", onScroll, true);
-  root.addEventListener("load", handleLoad, true);
-  trackExistingFrames(root);
-
-  return {
-    destroy() {
-      root.removeEventListener("scroll", onScroll, true);
-      root.removeEventListener("load", handleLoad, true);
-      for (const document of documents.values()) document.removeEventListener("scroll", onScroll, true);
-      documents.clear();
-    }
-  };
-}
-
 export function capturePhoneHistoryScroll(root: HTMLElement | null): PhoneHistoryScrollPositions {
   const positions: PhoneHistoryScrollPositions = [];
   if (!root) return positions;
 
   function capture(element: Element, path: number[]) {
+    // 会話は末尾にいた事実を残し、戻る間に届いた新着も含めて末尾へ復元する。
+    const followsConversation = element.getAttribute("data-phone-history-scroll") === "conversation"
+      && isConversationNearBottom(element as HTMLElement);
     if (
-      element.scrollTop !== 0 || element.scrollLeft !== 0
+      followsConversation || element.scrollTop !== 0 || element.scrollLeft !== 0
       || element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth
     ) {
-      positions.push({ path, top: element.scrollTop, left: element.scrollLeft });
+      positions.push({ path, top: element.scrollTop, left: element.scrollLeft, ...(followsConversation ? { bottom: true } : {}) });
     }
     if (element.tagName === "IFRAME") {
       const scrollingElement = frameDocument(element as HTMLIFrameElement)?.scrollingElement;
@@ -93,7 +50,7 @@ function elementAt(root: HTMLElement, path: number[]): Element | undefined {
 }
 
 function restoreElement(element: Element, position: ScrollPosition) {
-  element.scrollTop = position.top;
+  element.scrollTop = position.bottom ? element.scrollHeight : position.top;
   element.scrollLeft = position.left;
 }
 

@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  consumeConversationScroll,
+  rememberConversationScrollForLink,
+  restoreConversationScrollAfterTick,
+  scrollConversationToBottomAfterTick
+} from "../src/client/apps/conversationScrollMemory.ts";
+import {
   capturePhoneHistoryScroll,
-  restorePhoneHistoryScroll,
-  trackPhoneHistoryScroll
+  restorePhoneHistoryScroll
 } from "../src/client/system/phoneHistoryScroll.ts";
 
 function element(options = {}) {
@@ -16,6 +22,8 @@ function element(options = {}) {
     scrollWidth: 100,
     clientWidth: 100,
     children: [],
+    getAttribute(name) { return this.attributes?.[name] ?? null; },
+    hasAttribute(name) { return this.getAttribute(name) !== null; },
     contains(target) { return this === target || this.children.some((child) => child.contains(target)); },
     ...options
   };
@@ -36,102 +44,6 @@ function frame(document, source = "/page.html") {
     listeners
   });
 }
-
-function eventSurface(options = {}) {
-  const listeners = new Map();
-  return {
-    addEventListener(name, handler, capture) {
-      assert.equal(capture, true);
-      if (!listeners.has(name)) listeners.set(name, new Set());
-      listeners.get(name).add(handler);
-    },
-    removeEventListener(name, handler, capture) {
-      assert.equal(capture, true);
-      listeners.get(name)?.delete(handler);
-    },
-    fire(name, target = this) {
-      for (const listener of [...(listeners.get(name) ?? [])]) listener({ target });
-    },
-    listenerCount(name) { return listeners.get(name)?.size ?? 0; },
-    ...options
-  };
-}
-
-test("親要素と既存 iframe 内の scroll を通知する", () => {
-  const document = eventSurface();
-  const iframe = frame(document);
-  const root = eventSurface(element({ children: [element({ children: [iframe] })] }));
-  let changes = 0;
-  const action = trackPhoneHistoryScroll(root, () => { changes += 1; });
-  root.fire("scroll");
-  root.fire("scroll", root.children[0]);
-  document.fire("scroll");
-  assert.equal(changes, 3);
-  assert.equal(document.listenerCount("scroll"), 1);
-  action.destroy();
-});
-
-test("追加 iframe の load を拾い、再読み込みと destroy で以前の監視を解除する", () => {
-  const root = eventSurface(element());
-  let changes = 0;
-  const action = trackPhoneHistoryScroll(root, () => { changes += 1; });
-  const firstDocument = eventSurface();
-  const iframe = frame(firstDocument);
-  root.children.push(iframe);
-  root.fire("load", iframe);
-  root.fire("load", iframe);
-  firstDocument.fire("scroll");
-  assert.equal(changes, 1);
-  assert.equal(firstDocument.listenerCount("scroll"), 1);
-
-  const nextDocument = eventSurface();
-  iframe.contentDocument = nextDocument;
-  root.fire("load", iframe);
-  assert.equal(firstDocument.listenerCount("scroll"), 0);
-  firstDocument.fire("scroll");
-  nextDocument.fire("scroll");
-  assert.equal(changes, 2);
-
-  action.destroy();
-  assert.equal(root.listenerCount("scroll"), 0);
-  assert.equal(root.listenerCount("load"), 0);
-  assert.equal(nextDocument.listenerCount("scroll"), 0);
-  root.fire("scroll");
-  nextDocument.fire("scroll");
-  iframe.contentDocument = eventSurface();
-  root.fire("load", iframe);
-  iframe.contentDocument.fire("scroll");
-  assert.equal(changes, 2);
-});
-
-test("iframe がアクセス不可に変わっても古い文書の scroll 監視を残さない", () => {
-  const document = eventSurface();
-  const iframe = frame(document);
-  const root = eventSurface(element({ children: [iframe] }));
-  let changes = 0;
-  const action = trackPhoneHistoryScroll(root, () => { changes += 1; });
-  Object.defineProperty(iframe, "contentDocument", { get() { throw new Error("SecurityError"); } });
-  assert.doesNotThrow(() => root.fire("load", iframe));
-  assert.equal(document.listenerCount("scroll"), 0);
-  document.fire("scroll");
-  root.fire("scroll");
-  assert.equal(changes, 1);
-  action.destroy();
-  assert.doesNotThrow(() => trackPhoneHistoryScroll(root, () => {}).destroy());
-});
-
-test("iframe 要素の置換後の load で、取り除かれた文書の監視を解除する", () => {
-  const oldDocument = eventSurface();
-  const root = eventSurface(element({ children: [frame(oldDocument)] }));
-  const action = trackPhoneHistoryScroll(root, () => {});
-  const nextDocument = eventSurface();
-  root.children[0] = frame(nextDocument);
-  root.fire("load", root.children[0]);
-  assert.equal(oldDocument.listenerCount("scroll"), 0);
-  assert.equal(nextDocument.listenerCount("scroll"), 1);
-  action.destroy();
-  assert.equal(nextDocument.listenerCount("scroll"), 0);
-});
 
 test("ルートと子要素のスクロール位置を要素のパスで保存・復元する", () => {
   const inner = element({ scrollTop: 360, scrollLeft: 25 });
@@ -225,4 +137,118 @@ test("cleanup または画面要素の置換後は以前の iframe の load を�
   iframe.contentDocument = { scrollingElement: element() };
   iframe.load();
   assert.equal(iframe.contentDocument.scrollingElement.scrollTop, 0);
+});
+
+function conversationList(scrollHeight, scrollTop) {
+  const list = element({
+    attributes: { "data-phone-history-scroll": "conversation" },
+    scrollHeight,
+    clientHeight: 500,
+    dispatchEvent() { return true; }
+  });
+  let top = 0;
+  // scrollTopにscrollHeightを代入しても、実DOMでは最大位置で止まる。
+  Object.defineProperty(list, "scrollTop", {
+    get() { return top; },
+    set(value) { top = Math.max(0, Math.min(value, list.scrollHeight - list.clientHeight)); }
+  });
+  list.scrollTop = scrollTop;
+  return list;
+}
+
+for (const appId of ["messages", "chat"]) {
+  test(`${appId}の実会話履歴だけに会話用の位置復元方針を付ける`, () => {
+    const name = appId === "messages" ? "MessagesApp" : "ChatApp";
+    const source = readFileSync(new URL(`../src/client/apps/${name}.svelte`, import.meta.url), "utf8");
+    const historyTag = source.match(/<div\b[^>]*bind:this=\{historyList\}[^>]*>/)?.[0] ?? "";
+    assert.match(historyTag, /data-phone-history-scroll="conversation"/);
+    assert.equal(source.match(/data-phone-history-scroll="conversation"/g)?.length, 1);
+  });
+
+  for (const departure of ["home", "link"]) {
+    test(`${appId}: ${departure}経由で不在中に返信が増えても、末尾付近は最新、途中は元の位置を表示する`, async (t) => {
+      const previousWindow = globalThis.window;
+      globalThis.window = { requestAnimationFrame(callback) { callback(); } };
+      t.after(() => {
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+      });
+
+      for (const distanceFromBottom of [0, 120, 121, 500]) {
+        const oldTop = 1218 - distanceFromBottom;
+        const oldList = conversationList(1718, oldTop);
+        const saved = capturePhoneHistoryScroll(element({ children: [oldList] }));
+        assert.deepEqual(saved, [{
+          path: [0], top: oldTop, left: 0,
+          ...(distanceFromBottom <= 120 ? { bottom: true } : {})
+        }]);
+        const threadId = `phone-history-${departure}-${distanceFromBottom}`;
+        if (departure === "link") rememberConversationScrollForLink(appId, threadId, oldList);
+
+        const returnedList = conversationList(2018, 0);
+        const root = element({ children: [returnedList] });
+        const remembered = consumeConversationScroll(appId, threadId);
+        if (remembered === undefined) scrollConversationToBottomAfterTick(() => returnedList);
+        else restoreConversationScrollAfterTick(() => returnedList, remembered);
+        await new Promise(setImmediate);
+
+        // 会話自身の初期表示後に、Appの汎用復元が二度走っても新着を隠さない。
+        restorePhoneHistoryScroll(root, saved);
+        restorePhoneHistoryScroll(root, saved);
+        assert.equal(returnedList.scrollTop, distanceFromBottom <= 120 ? 1518 : oldTop, `末尾から${distanceFromBottom}px`);
+      }
+    });
+  }
+}
+
+test("会話DOMを作り直さない検索パネルの戻る・進むでも、保存した末尾表示を復元する", () => {
+  for (const [height, top, laterHeight, readingTop] of [[1718, 1218, 1718, 500], [500, 0, 900, 100]]) {
+    const list = conversationList(height, top);
+    const root = element({ children: [list] });
+    const panelOpenView = capturePhoneHistoryScroll(root);
+
+    // 最初は短い会話も後で伸び得る。上読み後の進むでは、初期表示helperを実行しない。
+    list.scrollHeight = laterHeight;
+    list.scrollTop = readingTop;
+    restorePhoneHistoryScroll(root, panelOpenView);
+    assert.equal(list.scrollTop, laterHeight - list.clientHeight, `検索を開いた時の会話の高さ${height}px`);
+  }
+});
+
+test("会話の末尾を記録しても、横スクロールしたQuick Replyの子要素を保存・復元する", () => {
+  const list = conversationList(1718, 1218);
+  const replies = element({ scrollWidth: 500, clientWidth: 100, scrollLeft: 80 });
+  list.children = [replies];
+  const saved = capturePhoneHistoryScroll(list);
+  assert.deepEqual(saved, [
+    { path: [], top: 1218, left: 0, bottom: true },
+    { path: [0], top: 0, left: 80 }
+  ]);
+  list.scrollTop = 500;
+  replies.scrollLeft = 0;
+  restorePhoneHistoryScroll(list, saved);
+  assert.equal(list.scrollTop, 1218);
+  assert.equal(replies.scrollLeft, 80);
+});
+
+test("無印の文書は末尾100px手前でも、内容が増えた後に元の絶対位置を復元する", () => {
+  const document = element({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1400 });
+  const saved = capturePhoneHistoryScroll(document);
+  document.scrollHeight = 2300;
+  document.scrollTop = 1800;
+  restorePhoneHistoryScroll(document, saved);
+  assert.equal(document.scrollTop, 1400);
+});
+
+test("iframeは末尾100px手前でも、読み込み直後の元の絶対位置を復元する", () => {
+  const oldPage = element({ scrollHeight: 2000, clientHeight: 500, scrollTop: 1400 });
+  const iframe = frame({ scrollingElement: oldPage });
+  const root = element({ children: [iframe] });
+  const saved = capturePhoneHistoryScroll(root);
+  restorePhoneHistoryScroll(root, saved);
+
+  const loadedPage = element({ scrollHeight: 2300, clientHeight: 500, scrollTop: 1800 });
+  iframe.contentDocument = { scrollingElement: loadedPage };
+  iframe.load();
+  assert.equal(loadedPage.scrollTop, 1400);
 });

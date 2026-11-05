@@ -2,7 +2,7 @@
 import type { DeviceState } from "../scenario-runtime/types";
 
 export const demoDeviceStateGenerated: DeviceState = {
-  "revision": "client_b0dafd33e7845bf2",
+  "revision": "client_30d0aab61e83458c",
   "batteryLevel": 72,
   "signalLabel": "4G",
   "currentDate": "2026-08-12",

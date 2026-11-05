@@ -14,7 +14,7 @@ export type PhoneHistoryRoute = (
 ) & { searchAgentOpen?: boolean };
 
 export type PhoneHistoryView = {
-  appScroll?: Array<{ path: number[]; top: number; left: number; frame?: boolean }>;
+  appScroll?: Array<{ path: number[]; top: number; left: number; frame?: boolean; bottom?: boolean }>;
   searchAgent?: { scrollTop: number; visibleMessageCount: number };
 };
 
@@ -99,9 +99,11 @@ function viewFrom(value: unknown): PhoneHistoryView | undefined {
     entry && Array.isArray(entry.path) && entry.path.every((index) => Number.isInteger(index) && index >= 0)
     && Number.isFinite(entry.top) && Number.isFinite(entry.left)
     && (entry.frame === undefined || typeof entry.frame === "boolean")
+    && (entry.bottom === undefined || typeof entry.bottom === "boolean")
   )) ? view.appScroll.map((entry) => ({
     path: [...entry.path], top: entry.top, left: entry.left,
-    ...(entry.frame === undefined ? {} : { frame: entry.frame })
+    ...(entry.frame === undefined ? {} : { frame: entry.frame }),
+    ...(entry.bottom ? { bottom: true } : {})
   })) : undefined;
   const searchAgent = view.searchAgent && Number.isFinite(view.searchAgent.scrollTop)
     && Number.isInteger(view.searchAgent.visibleMessageCount) && view.searchAgent.visibleMessageCount >= 0
@@ -398,7 +400,7 @@ function enqueueOperation(history: HistoryLike, scope: string, operation: Histor
   const controller = controllerFor(history, scope);
   const plan = planOperation(scope, controller.planned, operation, controller.projectedStates);
   if (!plan) return controller.planned;
-  // 巻戻し待ちのスクロール通知は、最後の位置だけを残してqueueの増加を防ぐ。
+  // 巻戻し待ちの連続した位置保存は、最後のsnapshotだけを残す。
   if (operation.kind === "view" && controller.queue[controller.queue.length - 1]?.kind === "view") {
     controller.queue[controller.queue.length - 1] = operation;
   } else {
@@ -413,6 +415,28 @@ function enqueueOperation(history: HistoryLike, scope: string, operation: Histor
 // 巻戻し中も、呼出し済みの操作をすべて反映した最新の状態を返す。
 export function currentPhoneHistoryState(history: HistoryLike, scope: string) {
   return controllerFor(history, scope).planned;
+}
+
+// pop時のHistory APIは到着先を指すため、まだ表示中の出発entryへだけ保存する。
+export function savePhoneHistoryViewBeforePop(
+  history: HistoryLike,
+  scope: string,
+  displayedRoute: PhoneHistoryRoute,
+  capture: () => PhoneHistoryView | undefined
+) {
+  const controller = historyControllers.get(history);
+  const source = controller?.planned;
+  // systemによるパネル非表示でも、同じページの離脱位置は更新する。
+  if (!controller || controller.scope !== scope || controller.pending || controller.queue.length
+    || !source || source.scope !== scope || !samePhoneHistoryPage(source.route, displayedRoute)) return false;
+  const view = capture();
+  if (!view) return false;
+  const next = { ...source, view: viewFrom({ ...source.view, ...view }) ?? {} };
+  controller.states.set(next.index, next);
+  controller.projectedStates.set(next.index, next);
+  controller.planned = next;
+  if (isMemoryStorage && memoryScope === scope) memoryStates.set(next.index, next);
+  return true;
 }
 
 // 内部の圧縮に使ったpopは画面へ反映しない。通常の戻る・進むは呼出し側が復元する。
@@ -445,7 +469,8 @@ export function pushPhoneHistoryRoute(
   return enqueueOperation(history, scope, { kind: "push", route: routeFrom(route)!, view: viewFrom(view) })!;
 }
 
-// スクロール通知は即時にタブ内へ保存する。History APIへの書込みは画面の変更時だけ行う。
+// 離脱位置は既存の操作queueで順序を保つ。投影stateだけへ書くと再planで失われる。
+// History APIへの書込みは画面の変更時だけ行う。
 export function replacePhoneHistoryView(history: HistoryLike, scope: string, view: PhoneHistoryView) {
   return enqueueOperation(history, scope, { kind: "view", view: viewFrom(view) ?? {} });
 }

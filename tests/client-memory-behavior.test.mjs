@@ -39,7 +39,8 @@ test("memoryの更新不一致は保存を使わず手動更新へ、persistent�
 test("memoryで中身のない自社historyへ戻ったときだけホーム境界を置く", () => {
   const calls = [];
   const context = componentFunctionHarness(new URL("../src/client/App.svelte", import.meta.url), ["handlePhoneHistoryPop"], {
-    isMemoryStorage: true, qaMode: false, phoneHistoryNavigationId: 0,
+    isMemoryStorage: true, qaMode: false, phoneHistoryScope: "current", phoneHistoryNavigationId: 0,
+    searchAgentScrollPosition: undefined,
     window: { history: {} }, consumePhoneHistoryPop: () => false, cancelPhoneHistoryViewRestore() {},
     phoneHistoryStateFrom: () => null,
     phoneHistoryMarkerFrom: (value) => value?.owner === "xstoryphone" ? value : null,
@@ -66,7 +67,8 @@ test("古いhistoryのホーム境界へ戻った後は先行する非同期の�
       window: { history: {} }, consumePhoneHistoryPop: () => false, cancelPhoneHistoryViewRestore() {},
       samePhoneHistoryPage: () => false, currentPhoneRoute: () => ({ kind: "home" }),
       restorePhoneHistoryView() {}, currentPhoneHistoryState: () => null,
-      phoneHistoryViewRestoring: false, searchAgentCloseRequestId: 0,
+      savePhoneHistoryViewBeforePop() {}, captureCurrentPhoneHistoryView() {}, searchAgentOpen: false,
+      phoneHistoryViewRestoring: false, searchAgentCloseRequestId: 0, searchAgentScrollPosition: undefined,
       uiState: { locked: false, sessionToken: "browser-player" },
       outOfGameVisible: false, gameOverVisible: false, allClearVisible: false,
       activeIncomingCall: null, globalErrorVisible: false,

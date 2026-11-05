@@ -92,8 +92,6 @@
   let lastServerMessageKey = "";
   let visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
   let messageListElement: HTMLDivElement | undefined;
-  let followingMessageListBottom = false;
-  let lastMessageListScrollTop = 0;
   let inputElement: HTMLInputElement | undefined;
   let loadingOlderHistory = false;
   let openingResult = false;
@@ -174,28 +172,12 @@
       return;
     }
     messageListElement.scrollTop = messageListElement.scrollHeight;
-    followingMessageListBottom = true;
-    lastMessageListScrollTop = messageListElement.scrollTop;
-    reportScrollPosition();
-  }
-
-  function handleResultImageLoad(event: Event) {
-    if (destroyed || !expanded || !messageListElement
-      || restoringScrollRequestId !== undefined || loadingOlderHistory
-      || !messageListElement.contains(event.currentTarget as Node)) return;
-    // scroll通知より先に画像が届いても、利用者が上へ戻した位置を優先する。
-    if (messageListElement.scrollTop < lastMessageListScrollTop) {
-      followingMessageListBottom = isMessageListNearBottom();
-    }
-    if (!followingMessageListBottom) return;
-    // 読込後の高さで末尾判定せず、画像が届く前の追従状態を使う。
-    messageListElement.scrollTop = messageListElement.scrollHeight;
-    lastMessageListScrollTop = messageListElement.scrollTop;
     reportScrollPosition();
   }
 
   function reportScrollPosition() {
-    if (!expanded || !messageListElement) return;
+    // onDestroyではDOMが既に外れて位置が0になるため、最後の通知を上書きしない。
+    if (!expanded || !messageListElement || messageListElement.isConnected === false) return;
     onScrollChange({ scrollTop: messageListElement.scrollTop, visibleMessageCount });
   }
 
@@ -205,7 +187,6 @@
     }
 
     loadingOlderHistory = true;
-    followingMessageListBottom = false;
     const requestId = panelViewRequestId;
     const list = messageListElement;
     const previousHeight = messageListElement.scrollHeight;
@@ -215,7 +196,6 @@
     loadingOlderHistory = false;
     if (destroyed || !expanded || requestId !== panelViewRequestId || messageListElement !== list) return;
     list.scrollTop = list.scrollHeight - previousHeight + previousTop;
-    lastMessageListScrollTop = list.scrollTop;
     reportScrollPosition();
   }
 
@@ -224,11 +204,6 @@
       return;
     }
 
-    // 自分で設定した位置のscroll通知では、復元・履歴追加の方針を変えない。
-    if (messageListElement.scrollTop !== lastMessageListScrollTop) {
-      followingMessageListBottom = isMessageListNearBottom();
-      lastMessageListScrollTop = messageListElement.scrollTop;
-    }
     reportScrollPosition();
 
     if (messageListElement.scrollTop <= 28) {
@@ -252,7 +227,6 @@
   function openExpanded() {
     panelViewRequestId += 1;
     restoringScrollRequestId = undefined;
-    followingMessageListBottom = false;
     openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = SEARCH_HISTORY_PAGE_SIZE;
@@ -293,7 +267,6 @@
     }
     const requestId = ++panelViewRequestId;
     restoringScrollRequestId = requestId;
-    followingMessageListBottom = false;
     openedSurfaceMessageKey = surfaceBubbleVisible ? surfaceMessageKey : "";
     expandedFromVisible = !agentPeeking;
     visibleMessageCount = request.visibleMessageCount !== undefined && Number.isFinite(request.visibleMessageCount)
@@ -308,9 +281,6 @@
     messageListElement.scrollTop = request.scrollTop !== undefined && Number.isFinite(request.scrollTop)
       ? Math.max(0, request.scrollTop)
       : messageListElement.scrollHeight;
-    // 明示された復元位置は、未読込画像で末尾へ引き戻さない。
-    followingMessageListBottom = request.scrollTop === undefined || !Number.isFinite(request.scrollTop);
-    lastMessageListScrollTop = messageListElement.scrollTop;
     reportScrollPosition();
   }
 
@@ -692,7 +662,9 @@
                           {/if}
                         </span>
                         {#if result.thumbnailUrl}
-                          <img src={resourceUrl(result.thumbnailUrl)} alt="" on:load={handleResultImageLoad} on:error={handleResultImageLoad} />
+                          <span class="result-thumbnail">
+                            <img src={resourceUrl(result.thumbnailUrl)} alt="" />
+                          </span>
                         {:else if title}
                           <strong>{title}</strong>
                         {/if}
@@ -1110,7 +1082,14 @@
     white-space: nowrap;
   }
 
+  .result-thumbnail {
+    display: block;
+    min-width: 0;
+    height: 82px;
+  }
+
   .result-copy img {
+    display: block;
     width: 100%;
     max-height: 82px;
     border-radius: 10px;
