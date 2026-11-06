@@ -240,6 +240,10 @@
     display: none;
   }
 
+  .document-list:not(.mail-list) {
+    gap: 6px;
+  }
+
   .document-list button {
     position: relative;
     display: grid;
@@ -264,6 +268,11 @@
     padding-left: 9px;
   }
 
+  .document-list:not(.mail-list) button {
+    border-color: var(--ap-border-strong);
+    background: rgba(255, 255, 255, 0.035);
+  }
+
   /* 行間の区切り線は内側だけに引き、角丸の選択面とは重ねない。 */
   .document-list button + button::before {
     content: "";
@@ -278,6 +287,10 @@
 
   .document-list.mail-list button + button::before {
     left: 52px;
+  }
+
+  .document-list:not(.mail-list) button + button::before {
+    display: none;
   }
 
   .document-list button:hover {
@@ -436,7 +449,14 @@
   }
 
   .detail-scroll:not(.with-header) {
-    grid-template-rows: minmax(0, 1fr);
+    --document-line-height: 1.75rem;
+    display: block;
+    border: 1px solid color-mix(in srgb, var(--document-accent) 16%, transparent);
+    border-radius: var(--ap-radius-panel);
+    background:
+      linear-gradient(90deg, transparent 13px, color-mix(in srgb, var(--document-accent) 20%, transparent) 13px 14px, transparent 14px),
+      linear-gradient(180deg, rgba(246, 242, 232, 0.085), rgba(246, 242, 232, 0.05));
+    box-shadow: var(--ap-shadow-inset);
   }
 
   .mail-header {
@@ -490,19 +510,22 @@
     white-space: nowrap;
   }
 
-  /* 紙面の罫線は本文の行送りと揃え、本文と一緒にスクロールする。 */
+  /* 紙面の枠と地色は固定し、横罫線だけを本文の行送りに揃えて動かす。 */
   .document-body {
-    --line: calc(0.92rem * 1.9);
     min-height: 100%;
     margin: 0;
     padding: 14px 16px 18px 22px;
     border: 1px solid color-mix(in srgb, var(--document-accent) 16%, transparent);
     border-radius: var(--ap-radius-panel);
-    background:
-      linear-gradient(90deg, transparent 13px, color-mix(in srgb, var(--document-accent) 20%, transparent) 13px 14px, transparent 14px),
-      linear-gradient(transparent calc(var(--line) - 1px), color-mix(in srgb, var(--document-accent) 13%, transparent) calc(var(--line) - 1px)) 0 14px / 100% var(--line) repeat-y,
-      linear-gradient(180deg, rgba(246, 242, 232, 0.085), rgba(246, 242, 232, 0.05));
     box-shadow: var(--ap-shadow-inset);
+  }
+
+  .detail-scroll:not(.with-header) .document-body {
+    border: 0;
+    border-radius: 0;
+    background:
+      repeating-linear-gradient(transparent 0 calc(var(--document-line-height) - 1px), color-mix(in srgb, var(--document-accent) 13%, transparent) calc(var(--document-line-height) - 1px) var(--document-line-height)) 0 14px no-repeat;
+    box-shadow: none;
   }
 
   .document-body.mail-body {
@@ -516,7 +539,7 @@
     margin: 0;
     color: rgba(255, 255, 255, 0.86);
     font-size: 0.92rem;
-    line-height: 1.9;
+    line-height: var(--document-line-height, 1.9);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
