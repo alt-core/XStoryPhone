@@ -1434,7 +1434,7 @@
     if (options.recordHistory) {
       const current = currentHistoryRoute();
       const route = currentPhoneRoute();
-      // 着信で同じ画面のまま閉じた時だけ、利用者による開閉と同じ履歴へ合流する。
+      // 着信で同じ画面のまま閉じる時も、利用者による閉じと同じ一段の戻る操作にする。
       if (current?.searchAgentOpen && samePhoneHistoryPage(current, route)) {
         pushCurrentPhoneRoute(route, true);
       }

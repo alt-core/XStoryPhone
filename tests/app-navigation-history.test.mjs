@@ -540,7 +540,55 @@ test("検索AIの開閉だけを戻る・進むで復元するときは、ペー
   assert.equal(h.refreshes.length, 0);
 });
 
-test("ホームでの着信は開閉履歴を閉じ、内部の戻るで端末外へ出ず根元の進むの仕様も保つ", async () => {
+for (const activeAppId of [null, "notes"]) {
+  test(`${activeAppId ?? "ホーム"}の検索AIは一段戻って閉じ、進むで位置ごと再表示できる`, async () => {
+    const history = new AsyncHistory();
+    history.entries = [{ external: true }, null];
+    history.index = 1;
+    const h = setup({ history, activeAppId, focusedContentId: activeAppId ? "note_a" : "" });
+    const c = h.context;
+    c.handleSearchAgentOpenChange(true, "user");
+    c.scrollPositions = [{ path: [0], top: 340, left: 0 }];
+    c.handleSearchAgentScrollChange({ scrollTop: 125, visibleMessageCount: 80 });
+    const openedIndex = history.index;
+    const entryCount = history.entries.length;
+    const writes = [];
+    const push = history.pushState.bind(history);
+    const replace = history.replaceState.bind(history);
+    history.pushState = (value) => { writes.push("push"); push(value); };
+    history.replaceState = (value) => { writes.push("replace"); replace(value); };
+
+    c.handleSearchAgentOpenChange(false, "user");
+    assert.deepEqual(history.travels, [-1]);
+    history.pop(c);
+    assert.equal(history.index, openedIndex - 1);
+    assert.equal(history.entries.length, entryCount, "開状態は進む先に残す");
+    assert.deepEqual(writes, [], "閉じた後に履歴を積み直したり置換したりしない");
+    assert.equal(c.searchAgentRestoreRequest, null, "閉じるための内部popでは画面を復元しない");
+    assert.equal(c.activeAppId, activeAppId);
+    assert.deepEqual(history.entries[0], { external: true });
+    assert.deepEqual(plain(currentPhoneHistoryState(history, "test").view.appScroll), [{ path: [0], top: 340, left: 0 }]);
+
+    history.go(1);
+    history.pop(c);
+    await turn();
+    assert.equal(c.searchAgentRestoreRequest.open, true);
+    assert.equal(c.searchAgentRestoreRequest.scrollTop, 125);
+    assert.equal(c.searchAgentRestoreRequest.visibleMessageCount, 80);
+    assert.deepEqual(c.scrollPositions, [{ path: [0], top: 340, left: 0 }]);
+    assert.equal(h.requests.length, 0, "同じページを開封し直さない");
+
+    c.handleSearchAgentOpenChange(true, "system");
+    c.handleSearchAgentOpenChange(false, "user");
+    history.pop(c);
+    c.focusAppContent("mail", "mail_b");
+    assert.equal(history.index, history.entries.length - 1);
+    assert.equal(history.entries.some((state) => state.route?.searchAgentOpen), false,
+      "閉じた後に新しい画面を開くと、古い進む先を破棄する");
+  });
+}
+
+test("ホームでの着信は一段戻って検索AIを閉じ、端末外へ出ず進むで再表示できる", async () => {
   const history = new AsyncHistory();
   history.entries = [{ external: true }, null];
   history.index = 1;
@@ -563,7 +611,7 @@ test("ホームでの着信は開閉履歴を閉じ、内部の戻るで端末�
   history.go(1);
   history.pop(c);
   await turn();
-  assert.equal(c.searchAgentRestoreRequest.open, true, "根元に残るForwardの開状態は従来どおり");
+  assert.equal(c.searchAgentRestoreRequest.open, true, "進むで開状態へ戻る");
   history.back();
   history.pop(c);
   await turn();
@@ -582,7 +630,7 @@ for (const completeFirst of [false, true]) {
     c.handleSearchAgentScrollChange({ scrollTop: 125, visibleMessageCount: 80 });
 
     startIncomingCall(c);
-    assert.deepEqual(h.history.travels, [-2]);
+    assert.deepEqual(h.history.travels, [-1]);
     assert.equal(currentPhoneHistoryState(h.history, "test").route.searchAgentOpen, undefined);
     if (completeFirst) c.completeIncomingCall("call");
     h.history.pop(c);
@@ -715,7 +763,8 @@ test("閉→開→閉を繰り返した後の別ページからは、最新の�
     c.scrollPositions = [{ path: [0], top, left: 0 }];
     c.handleSearchAgentOpenChange(true, "user");
     c.handleSearchAgentOpenChange(false, "user");
-    assert.equal(h.history.entries.length, 2, "開閉の往復を蓄積しない");
+    assert.equal(h.history.index, 1, "閉じた元の画面へ一段戻る");
+    assert.equal(h.history.entries.length, 3, "進む先に一つだけ開状態を保ち、開閉の往復を蓄積しない");
   }
   c.focusAppContent("mail", "mail_b");
   h.history.back();
@@ -930,7 +979,7 @@ test("scope切替後に旧検索のsystem閉じが届いても、新しい履歴
   assert.equal(currentPhoneHistoryState(h.history, "next-scope").view, undefined);
 });
 
-test("内部圧縮のpopでは表示中の新しい検索slotを消さない", () => {
+test("閉じるための内部popでは表示中の新しい検索slotを消さない", () => {
   const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
   const c = h.context;
   c.handleSearchAgentOpenChange(true, "user");

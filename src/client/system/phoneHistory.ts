@@ -28,7 +28,7 @@ export type PhoneHistoryState = {
   view?: PhoneHistoryView;
 };
 
-type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back" | "go">;
+type HistoryLike = Pick<History, "state" | "pushState" | "replaceState" | "back">;
 type PhoneHistoryMarker = Pick<PhoneHistoryState, "owner" | "version" | "scope" | "index">;
 
 export const BROWSER_PAGE_HISTORY_LIMIT = 50;
@@ -215,7 +215,7 @@ type HistoryOperation =
   | { kind: "back" };
 type OperationPlan = {
   state: PhoneHistoryState;
-  method: "pushState" | "replaceState" | "collapse" | "back";
+  method: "pushState" | "replaceState" | "close" | "back";
 };
 type PendingTravel = {
   scope: string;
@@ -291,6 +291,18 @@ function planOperation(
     return null;
   }
   const view = operation.view ?? (operation.kind === "replace" ? current?.view : undefined);
+  // 同じページのパネルを閉じる時は直前へ戻り、開いたentryをForward用に残す。
+  if (operation.kind === "push" && current && current.index > 0
+    && current.route.searchAgentOpen && !route.searchAgentOpen
+    && current.previousRoute && samePhoneHistoryPage(current.route, route)
+    && samePhoneHistoryRoute(current.previousRoute, route)) {
+    const previous = states.get(current.index - 1);
+    const state: PhoneHistoryState = {
+      ...(previous ?? { owner: "xstoryphone", version: 1, scope, index: current.index - 1, route }),
+      ...(view ? { view } : {})
+    };
+    return { state, method: "close" };
+  }
   const state: PhoneHistoryState = {
     owner: "xstoryphone", version: 1, scope,
     index: current?.index ?? 0,
@@ -299,21 +311,13 @@ function planOperation(
     ...(view ? { view } : {})
   };
   if (operation.kind === "replace" || !current) return { state, method: "replaceState" };
-  if (current.previousRoute && samePhoneHistoryPage(current.route, route)
-    && samePhoneHistoryRoute(current.previousRoute, route)) {
-    const base = states.get(Math.max(0, current.index - 2));
-    state.index = Math.max(0, current.index - 1);
-    delete state.previousRoute;
-    if (current.index >= 2 && base) state.previousRoute = base.route;
-    return { state, method: "collapse" };
-  }
   state.index = current.index + 1;
   state.previousRoute = current.route;
   return { state, method: "pushState" };
 }
 
 function rememberPlan(states: Map<number, PhoneHistoryState>, plan: OperationPlan) {
-  if (plan.method === "pushState" || plan.method === "collapse") {
+  if (plan.method === "pushState") {
     for (const index of states.keys()) {
       if (index >= plan.state.index) states.delete(index);
     }
@@ -347,20 +351,6 @@ function completeTravel(history: HistoryLike, controller: HistoryController, val
   const landed = stateWithLatestView(controller, value, pending.scope);
   if (sameScope && landed) {
     controller.states.set(landed.index, landed);
-    if (pending.plan.method === "collapse") {
-      const next = { ...pending.plan.state };
-      delete next.previousRoute;
-      if (pending.plan.state.index === 0) {
-        next.index = landed.index;
-        if (landed.previousRoute) next.previousRoute = landed.previousRoute;
-      } else {
-        next.index = landed.index + 1;
-        next.previousRoute = landed.route;
-      }
-      const method = pending.plan.state.index === 0 ? "replaceState" : "pushState";
-      writePhoneHistoryState(history, next, method);
-      rememberPlan(controller.states, { state: next, method: pending.plan.method });
-    }
   }
   rebuildProjection(history, controller);
   drainOperations(history, controller);
@@ -373,13 +363,15 @@ function drainOperations(history: HistoryLike, controller: HistoryController) {
     const current = stateWithLatestView(controller, history.state);
     const plan = planOperation(controller.scope, current, operation, controller.states);
     if (!plan) continue;
-    if (plan.method === "back" || plan.method === "collapse") {
-      const target = plan.method === "back" ? plan.state.index : Math.max(0, current!.index - 2);
-      const pending = { scope: controller.scope, index: target, plan };
+    if (plan.method === "back" || plan.method === "close") {
+      // 閉じる操作の最新位置を着地前に保存し、古い閉状態のcacheで上書きしない。
+      if (plan.method === "close") {
+        rememberPlan(controller.states, plan);
+        if (isMemoryStorage && memoryScope === controller.scope) memoryStates.set(plan.state.index, plan.state);
+      }
+      const pending = { scope: controller.scope, index: plan.state.index, plan };
       controller.pending = pending;
-      // 根元のA→B→Aは一つだけ戻って置換する。二つ戻ると端末外のページへ出てしまう。
-      if (plan.method === "back" || current!.index === 1) history.back();
-      else history.go(-2);
+      history.back();
       // 同期的なHistory代替にも対応する。ブラウザでは後続のpopstateで完了する。
       if (controller.pending === pending && matchesTravel(history.state, pending)) {
         completeTravel(history, controller, history.state);
@@ -439,13 +431,13 @@ export function savePhoneHistoryViewBeforePop(
   return true;
 }
 
-// 内部の圧縮に使ったpopは画面へ反映しない。通常の戻る・進むは呼出し側が復元する。
+// パネルを閉じるためのpopは画面へ反映しない。通常の戻る・進むは呼出し側が復元する。
 export function consumePhoneHistoryPop(history: HistoryLike, eventState: unknown) {
   const controller = historyControllers.get(history);
   if (!controller) return false;
   const pending = controller.pending;
   if (pending && matchesTravel(eventState, pending)) {
-    const consumed = pending.plan.method === "collapse" || pending.scope !== controller.scope;
+    const consumed = pending.plan.method === "close" || pending.scope !== controller.scope;
     completeTravel(history, controller, eventState);
     return consumed;
   }

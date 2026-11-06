@@ -367,25 +367,37 @@ for (const isMemoryStorage of [false, true]) {
     assert.equal(copiedState(api, history).view.appScroll, undefined, "不正な指定は復元しない");
   });
 
-  test(`${mode}: 同じページの閉→開→閉を圧縮し、次の画面から戻ると新しい表示位置を復元する`, () => {
+  test(`${mode}: パネルを閉じると一段Backし、Forwardで開いた画面と当時の位置へ戻る`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const closed = { kind: "app", appId: "notes", contentId: "note-1" };
     api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
     api.pushPhoneHistoryRoute(history, "scope", closed, scrollView(100));
     api.pushPhoneHistoryRoute(history, "scope", { ...closed, searchAgentOpen: true }, scrollView(200));
-    const discarded = history.state;
+    const openState = history.state;
+    const calls = { replace: history.replaceCalls, push: history.pushCalls };
     api.pushPhoneHistoryRoute(history, "scope", closed, scrollView(300));
-    assert.deepEqual(history.goCalls, [-2]);
+    assert.deepEqual(history.goCalls, [-1]);
+    assert.equal(history.backCalls, 1);
     assert.equal(history.position, 2);
     assert.deepEqual(copiedState(api, history).route, closed);
     assert.equal(copiedState(api, history).index, 1);
     assert.equal(history.pop(api), true);
-    assert.equal(history.entries.length, 2);
+    assert.equal(history.entries.length, 3);
     assert.equal(history.position, 1);
     assert.deepEqual(copiedState(api, history).view, scrollView(300));
-    if (isMemoryStorage) assert.equal(api.phoneHistoryStateFrom(discarded), null);
+    assert.deepEqual({ replace: history.replaceCalls, push: history.pushCalls }, calls,
+      "閉じる操作ではentryを置換も積み直しもしない");
+    assert.deepEqual(structuredClone(api.phoneHistoryStateFrom(openState).view), scrollView(200));
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, { ...closed, searchAgentOpen: true });
+    assert.deepEqual(copiedState(api, history).view, scrollView(200));
+    api.pushPhoneHistoryRoute(history, "scope", closed);
+    assert.equal(history.pop(api), true);
+    assert.deepEqual(copiedState(api, history).view, scrollView(300), "未指定の位置は元の閉じたentryから維持する");
     api.pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "photos" });
+    assert.equal(history.entries.length, 3, "次のpushで初めてforwardを新画面へ置き換える");
     assert.equal(api.goBackInPhoneHistory(history, "scope"), true);
     assert.equal(history.pop(api), false);
     assert.deepEqual(copiedState(api, history).route, closed);
@@ -400,17 +412,25 @@ for (const isMemoryStorage of [false, true]) {
     }
   });
 
-  test(`${mode}: 履歴の根元での開閉は一つ戻って置換し、次のpushでforwardを破棄する`, () => {
+  test(`${mode}: 履歴の根元でも閉じるとBackだけを行い、次のpushでforwardを破棄する`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
-    api.pushPhoneHistoryRoute(history, "scope", { kind: "home", searchAgentOpen: true });
+    api.pushPhoneHistoryRoute(history, "scope", { kind: "home", searchAgentOpen: true }, scrollView(200));
+    const calls = { replace: history.replaceCalls, push: history.pushCalls };
     api.pushPhoneHistoryRoute(history, "scope", { kind: "home" }, scrollView(400));
     assert.deepEqual(history.goCalls, [-1]);
     assert.equal(history.pop(api), true);
     assert.equal(history.position, 0);
     assert.equal(copiedState(api, history).index, 0);
+    assert.deepEqual({ replace: history.replaceCalls, push: history.pushCalls }, calls);
     assert.equal(api.goBackInPhoneHistory(history, "scope"), false);
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, { kind: "home", searchAgentOpen: true });
+    assert.deepEqual(copiedState(api, history).view, scrollView(200));
+    api.pushPhoneHistoryRoute(history, "scope", { kind: "home" });
+    assert.equal(history.pop(api), true);
     api.pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "radio" });
     assert.equal(history.entries.length, 2);
     api.goBackInPhoneHistory(history, "scope");
@@ -418,7 +438,32 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).view, scrollView(400));
   });
 
-  test(`${mode}: 圧縮中の連続開閉・route置換・位置保存・次画面pushを順番に処理する`, () => {
+  test(`${mode}: 閉じる直前に保存した位置は閉じた画面とForward先の開いた画面の両方に残る`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const closed = { kind: "app", appId: "notes" };
+    const open = { ...closed, searchAgentOpen: true };
+    api.replacePhoneHistoryRoute(history, "scope", closed, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", open, scrollView(200));
+    // Appと同じく、出発画面を保存してから到着先へ引き継ぐ位置を渡す。
+    api.replacePhoneHistoryView(history, "scope", scrollView(350));
+    api.pushPhoneHistoryRoute(history, "scope", closed, scrollView(350));
+    assert.equal(history.pop(api), true);
+    assert.deepEqual(copiedState(api, history).view, scrollView(350));
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, open);
+    assert.deepEqual(copiedState(api, history).view, scrollView(350));
+    api.replacePhoneHistoryView(history, "scope", scrollView(450));
+    api.pushPhoneHistoryRoute(history, "scope", closed);
+    assert.equal(history.pop(api), true);
+    assert.deepEqual(copiedState(api, history).view, scrollView(350), "到着位置を渡さなければ閉じたentryの位置を維持する");
+    history.go(1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(450), "出発位置はForward側へ独立して保存する");
+  });
+
+  test(`${mode}: 閉じるBack待機中の連続開閉・route置換・位置保存・次画面pushを順番に処理する`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const closed = { kind: "app", appId: "notes", contentId: "note-1" };
@@ -435,7 +480,8 @@ for (const isMemoryStorage of [false, true]) {
     api.pushPhoneHistoryRoute(history, "scope", { kind: "app", appId: "photos" });
     assert.deepEqual(copiedState(api, history).route, { kind: "app", appId: "photos" });
     history.finish(api);
-    assert.deepEqual(history.goCalls, [-2, -2]);
+    assert.deepEqual(history.goCalls, [-1, -1]);
+    assert.equal(history.backCalls, 2);
     assert.equal(history.entries.length, 3);
     assert.deepEqual(copiedState(api, history).previousRoute, finalNote);
     api.goBackInPhoneHistory(history, "scope");
@@ -447,7 +493,7 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).route, { kind: "home" });
   });
 
-  test(`${mode}: 圧縮中に戻るリンクを押すと、圧縮後の前画面へ戻る`, () => {
+  test(`${mode}: 閉じるBack待機中の戻るリンクは、閉じた画面からさらに一段戻る`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const note = { kind: "app", appId: "notes" };
@@ -461,6 +507,56 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).route, { kind: "home" });
     assert.equal(history.pop(api), false);
     assert.equal(history.position, 0);
+    assert.deepEqual(history.goCalls, [-1, -1]);
+    assert.equal(history.entries.length, 3);
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, note);
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, { ...note, searchAgentOpen: true });
+  });
+
+  test(`${mode}: 閉じるBackとnative Backが続いても一段ずつ戻り、Forwardでパネルを再び開ける`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes" };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", { ...note, searchAgentOpen: true }, scrollView(200));
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(300));
+    history.go(-1);
+    assert.equal(history.pop(api), true, "閉じるためのpopは画面復元を行わない");
+    assert.equal(history.pop(api), false, "利用者のnative Backは通常どおり画面を復元する");
+    assert.equal(history.position, 0);
+    assert.deepEqual(copiedState(api, history).route, { kind: "home" });
+    assert.deepEqual(history.goCalls, [-1, -1]);
+    assert.equal(history.pushCalls, 2, "閉じる処理で新しいentryを挿入しない");
+    history.go(1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).view, scrollView(300));
+    history.go(1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).route, { ...note, searchAgentOpen: true });
+    assert.deepEqual(copiedState(api, history).view, scrollView(200));
+  });
+
+  test(`${mode}: 通常のBackによるパネル閉じはUI復元を行い、閉じる操作と同じ一段を戻る`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes" };
+    api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", { ...note, searchAgentOpen: true }, scrollView(200));
+    assert.equal(api.goBackInPhoneHistory(history, "scope"), true);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(history.goCalls, [-1]);
+    assert.deepEqual(copiedState(api, history).route, note);
+    assert.deepEqual(copiedState(api, history).view, scrollView(100));
+    history.go(1);
+    history.pop(api);
+    assert.deepEqual(copiedState(api, history).route, { ...note, searchAgentOpen: true });
+    assert.deepEqual(copiedState(api, history).view, scrollView(200));
   });
 
   test(`${mode}: 通常の戻る処理中の位置保存と新画面pushも失わない`, () => {
@@ -482,7 +578,7 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).view, scrollView(600));
   });
 
-  test(`${mode}: 別ページやブラウザ内ページの変更は開閉履歴として圧縮しない`, () => {
+  test(`${mode}: 別ページやブラウザ内ページの変更はパネルを閉じるBackとみなさない`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     api.replacePhoneHistoryRoute(history, "scope", { kind: "home" });
@@ -496,7 +592,25 @@ for (const isMemoryStorage of [false, true]) {
     assert.equal(history.entries.length, 6);
   });
 
-  test(`${mode}: 圧縮のpop前にscopeが変わっても古い画面や後続操作を書かない`, () => {
+  test(`${mode}: 同じページでも開く操作や直前に閉じたentryがない操作ではBackしない`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const note = { kind: "app", appId: "notes", contentId: "note-1" };
+    const open = { ...note, searchAgentOpen: true };
+    api.replacePhoneHistoryRoute(history, "scope", open, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", note, scrollView(200));
+    api.pushPhoneHistoryRoute(history, "scope", open, scrollView(300));
+    assert.deepEqual(history.goCalls, [], "開く操作で一段戻ることはない");
+    assert.equal(history.entries.length, 3);
+    assert.deepEqual(copiedState(api, history).view, scrollView(300));
+    const otherNote = { ...note, contentId: "note-2" };
+    api.pushPhoneHistoryRoute(history, "scope", otherNote, scrollView(400));
+    assert.deepEqual(history.goCalls, [], "パネルを閉じても別ページへの移動は通常のpushになる");
+    assert.equal(history.entries.length, 4);
+    assert.deepEqual(copiedState(api, history).route, otherNote);
+  });
+
+  test(`${mode}: 閉じるpop前にscopeが変わっても古い画面や後続操作を書かない`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const note = { kind: "app", appId: "notes", contentId: "old-note" };
@@ -512,12 +626,17 @@ for (const isMemoryStorage of [false, true]) {
     assert.equal(history.pop(api), true);
     assert.deepEqual(copiedState(api, history, "new").route, { kind: "app", appId: "radio" });
     assert.equal(copiedState(api, history, "new").index, 1);
-    assert.equal(history.entries.length, 2);
+    assert.equal(history.entries.length, 3, "閉じるBackで越えなかった旧scopeの根元entryは残る");
+    assert.deepEqual(history.entries[0].state, oldRoot);
     assert.equal(history.travels.length, 0);
     if (isMemoryStorage) assert.equal(api.phoneHistoryStateFrom(oldRoot), null);
     api.goBackInPhoneHistory(history, "new");
     history.pop(api);
     assert.deepEqual(copiedState(api, history, "new").view, scrollView(700));
+    assert.equal(api.goBackInPhoneHistory(history, "new"), false, "新scopeの根元から旧scopeへは戻るリンクで越えない");
+    history.go(-1);
+    history.pop(api);
+    assert.equal(api.currentPhoneHistoryState(history, "new"), null, "native Backで旧scopeへ到着しても新scopeの画面として復元しない");
   });
 
   test(`${mode}: 連続スクロールはHistory APIを書かず、route置換には最新位置を含める`, () => {
@@ -628,7 +747,7 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).view, scrollView(900));
   });
 
-  test(`${mode}: 圧縮popと後続queueの待機中は離脱位置を取得せず、投影済み位置を守る`, () => {
+  test(`${mode}: 閉じるpopと後続queueの待機中は離脱位置を取得せず、投影済み位置を守る`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const note = { kind: "app", appId: "notes" };
@@ -673,7 +792,7 @@ for (const isMemoryStorage of [false, true]) {
     assert.deepEqual(copiedState(api, history).view, scrollView(400));
   });
 
-  test(`${mode}: 圧縮待ちの大量スクロールは最後の位置を保持し、forwardの再利用とscope変更で古い位置を混ぜない`, () => {
+  test(`${mode}: 閉じる待ちの大量スクロールは最後の位置を保持し、forwardの再利用とscope変更で古い位置を混ぜない`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();
     const note = { kind: "app", appId: "notes" };
@@ -688,7 +807,7 @@ for (const isMemoryStorage of [false, true]) {
     api.pushPhoneHistoryRoute(history, "scope", photo, scrollView(600));
     history.finish(api);
     assert.equal(history.replaceCalls, 1);
-    assert.equal(history.pushCalls, 4);
+    assert.equal(history.pushCalls, 3);
     history.go(-1);
     history.pop(api);
     assert.deepEqual(copiedState(api, history).view, scrollView(10000));
