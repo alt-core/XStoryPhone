@@ -10,6 +10,7 @@ import ts from "typescript";
 import { deviceViewFor } from "../src/client/system/deviceView.ts";
 import { hasAssistantCandidate } from "../src/shared/assistantMessages.ts";
 import { latestQuickReplyPlacement, resolvedTalkInputState } from "../src/client/system/talkInputState.ts";
+import { queuedTalkMessageDelayMs, shouldQueueTalkMessage } from "../src/client/system/talkMessageDelay.ts";
 import { quickReplyLabel, quickReplyText } from "../src/shared/quickReplies.ts";
 import { componentFunctionHarness, componentScriptHarness } from "./helpers/component-script-harness.mjs";
 
@@ -252,6 +253,78 @@ test("検索の復元位置がなければ末尾を開き、スクロール時�
   assert.deepEqual(events.slice(-2), [
     { scrollTop: 420, visibleMessageCount: 40 }, { open: false, source: "user" }
   ], "履歴を閉じた状態に更新する前に位置を保存できる");
+});
+
+for (const distanceFromBottom of [0, 48, 49, 500]) {
+  test(`検索の末尾から${distanceFromBottom}pxで離れた後の新着は、末尾付近だけ最新まで表示する`, async () => {
+    const positions = [];
+    const message = (index) => ({
+      id: `search-${index}`, kind: "message", seq: index + 1,
+      talkId: "search", sender: index === 0 ? "owner" : "other", body: `発話${index}`, delayMs: 0
+    });
+    const oldMessages = Array.from({ length: 20 }, (_, index) => message(index));
+    let harness;
+    let top = 0;
+    const list = {
+      isConnected: true, clientHeight: 400,
+      get scrollHeight() { return harness.evaluate("displayedMessages.length") * 60; },
+      get scrollTop() { return top; },
+      set scrollTop(value) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
+    };
+    harness = searchAgentHarness({
+      talk: { talkId: "search", messages: oldMessages },
+      onScrollChange: (position) => positions.push({ ...position })
+    }, { list, queuedTalkMessageDelayMs, shouldQueueTalkMessage });
+    harness.evaluate("messageListElement = list; openExpanded()");
+    harness.flush();
+    await new Promise(setImmediate);
+    assert.equal(list.scrollTop, 800);
+    const departureTop = list.scrollTop - distanceFromBottom;
+    list.scrollTop = departureTop;
+    harness.evaluate("handleMessageListScroll(); closePanel('system')");
+    harness.flush();
+    const saved = positions.at(-1);
+    assert.deepEqual(saved, distanceFromBottom <= 48
+      ? { visibleMessageCount: 40 }
+      : { scrollTop: departureTop, visibleMessageCount: 40 });
+
+    // 別画面にいる間の即時発話は、戻った後の遅延表示による末尾移動に頼れない。
+    harness.update({
+      surfaceKey: "notes",
+      talk: { talkId: "search", messages: [...oldMessages, ...[20, 21, 22].map(message)] }
+    });
+    harness.update({ surfaceKey: "home", restoreRequest: { id: 1, open: true, ...saved } });
+    await new Promise(setImmediate);
+    harness.flush();
+    await new Promise(setImmediate);
+    assert.equal(harness.evaluate("displayedMessages.length"), 23);
+    assert.equal(harness.evaluate("pendingMessageIds.size"), 0);
+    assert.equal(harness.evaluate("visibleMessageCount"), saved.visibleMessageCount);
+    assert.equal(list.scrollTop, distanceFromBottom <= 48 ? 980 : departureTop);
+    harness.destroy();
+  });
+}
+
+test("スクロールできない短い検索会話から離れても、伸びた会話の末尾へ戻る", async () => {
+  const positions = [];
+  const list = {
+    isConnected: true, scrollHeight: 200, clientHeight: 400,
+    get scrollTop() { return this.top ?? 0; },
+    set scrollTop(value) { this.top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
+  };
+  const harness = searchAgentHarness({ onScrollChange: (position) => positions.push({ ...position }) }, { list });
+  harness.evaluate("messageListElement = list; openExpanded()");
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 0);
+  harness.evaluate("closePanel('system')");
+  const saved = positions.at(-1);
+  assert.deepEqual(saved, { visibleMessageCount: 40 });
+  list.scrollHeight = 1000;
+  harness.update({ restoreRequest: { id: 1, open: true, ...saved } });
+  await new Promise(setImmediate);
+  assert.equal(list.scrollTop, 600);
+  assert.equal(harness.evaluate("visibleMessageCount"), 40);
+  harness.destroy();
 });
 
 test("過去の検索履歴を追加しても読んでいた位置を保ち、追加後の位置を通知する", async () => {

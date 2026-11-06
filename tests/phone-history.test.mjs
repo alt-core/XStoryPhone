@@ -367,6 +367,85 @@ for (const isMemoryStorage of [false, true]) {
     assert.equal(copiedState(api, history).view.appScroll, undefined, "不正な指定は復元しない");
   });
 
+  test(`${mode}: 検索AIの末尾指定は位置のkeyを省略して保存し、従来の数値位置も維持する`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new FakeHistory();
+    const route = { kind: "home", searchAgentOpen: true };
+    const appScroll = [{ path: [0], top: 100, left: 0 }];
+    for (const [position, expected] of [
+      [{ visibleMessageCount: 8 }, { visibleMessageCount: 8 }],
+      [{ scrollTop: undefined, visibleMessageCount: 8 }, { visibleMessageCount: 8 }],
+      [{ scrollTop: 0, visibleMessageCount: 8 }, { scrollTop: 0, visibleMessageCount: 8 }],
+      [{ scrollTop: 240, visibleMessageCount: 8 }, { scrollTop: 240, visibleMessageCount: 8 }],
+      ...[NaN, Infinity, -Infinity, "0", null, true].map((scrollTop) => [
+        { scrollTop, visibleMessageCount: 8 }, undefined
+      ]),
+      ...[-1, 1.5, NaN, Infinity, "8"].map((visibleMessageCount) => [
+        { visibleMessageCount }, undefined
+      ])
+    ]) {
+      const input = { appScroll, searchAgent: { ...position } };
+      api.replacePhoneHistoryRoute(history, "scope", route, input);
+      const normalized = expected ? { appScroll, searchAgent: expected } : { appScroll };
+      assert.deepEqual(copiedState(api, history).view, normalized);
+      const read = api.phoneHistoryStateFrom(history.state, "scope");
+      assert.deepEqual(structuredClone(read.view), normalized, "保存された履歴の読み取りでも同じ正規化を使う");
+      input.searchAgent.visibleMessageCount = 999;
+      if (read.view.searchAgent) read.view.searchAgent.visibleMessageCount = 777;
+      assert.deepEqual(copiedState(api, history).view, normalized, "入力と読み取り結果の変更を保存済み位置へ反映しない");
+      if (expected && expected.scrollTop === undefined) {
+        assert.equal(Object.hasOwn(copiedState(api, history).view.searchAgent, "scrollTop"), false);
+      }
+    }
+  });
+
+  test(`${mode}: native Back前の検索AI末尾snapshotは旧数値を残さず、Forwardで表示件数とともに復元する`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const closed = { kind: "app", appId: "notes" };
+    const open = { ...closed, searchAgentOpen: true };
+    const previousView = { searchAgent: { scrollTop: 0, visibleMessageCount: 5 } };
+    const bottom = { searchAgent: { visibleMessageCount: 13 } };
+    api.replacePhoneHistoryRoute(history, "scope", closed, previousView);
+    api.pushPhoneHistoryRoute(history, "scope", open, scrollView(200));
+    history.go(-1);
+    assert.equal(history.pop(api, () => {
+      assert.equal(api.savePhoneHistoryViewBeforePop(history, "scope", open, () => bottom), true);
+    }), false);
+    assert.deepEqual(copiedState(api, history).view, previousView, "到着先の明示的な先頭0は変えない");
+    bottom.searchAgent.visibleMessageCount = 99;
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).view, {
+      appScroll: scrollView(200).appScroll,
+      searchAgent: { visibleMessageCount: 13 }
+    }, "検索AIの旧scrollTopを消し、取得対象外のアプリ位置は維持する");
+    assert.equal(Object.hasOwn(copiedState(api, history).view.searchAgent, "scrollTop"), false);
+  });
+
+  test(`${mode}: 検索AIの末尾snapshotは閉じるBack一回とForwardでも位置を固定せず保持する`, () => {
+    const api = memoryHistoryHarness(isMemoryStorage);
+    const history = new AsyncFakeHistory();
+    const closed = { kind: "app", appId: "notes" };
+    const open = { ...closed, searchAgentOpen: true };
+    const bottom = { searchAgent: { visibleMessageCount: 13 } };
+    api.replacePhoneHistoryRoute(history, "scope", closed, scrollView(100));
+    api.pushPhoneHistoryRoute(history, "scope", open, scrollView(200));
+    api.replacePhoneHistoryView(history, "scope", bottom);
+    const calls = { replace: history.replaceCalls, push: history.pushCalls };
+    api.pushPhoneHistoryRoute(history, "scope", closed, bottom);
+    assert.deepEqual(history.goCalls, [-1]);
+    assert.equal(history.backCalls, 1);
+    assert.equal(history.pop(api), true);
+    assert.deepEqual(copiedState(api, history).view, bottom);
+    assert.equal(Object.hasOwn(copiedState(api, history).view.searchAgent, "scrollTop"), false);
+    history.go(1);
+    assert.equal(history.pop(api), false);
+    assert.deepEqual(copiedState(api, history).route, open);
+    assert.deepEqual(copiedState(api, history).view, bottom);
+    assert.deepEqual({ replace: history.replaceCalls, push: history.pushCalls }, calls);
+  });
+
   test(`${mode}: パネルを閉じると一段Backし、Forwardで開いた画面と当時の位置へ戻る`, () => {
     const api = memoryHistoryHarness(isMemoryStorage);
     const history = new AsyncFakeHistory();

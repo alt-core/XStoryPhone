@@ -15,7 +15,7 @@ export type PhoneHistoryRoute = (
 
 export type PhoneHistoryView = {
   appScroll?: Array<{ path: number[]; top: number; left: number; frame?: boolean; bottom?: boolean }>;
-  searchAgent?: { scrollTop: number; visibleMessageCount: number };
+  searchAgent?: { scrollTop?: number; visibleMessageCount: number };
 };
 
 export type PhoneHistoryState = {
@@ -105,9 +105,12 @@ function viewFrom(value: unknown): PhoneHistoryView | undefined {
     ...(entry.frame === undefined ? {} : { frame: entry.frame }),
     ...(entry.bottom ? { bottom: true } : {})
   })) : undefined;
-  const searchAgent = view.searchAgent && Number.isFinite(view.searchAgent.scrollTop)
+  const searchAgent = view.searchAgent && (view.searchAgent.scrollTop === undefined || Number.isFinite(view.searchAgent.scrollTop))
     && Number.isInteger(view.searchAgent.visibleMessageCount) && view.searchAgent.visibleMessageCount >= 0
-    ? { scrollTop: view.searchAgent.scrollTop, visibleMessageCount: view.searchAgent.visibleMessageCount }
+    ? {
+        ...(view.searchAgent.scrollTop === undefined ? {} : { scrollTop: view.searchAgent.scrollTop }),
+        visibleMessageCount: view.searchAgent.visibleMessageCount
+      }
     : undefined;
   return {
     ...(appScroll ? { appScroll } : {}),

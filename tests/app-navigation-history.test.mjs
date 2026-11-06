@@ -1019,3 +1019,65 @@ test("連続popの復元待ちには旧DOMを途中entryへ保存しない", asy
   await turn();
   assert.deepEqual(c.scrollPositions, [{ path: [0], top: 450, left: 0 }]);
 });
+
+function searchHistoryHarness(app, list) {
+  // SearchAgentの通知→Appの離脱保存→復元要求→SearchAgentの位置適用を実関数でつなぐ。
+  return componentFunctionHarness(new URL("../src/client/system/SearchAgent.svelte", import.meta.url), [
+    "reportScrollPosition", "isMessageListNearBottom", "restoreExpanded", "closePanel"
+  ], {
+    messageListElement: list, visibleMessageCount: 120, expanded: true, destroyed: false,
+    panelViewRequestId: 0, restoringScrollRequestId: undefined, openedSurfaceMessageKey: "",
+    surfaceBubbleVisible: false, surfaceMessageKey: "", expandedFromVisible: false, agentPeeking: true,
+    SEARCH_HISTORY_PAGE_SIZE: 40, tick: () => Promise.resolve(), dismissSurfaceMessage() {},
+    onScrollChange: (position) => app.handleSearchAgentScrollChange(position),
+    onOpenChange: (open, source) => app.handleSearchAgentOpenChange(open, source)
+  });
+}
+
+function searchMessageList(height, top) {
+  let position = top;
+  return {
+    scrollHeight: height, clientHeight: 400, isConnected: true,
+    get scrollTop() { return position; },
+    set scrollTop(value) { position = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); }
+  };
+}
+
+for (const departure of ["別ページからBack", "閉じた後にForward"]) {
+  test(`検索AIは${departure}で、不在中の新着を末尾へ表示し、上読み位置と表示件数を保つ`, async () => {
+    for (const [label, oldTop, followsBottom] of [
+      ["末尾", 1200, true], ["末尾から48px", 1152, true],
+      ["末尾から49px", 1151, false], ["途中", 400, false], ["先頭", 0, false]
+    ]) {
+      const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
+      const c = h.context;
+      c.handleSearchAgentOpenChange(true, "user");
+      const search = searchHistoryHarness(c, searchMessageList(1600, oldTop));
+      search.reportScrollPosition();
+      if (departure === "別ページからBack") {
+        c.focusAppContent("mail", "mail_b");
+        h.history.back();
+        h.history.pop(c);
+        h.respond(0);
+      } else {
+        search.closePanel("user");
+        h.history.pop(c);
+        h.history.go(1);
+        h.history.pop(c);
+      }
+      await turn();
+      const request = c.searchAgentRestoreRequest;
+      assert.equal(request.open, true, label);
+      assert.equal(request.visibleMessageCount, 120, label);
+      assert.equal(Object.hasOwn(request, "scrollTop"), !followsBottom, label);
+      if (!followsBottom) assert.equal(request.scrollTop, oldTop, label);
+
+      // 不在中に300pxの新着が増えた復元先を用意する。
+      const returnedList = searchMessageList(1900, 0);
+      search.messageListElement = returnedList;
+      await search.restoreExpanded(request);
+      assert.equal(returnedList.scrollTop, followsBottom ? 1500 : oldTop, label);
+      assert.equal(search.visibleMessageCount, 120, label);
+    }
+  });
+}

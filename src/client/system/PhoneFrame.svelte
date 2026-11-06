@@ -42,7 +42,7 @@
   export let onToggleShade: () => void = () => {};
   export let onCompleteCall: (callId: string) => void = () => {};
   export let onSearchAgentOpenChange: (open: boolean, source?: "user" | "system") => void = () => {};
-  export let onSearchAgentScrollChange: (position: { scrollTop: number; visibleMessageCount: number }) => void = () => {};
+  export let onSearchAgentScrollChange: (position: { scrollTop?: number; visibleMessageCount: number }) => void = () => {};
   export let onSearchAgentSend: (body: string) => Promise<{ ok: boolean; error?: string }> = async () => ({
     ok: false,
     error: "送信できません。"

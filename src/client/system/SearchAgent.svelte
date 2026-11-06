@@ -34,7 +34,7 @@
     updatedAt: string;
   };
 
-  type SearchAgentScrollPosition = { scrollTop: number; visibleMessageCount: number };
+  type SearchAgentScrollPosition = { scrollTop?: number; visibleMessageCount: number };
   type SearchAgentRestoreRequest = {
     id: number;
     open: boolean;
@@ -178,7 +178,11 @@
   function reportScrollPosition() {
     // onDestroyではDOMが既に外れて位置が0になるため、最後の通知を上書きしない。
     if (!expanded || !messageListElement || messageListElement.isConnected === false) return;
-    onScrollChange({ scrollTop: messageListElement.scrollTop, visibleMessageCount });
+    // 末尾では位置を指定せず、復元時に不在中の新着も含む末尾を開く。
+    onScrollChange({
+      ...(isMessageListNearBottom() ? {} : { scrollTop: messageListElement.scrollTop }),
+      visibleMessageCount
+    });
   }
 
   async function loadOlderHistory() {
