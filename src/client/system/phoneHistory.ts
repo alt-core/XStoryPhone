@@ -444,11 +444,12 @@ export function consumePhoneHistoryPop(history: HistoryLike, eventState: unknown
     completeTravel(history, controller, eventState);
     return consumed;
   }
-  if (!pending) {
-    const state = stateWithLatestView(controller, eventState);
-    if (state) controller.states.set(state.index, state);
-    rebuildProjection(history, controller);
-  }
+  // 予定と違う段に着いたら（エンジン以外が段を足した等）、待ちと保留中の書込みを捨て、着いた段に合わせる。
+  delete controller.pending;
+  controller.queue = [];
+  const state = stateWithLatestView(controller, eventState);
+  if (state) controller.states.set(state.index, state);
+  rebuildProjection(history, controller);
   return false;
 }
 

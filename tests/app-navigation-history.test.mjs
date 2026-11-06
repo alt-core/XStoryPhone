@@ -1081,3 +1081,22 @@ for (const departure of ["別ページからBack", "閉じた後にForward"]) {
     }
   });
 }
+
+for (const foreign of [
+  { label: "端末のstateを写した段", states: (history) => [structuredClone(history.state)], landed: "検索AIを開いた段" },
+  { label: "作品独自のstateの段と写した段", states: (history) => [{ story: 1 }, structuredClone(history.state)], landed: "作品の段" }
+]) {
+  test(`履歴に${foreign.label}が入っていても、検索AIを閉じる戻るが${foreign.landed}に着いた後の履歴を書き続ける`, async () => {
+    const h = setup({ activeAppId: "notes", focusedContentId: "note_a", history: new AsyncHistory() });
+    const c = h.context;
+    c.handleSearchAgentOpenChange(true, "user");
+    for (const state of foreign.states(h.history)) h.history.pushState(state);
+    c.handleSearchAgentOpenChange(false, "user");
+    assert.deepEqual(h.history.travels, [-1]);
+    h.history.pop(c);
+    await turn();
+    c.focusAppContent("mail", "mail_b");
+    assert.deepEqual(h.route(), { kind: "app", appId: "mail", contentId: "mail_b" }, "着いた段から履歴を書き続ける");
+    assert.deepEqual(h.history.travels, []);
+  });
+}

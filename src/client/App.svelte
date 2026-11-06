@@ -1543,13 +1543,13 @@
   function handlePhoneHistoryPop(event: PopStateEvent) {
     let state = phoneHistoryStateFrom(event.state);
     if (qaMode) return;
-    // 新しいページには古いmemory履歴の中身がない。他サイトの履歴には触れない。
-    if (!state && !(isMemoryStorage && phoneHistoryMarkerFrom(event.state))) return;
-
     if (state?.scope === phoneHistoryScope) {
       savePhoneHistoryViewBeforePop(window.history, phoneHistoryScope, currentPhoneRoute(), captureCurrentPhoneHistoryView);
     }
+    // 端末以外の段に着いた時も、着いた段を正として巻戻し待ちを終える。
     if (consumePhoneHistoryPop(window.history, event.state)) return;
+    // 新しいページには古いmemory履歴の中身がない。他サイトの履歴には触れない。
+    if (!state && !(isMemoryStorage && phoneHistoryMarkerFrom(event.state))) return;
     searchAgentScrollPosition = undefined;
     if (state && state.scope === phoneHistoryScope) state = currentPhoneHistoryState(window.history, phoneHistoryScope) ?? state;
 
