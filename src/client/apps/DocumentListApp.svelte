@@ -436,7 +436,8 @@
 
   .detail-scroll {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    /* 背景を持つ本文の枠を長文より小さくせず、内容全体を包む。 */
+    grid-template-rows: auto minmax(min-content, 1fr);
     gap: 10px;
     min-height: 0;
     overflow: auto;
