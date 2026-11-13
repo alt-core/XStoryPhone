@@ -15,7 +15,7 @@ function photoZoomHarness() {
     photos: [{ id: "photo", contentId: "content_photo", imageUrl: "/photo.webp" }],
     focusContentId: "content_photo",
     focusContentRequestId: 1
-  }, { tick: () => Promise.resolve(), window });
+  }, { tick: () => Promise.resolve(), window, performance: { now: () => 0 } });
 
   // 実テンプレートのイベント接続も使い、フレーム内だけのEscape処理へ戻す変更を検出する。
   assert.ok(keydownBinding?.expression, "拡大のEscape操作をwindowへ接続する");
@@ -71,4 +71,25 @@ test("アルバム: 拡大フレームの上下左右キーは引き続き表示
     assert.equal(component.evaluate("zoomed"), true);
     assert.equal(prevented, true);
   }
+});
+
+test("アルバム: ＋で拡大し、−で全体へ戻すと続けて＋を押せるよう写真へフォーカスを戻す", () => {
+  const { component } = photoZoomHarness();
+  const focused = [];
+  component.evaluate("(trigger) => { zoomTrigger = trigger; }")({ focus() { focused.push("trigger"); } });
+  let prevented = false;
+  component.evaluate("handleZoomTriggerKeydown")({ key: "-", preventDefault() { prevented = true; } });
+  assert.equal(component.evaluate("zoomed"), false, "全体で−は何もしない");
+  assert.equal(prevented, false);
+  component.evaluate("handleZoomTriggerKeydown")({ key: "+", preventDefault() { prevented = true; } });
+  assert.equal(component.evaluate("zoomed"), true);
+  assert.equal(prevented, true);
+  prevented = false;
+  component.evaluate("handleZoomKeydown")({ key: "+", preventDefault() { prevented = true; } });
+  assert.equal(component.evaluate("zoomed"), true, "拡大中の＋は何もしない");
+  assert.equal(prevented, false);
+  component.evaluate("handleZoomKeydown")({ key: "-", preventDefault() { prevented = true; } });
+  assert.equal(component.evaluate("zoomed"), false);
+  assert.equal(prevented, true);
+  assert.deepEqual(focused, ["trigger"]);
 });

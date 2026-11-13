@@ -49,6 +49,7 @@ function harness(app, props = {}) {
   }, {
     tick: () => Promise.resolve(),
     window: { dispatchEvent() {} },
+    performance: { now: () => 0 },
     playAudio: async () => true,
     stopAudioPlayback() {}
   });
@@ -137,7 +138,21 @@ test("アルバム: 拡大は静止画だけで、一覧へ戻ると拡大も閉
   assert.equal(h.component.evaluate("zoomed"), false);
 });
 
-test("アルバム: 拡大表示は短い辺を枠に合わせ、はみ出した方向だけ動かせる", () => {
+test("アルバム: 拡大表示は枠いっぱいにし、全体が収まる大きさの2倍より小さくしない", () => {
+  const app = apps[1];
+  for (const [label, naturalWidth, naturalHeight, width, height] of [
+    ["横長は高さを枠に合わせる", 1200, 800, 900, 600],
+    ["縦長(2:3)は全体の2倍", 800, 1200, 600, 900],
+    ["枠と同じ形も全体の2倍", 600, 1200, 600, 1200]
+  ]) {
+    const h = harness(app, { focusContentId: "content_a", focusContentRequestId: 1 });
+    h.component.evaluate(`openZoom(); zoomFrameWidth = 300; zoomFrameHeight = 600; zoomNaturalWidth = ${naturalWidth}; zoomNaturalHeight = ${naturalHeight};`);
+    h.component.flush();
+    assert.deepEqual([h.component.evaluate("zoomImageWidth"), h.component.evaluate("zoomImageHeight")], [width, height], label);
+  }
+});
+
+test("アルバム: 拡大表示は、はみ出した方向だけ動かせる", () => {
   const app = apps[1];
   const h = harness(app, { focusContentId: "content_a", focusContentRequestId: 1 });
   h.component.evaluate("openZoom(); zoomFrameWidth = 300; zoomFrameHeight = 600; zoomNaturalWidth = 1200; zoomNaturalHeight = 800;");

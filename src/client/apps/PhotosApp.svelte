@@ -14,7 +14,14 @@
   import AppShell from "./AppShell.svelte";
 
   const STILL_VIDEO_FALLBACK_IMAGE = "/system/audio-only-video-thumbnail.png";
-  const ZOOM_TAP_TOLERANCE_PX = 6;
+  // 全体と拡大の2段を、押す・2本指・トラックパッドのピンチ・＋／−で1段ずつ切り替える。
+  const ZOOM_MIN_RATIO = 2;
+  const ZOOM_TAP_TOLERANCE_PX = 10;
+  const ZOOM_TAP_GUARD_MS = 350;
+  const ZOOM_WHEEL_STEP_MS = 450;
+  const ZOOM_PINCH_OUT_RATIO = 1.18;
+  const ZOOM_PINCH_IN_RATIO = 0.85;
+  const ZOOM_WHEEL_LINE_PX = 16;
 
   export let photos: PhotoItem[] = [];
   export let focusContentId = "";
@@ -33,8 +40,18 @@
   let gridScrollTop = 0;
 
   let zoomed = false;
+  let zoomTrigger: HTMLButtonElement | undefined;
+  let zoomTriggerImage: HTMLImageElement | undefined;
   let zoomFrame: HTMLButtonElement | undefined;
   let zoomImage: HTMLImageElement | undefined;
+  // 詳細へ入った時刻、全体・拡大を切り替えた時刻、2本指を離した時刻。直後の押しは誤操作として数えない。
+  let zoomChangedAt = Number.NEGATIVE_INFINITY;
+  // 拡大後も画面上の同じ位置に置く、写真上の点(割合)と画面座標。
+  let zoomFocus: { fx: number; fy: number; x: number; y: number } | null = null;
+  let zoomPinch: { gap: number; done: boolean } | null = null;
+  let zoomGestureDone = false;
+  let zoomPress: { x: number; y: number; moved: boolean } | null = null;
+  let zoomScreenRatio = 1;
   let zoomFrameWidth = 0;
   let zoomFrameHeight = 0;
   let zoomNaturalWidth = 0;
@@ -58,9 +75,13 @@
   $: if (zoomed && !canZoom(openPhoto)) {
     closeZoom();
   }
-  // 縦横の一方を枠いっぱいにし、他方をはみ出させる。
+  // 拡大は枠いっぱいにする。ただし枠に全体が収まる大きさの2倍より小さくしない。
   $: zoomScale = zoomNaturalWidth && zoomNaturalHeight && zoomFrameWidth && zoomFrameHeight
-    ? Math.max(zoomFrameWidth / zoomNaturalWidth, zoomFrameHeight / zoomNaturalHeight)
+    ? Math.max(
+        zoomFrameWidth / zoomNaturalWidth,
+        zoomFrameHeight / zoomNaturalHeight,
+        ZOOM_MIN_RATIO * Math.min(zoomFrameWidth / zoomNaturalWidth, zoomFrameHeight / zoomNaturalHeight)
+      )
     : 0;
   $: zoomImageWidth = zoomNaturalWidth * zoomScale;
   $: zoomImageHeight = zoomNaturalHeight * zoomScale;
@@ -109,6 +130,7 @@
   // 詳細に入るたびに開封を報告する。一覧を挟んだ同じ項目の再表示も1回の開封。
   function enterPhoto(photo: PhotoItem) {
     closeZoom();
+    zoomChangedAt = performance.now();
     openPhotoId = photo.id;
     lastOpenedPhotoId = photo.id;
     onContentOpen(photoContentId(photo));
@@ -169,16 +191,19 @@
     );
   }
 
-  function openZoom() {
-    if (!canZoom(openPhoto)) {
+  // pointは押した位置などの画面座標。省略時(キーボード)は写真の中央を基準にする。
+  function openZoom(point?: { x: number; y: number }) {
+    if (zoomed || !canZoom(openPhoto)) {
       return;
     }
+    zoomFocus = point ? zoomFocusAt(point) : null;
     zoomNaturalWidth = 0;
     zoomNaturalHeight = 0;
     zoomOffsetX = 0;
     zoomOffsetY = 0;
     zoomPointerId = null;
     zoomed = true;
+    zoomChangedAt = performance.now();
     void tick().then(() => {
       // 読み込み済みの画像ではloadが先に済んでいることがある。
       if (zoomImage?.complete && zoomImage.naturalWidth) {
@@ -190,9 +215,22 @@
     });
   }
 
-  function closeZoom() {
+  // キーボードで全体へ戻した時は、続けて＋で拡大できるよう写真へフォーカスを戻す。
+  function closeZoom(restoreFocus = false) {
+    if (zoomed) zoomChangedAt = performance.now();
     zoomed = false;
     zoomPointerId = null;
+    zoomFocus = null;
+    if (restoreFocus) zoomTrigger?.focus({ preventScroll: true });
+  }
+
+  function zoomFocusAt(point: { x: number; y: number }) {
+    const rect = zoomTriggerImage?.getBoundingClientRect();
+    if (!rect?.width || !rect.height) {
+      return null;
+    }
+    const within = (value: number) => Math.min(1, Math.max(0, value));
+    return { fx: within((point.x - rect.left) / rect.width), fy: within((point.y - rect.top) / rect.height), ...point };
   }
 
   function syncZoomFrame() {
@@ -201,7 +239,31 @@
     }
     zoomFrameWidth = zoomFrame.clientWidth;
     zoomFrameHeight = zoomFrame.clientHeight;
-    void tick().then(() => setZoomOffset(zoomOffsetX, zoomOffsetY));
+    // 端末は縮小・拡大して表示されるため、画面座標の量を枠内の大きさへ換算する。
+    const rect = zoomFrame.getBoundingClientRect();
+    zoomScreenRatio = zoomFrameWidth && rect.width ? rect.width / zoomFrameWidth : 1;
+    void tick().then(() => {
+      if (zoomFocus && zoomImageWidth && zoomImageHeight) {
+        applyZoomFocus(zoomFocus);
+        zoomFocus = null;
+      } else {
+        setZoomOffset(zoomOffsetX, zoomOffsetY);
+      }
+    });
+  }
+
+  // 押した点が、拡大後も画面上の同じ位置に来るよう表示位置を決める。
+  function applyZoomFocus(focus: { fx: number; fy: number; x: number; y: number }) {
+    const rect = zoomFrame?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const x = (focus.x - rect.left) / zoomScreenRatio;
+    const y = (focus.y - rect.top) / zoomScreenRatio;
+    setZoomOffset(
+      x - zoomFrameWidth / 2 + zoomImageWidth * (0.5 - focus.fx),
+      y - zoomFrameHeight / 2 + zoomImageHeight * (0.5 - focus.fy)
+    );
   }
 
   function handleZoomImageLoad(event: Event) {
@@ -220,7 +282,143 @@
     zoomOffsetY = clampZoomOffset(nextY, zoomMaxOffsetY);
   }
 
+  // 詳細へ入った直後や切り替えた直後の押しは、ダブルタップの癖による二度目として数えない。
+  // キーボードのEnter・Spaceによるclick(detail 0)は、意図した操作として常に受け付ける。
+  function zoomTapAccepted(event: MouseEvent) {
+    return event.detail === 0 || performance.now() - zoomChangedAt >= ZOOM_TAP_GUARD_MS;
+  }
+
+  function startZoomPress(event: PointerEvent) {
+    zoomPress = { x: event.clientX, y: event.clientY, moved: false };
+  }
+
+  function moveZoomPress(event: PointerEvent) {
+    if (zoomPress && Math.hypot(event.clientX - zoomPress.x, event.clientY - zoomPress.y) > ZOOM_TAP_TOLERANCE_PX) {
+      zoomPress.moved = true;
+    }
+  }
+
+  // 動かさずに離した押し(とEnter・Space)で拡大する。
+  function handleZoomTriggerClick(event: MouseEvent) {
+    const moved = event.detail !== 0 && (zoomPress?.moved ?? false);
+    zoomPress = null;
+    if (moved || !zoomTapAccepted(event)) {
+      return;
+    }
+    openZoom(event.detail === 0 ? undefined : { x: event.clientX, y: event.clientY });
+  }
+
+  function handleZoomTriggerKeydown(event: KeyboardEvent) {
+    if (event.key !== "+") {
+      return;
+    }
+    openZoom();
+    event.preventDefault();
+  }
+
+  function touchGap(touches: TouchList) {
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  }
+
+  function startZoomPinch(event: TouchEvent) {
+    if (event.touches.length === 2) {
+      zoomPinch = { gap: touchGap(event.touches), done: false };
+    }
+  }
+
+  // 2本指は1回の操作で1段だけ切り替え、指の中点を拡大の基準にする。ページ全体の拡大は端末側で止めている。
+  function moveZoomPinch(event: TouchEvent) {
+    if (event.touches.length < 2 || !zoomPinch || zoomPinch.done || !zoomPinch.gap) {
+      return;
+    }
+    const ratio = touchGap(event.touches) / zoomPinch.gap;
+    if (!zoomed && ratio > ZOOM_PINCH_OUT_RATIO) {
+      zoomPinch.done = true;
+      openZoom({
+        x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+        y: (event.touches[0].clientY + event.touches[1].clientY) / 2
+      });
+    } else if (zoomed && ratio < ZOOM_PINCH_IN_RATIO) {
+      zoomPinch.done = true;
+      closeZoom();
+    }
+  }
+
+  // 2本指を離した直後の押しも数えない。最後の指を離すまで同じ操作として扱う。
+  function endZoomPinch(event: TouchEvent) {
+    if (!zoomPinch) {
+      return;
+    }
+    zoomChangedAt = performance.now();
+    if (event.touches.length === 0) {
+      zoomPinch = null;
+    }
+  }
+
+  // macOSのSafariはトラックパッドのピンチをgestureイベントで送る。指のピンチはtouchの処理に任せる。
+  function zoomGestures(node: HTMLElement) {
+    const start = () => {
+      zoomGestureDone = false;
+    };
+    const change = (event: Event) => {
+      const gesture = event as Event & { scale?: number; clientX?: number; clientY?: number };
+      if (zoomPinch || zoomGestureDone || !gesture.scale) {
+        return;
+      }
+      if (!zoomed && gesture.scale > ZOOM_PINCH_OUT_RATIO) {
+        zoomGestureDone = true;
+        const { clientX: x, clientY: y } = gesture;
+        openZoom(Number.isFinite(x) && Number.isFinite(y) ? { x: x as number, y: y as number } : undefined);
+      } else if (zoomed && gesture.scale < ZOOM_PINCH_IN_RATIO) {
+        zoomGestureDone = true;
+        closeZoom();
+      }
+    };
+    node.addEventListener("gesturestart", start);
+    node.addEventListener("gesturechange", change);
+    return {
+      destroy() {
+        node.removeEventListener("gesturestart", start);
+        node.removeEventListener("gesturechange", change);
+      }
+    };
+  }
+
+  // Ctrl+ホイール(Chrome等のトラックパッドのピンチ)は0.45秒あけて1段ずつ切り替える。拡大中のホイールは表示位置を動かす。
+  function handleZoomWheel(event: WheelEvent) {
+    if (event.ctrlKey) {
+      event.preventDefault();
+      if (performance.now() - zoomChangedAt < ZOOM_WHEEL_STEP_MS) {
+        return;
+      }
+      if (!zoomed && event.deltaY < 0) {
+        openZoom({ x: event.clientX, y: event.clientY });
+      } else if (zoomed && event.deltaY > 0) {
+        closeZoom();
+      }
+      return;
+    }
+    if (!zoomed) {
+      return;
+    }
+    const unit = event.deltaMode === 1 ? ZOOM_WHEEL_LINE_PX : event.deltaMode === 2 ? zoomFrameHeight : 1;
+    // 縦ホイールだけのマウスでも、Shiftを押しながら横へ動かせる。
+    const horizontal = event.shiftKey && !event.deltaX;
+    setZoomOffset(
+      zoomOffsetX - (horizontal ? event.deltaY : event.deltaX) * unit,
+      zoomOffsetY - (horizontal ? 0 : event.deltaY) * unit
+    );
+    event.preventDefault();
+  }
+
   function startZoomDrag(event: PointerEvent) {
+    // 2本目の指はピンチの操作として扱い、移動もタップも止める。
+    if (zoomPointerId !== null && zoomPointerId !== event.pointerId) {
+      zoomPointerId = null;
+      zoomDragDistance = Number.POSITIVE_INFINITY;
+      return;
+    }
+    syncZoomFrame();
     zoomPointerId = event.pointerId;
     zoomDragStartX = event.clientX;
     zoomDragStartY = event.clientY;
@@ -238,7 +436,7 @@
     const deltaX = event.clientX - zoomDragStartX;
     const deltaY = event.clientY - zoomDragStartY;
     zoomDragDistance = Math.max(zoomDragDistance, Math.hypot(deltaX, deltaY));
-    setZoomOffset(zoomDragStartOffsetX + deltaX, zoomDragStartOffsetY + deltaY);
+    setZoomOffset(zoomDragStartOffsetX + deltaX / zoomScreenRatio, zoomDragStartOffsetY + deltaY / zoomScreenRatio);
     event.preventDefault();
   }
 
@@ -253,18 +451,19 @@
     zoomPointerId = null;
   }
 
-  // 動かさずに離したタップ(とEnter・Space)は全体表示へ戻す。
-  function handleZoomClick() {
-    if (zoomDragDistance < ZOOM_TAP_TOLERANCE_PX) {
-      closeZoom();
-    }
+  // 動かさずに離した押し(とEnter・Space)で全体表示へ戻す。
+  function handleZoomClick(event: MouseEvent) {
+    const moved = event.detail !== 0 && zoomDragDistance > ZOOM_TAP_TOLERANCE_PX;
     zoomDragDistance = 0;
+    if (!moved && zoomTapAccepted(event)) {
+      closeZoom(event.detail === 0);
+    }
   }
 
   // 閉じるボタンなどへフォーカスが移っても、Escapeで拡大表示を閉じる。
   function handleWindowKeydown(event: KeyboardEvent) {
     if (zoomed && event.key === "Escape") {
-      closeZoom();
+      closeZoom(true);
       event.preventDefault();
     }
   }
@@ -280,6 +479,8 @@
       setZoomOffset(zoomOffsetX, zoomOffsetY + stepY);
     } else if (event.key === "ArrowDown") {
       setZoomOffset(zoomOffsetX, zoomOffsetY - stepY);
+    } else if (event.key === "-") {
+      closeZoom(true);
     } else {
       return;
     }
@@ -316,8 +517,25 @@
               </div>
             </div>
           {:else if canZoom(openPhoto)}
-            <button class="zoom-trigger" type="button" aria-label={`${photoLabel(openPhoto)}を拡大表示`} title="拡大表示" on:click={openZoom}>
-              <img src={resourceUrl(openPhoto.imageUrl)} alt="" />
+            <button
+              class="zoom-trigger"
+              type="button"
+              aria-label={`${photoLabel(openPhoto)}を拡大表示`}
+              title="拡大表示"
+              bind:this={zoomTrigger}
+              use:zoomGestures
+              on:pointerdown={startZoomPress}
+              on:pointermove={moveZoomPress}
+              on:pointercancel={() => (zoomPress = null)}
+              on:click={handleZoomTriggerClick}
+              on:keydown={handleZoomTriggerKeydown}
+              on:touchstart={startZoomPinch}
+              on:touchmove={moveZoomPinch}
+              on:touchend={endZoomPinch}
+              on:touchcancel={endZoomPinch}
+              on:wheel|nonpassive={handleZoomWheel}
+            >
+              <img bind:this={zoomTriggerImage} src={resourceUrl(openPhoto.imageUrl)} alt="" />
             </button>
           {:else}
             <div class="photo-placeholder" aria-hidden="true">
@@ -383,14 +601,20 @@
           class:pannable={zoomPannable}
           class:dragging={zoomPointerId !== null}
           type="button"
-          aria-label="全体表示へ戻る。ドラッグや矢印キーで表示位置を動かせます"
+          aria-label="全体表示へ戻る。ドラッグ、ホイール、矢印キーで表示位置を動かせます"
           bind:this={zoomFrame}
+          use:zoomGestures
           on:pointerdown={startZoomDrag}
           on:pointermove={dragZoom}
           on:pointerup={endZoomDrag}
           on:pointercancel={endZoomDrag}
           on:click={handleZoomClick}
           on:keydown={handleZoomKeydown}
+          on:touchstart={startZoomPinch}
+          on:touchmove={moveZoomPinch}
+          on:touchend={endZoomPinch}
+          on:touchcancel={endZoomPinch}
+          on:wheel|nonpassive={handleZoomWheel}
         >
           <img
             bind:this={zoomImage}
@@ -403,7 +627,7 @@
             on:load={handleZoomImageLoad}
           />
         </button>
-        <button class="zoom-close" type="button" aria-label="閉じる" title="閉じる" on:click={closeZoom}>
+        <button class="zoom-close" type="button" aria-label="閉じる" title="閉じる" on:click={(event) => closeZoom(event.detail === 0)}>
           <X size={18} strokeWidth={2.3} />
         </button>
       </div>
@@ -718,9 +942,13 @@
     border: 0;
     background: transparent;
     cursor: zoom-out;
-    touch-action: none;
     user-select: none;
     outline: none;
+  }
+
+  /* 端末のボタン共通のmanipulationより優先し、指の移動をブラウザーのスクロールに渡さず表示位置の移動にする。 */
+  .photo-zoom .zoom-frame {
+    touch-action: none;
   }
 
   .zoom-frame.pannable {
