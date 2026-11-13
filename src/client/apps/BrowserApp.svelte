@@ -19,6 +19,7 @@
   import AppListButton from "./AppListButton.svelte";
   import AppListHeader from "./AppListHeader.svelte";
   import AppShell from "./AppShell.svelte";
+  import ScrollHint from "../system/ScrollHint.svelte";
 
   export let tabs: BrowserTabItem[] = [];
   // タブごとのページ履歴はAppが持つ。アプリを離れても、タブ一覧から開き直しても保たれる。
@@ -279,6 +280,7 @@
       <section class="tab-index" aria-label="タブ一覧">
         <AppListHeader title="タブ" caption={`${tabs.length}件`} />
         {#if tabs.length}
+          <ScrollHint enabled step={150}>
           <div class="tab-list" bind:this={tabListElement}>
             {#each tabs as tab (tab.id)}
               <button
@@ -294,6 +296,7 @@
               </button>
             {/each}
           </div>
+          </ScrollHint>
         {:else}
           <div class="tabs-empty" role="status">
             <Globe2 size={30} strokeWidth={1.7} />
@@ -410,12 +413,18 @@
     background: #fff;
   }
 
+  .tab-index :global(.scroll-hint-shell) {
+    min-height: 0;
+    height: 100%;
+  }
+
   .tab-list {
     display: grid;
     grid-auto-rows: max-content;
     align-content: start;
     gap: 6px;
     min-height: 0;
+    height: 100%;
     overflow: auto;
     padding: 4px;
     border: 1px solid var(--ap-border);

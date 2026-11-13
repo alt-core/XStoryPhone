@@ -2,6 +2,7 @@
   import type { AppId, DeviceState } from "../scenario-runtime/types";
   import type { AppCatalogItem } from "./appCatalog";
   import NotificationCard from "./NotificationCard.svelte";
+  import ScrollHint from "./ScrollHint.svelte";
   import { staticUrl } from "./resourceUrls";
 
   export let apps: AppCatalogItem[] = [];
@@ -62,6 +63,7 @@
       <span>ToDo</span>
     </header>
     {#if hasTodoItems}
+      <ScrollHint enabled step={100}>
       <ul class="todo-list">
         {#each notificationItems as notification}
           <li class="todo-notification">
@@ -75,6 +77,7 @@
           </li>
         {/each}
       </ul>
+      </ScrollHint>
     {:else}
       <div class="todo-empty">項目なし</div>
     {/if}
@@ -156,13 +159,25 @@
     letter-spacing: 0;
   }
 
+  .todo-widget :global(.scroll-hint-shell) {
+    /* 右下の検索AIのキャラクターと吹き出しは、一覧の下端から約90pxを覆う。最後の項目と▼はその上に出す。 */
+    --todo-agent-clearance: 100px;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .todo-widget :global(.scroll-hint-button.down) {
+    bottom: var(--todo-agent-clearance);
+  }
+
   .todo-list {
     display: grid;
     align-content: start;
     gap: 7px;
     min-height: 0;
+    height: 100%;
     margin: 0;
-    padding: 2px 12px 14px;
+    padding: 2px 12px var(--todo-agent-clearance);
     overflow: auto;
     list-style: none;
     scrollbar-width: none;

@@ -6,6 +6,7 @@
   import { corruptionNoiseStyle } from "../system/corruptionNoise";
   import AppDetailBar from "./AppDetailBar.svelte";
   import AppShell from "./AppShell.svelte";
+  import ScrollHint from "../system/ScrollHint.svelte";
 
   export let callLogs: CallLogItem[] = [];
   export let focusContentId = "";
@@ -268,6 +269,7 @@
       </nav>
 
       {#if tab === "history"}
+        <ScrollHint enabled step={150}>
         <section class="call-history" aria-label="通話履歴" bind:this={historyElement} on:scroll={() => (historyScrollTop = historyElement?.scrollTop ?? 0)}>
           {#each callLogs as call (call.id)}
             <article
@@ -320,6 +322,7 @@
             </article>
           {/each}
         </section>
+        </ScrollHint>
       {:else}
         <section class="dialer" aria-label="ダイアルパッド">
           <div class="dial-display" aria-label="入力番号">番号を入力</div>
@@ -370,6 +373,11 @@
     border-color: rgba(103, 215, 142, 0.32);
     background: rgba(103, 215, 142, 0.14);
     color: #c9ffd8;
+  }
+
+  .phone-layout :global(.scroll-hint-shell) {
+    min-height: 0;
+    height: 100%;
   }
 
   .call-history {

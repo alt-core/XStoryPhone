@@ -126,25 +126,27 @@
             <ContentTags tags={openDocument.tags} />
           </div>
         {/if}
-        <div class="detail-scroll" class:with-header={mailLayout}>
-          {#if mailLayout}
-            <div class="mail-header">
-              <UserAvatar name={openDocument.sender ?? ""} size={40} tone="mail" />
-              <div class="mail-parties">
-                <strong>{openDocument.sender}</strong>
-                {#each openDocument.recipients ?? [] as recipient}
-                  <span><em>{recipient.label}</em>{recipient.value}</span>
-                {/each}
+        <ScrollHint enabled step={392}>
+          <div class="detail-scroll" class:with-header={mailLayout}>
+            {#if mailLayout}
+              <div class="mail-header">
+                <UserAvatar name={openDocument.sender ?? ""} size={40} tone="mail" />
+                <div class="mail-parties">
+                  <strong>{openDocument.sender}</strong>
+                  {#each openDocument.recipients ?? [] as recipient}
+                    <span><em>{recipient.label}</em>{recipient.value}</span>
+                  {/each}
+                </div>
+                {#if openDocument.date}
+                  <time>{openDocument.date}</time>
+                {/if}
               </div>
-              {#if openDocument.date}
-                <time>{openDocument.date}</time>
-              {/if}
-            </div>
-          {/if}
-          <article class="document-body" class:mail-body={mailLayout}>
-            <p>{openDocument.body}</p>
-          </article>
-        </div>
+            {/if}
+            <article class="document-body" class:mail-body={mailLayout}>
+              <p>{openDocument.body}</p>
+            </article>
+          </div>
+        </ScrollHint>
       </section>
     {:else}
       <section class="document-index" aria-label={`${appTitle}一覧`}>
@@ -216,7 +218,8 @@
     gap: 8px;
   }
 
-  .document-index :global(.scroll-hint-shell) {
+  .document-index :global(.scroll-hint-shell),
+  .document-detail :global(.scroll-hint-shell) {
     min-height: 0;
     height: 100%;
   }
@@ -440,6 +443,7 @@
     grid-template-rows: auto minmax(min-content, 1fr);
     gap: 10px;
     min-height: 0;
+    height: 100%;
     overflow: auto;
     overscroll-behavior: contain;
     scrollbar-width: none;

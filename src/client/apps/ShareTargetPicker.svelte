@@ -1,6 +1,7 @@
 <script lang="ts">
   import { MessageCircle, MessageSquareText, Radio, X } from "@lucide/svelte";
   import type { TalkShareTarget } from "../scenario-runtime/types";
+  import ScrollHint from "../system/ScrollHint.svelte";
 
   export let open = false;
   export let targets: TalkShareTarget[] = [];
@@ -32,6 +33,7 @@
       </header>
 
       {#if targetGroups.length}
+        <ScrollHint enabled step={120}>
         <div class="target-list">
           {#each targetGroups as group}
             <section class="target-group" aria-label={group.label}>
@@ -50,6 +52,7 @@
             </section>
           {/each}
         </div>
+        </ScrollHint>
       {:else}
         <div class="empty-picker">
           <MessageCircle size={24} strokeWidth={2.1} />
@@ -144,11 +147,17 @@
     cursor: pointer;
   }
 
+  .share-picker :global(.scroll-hint-shell) {
+    min-height: 0;
+    height: 100%;
+  }
+
   .target-list {
     display: grid;
     align-content: start;
     gap: 10px;
     min-height: 0;
+    height: 100%;
     overflow: auto;
     overscroll-behavior: contain;
     scrollbar-width: none;
