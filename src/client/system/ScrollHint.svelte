@@ -77,7 +77,7 @@
       return;
     }
 
-    scrollElement.scrollBy({ top: step * direction, behavior: "smooth" });
+    scrollElement.scrollBy({ top: Math.min(step, scrollElement.clientHeight) * direction, behavior: "smooth" });
     window.setTimeout(updateScrollState, 180);
   }
 
@@ -86,6 +86,9 @@
   onMount(() => {
     resizeObserver = new ResizeObserver(queueUpdate);
     resizeObserver.observe(root);
+    // 枠の高さが変わらない追加・削除や本文の更新も検知する。
+    const mutationObserver = new MutationObserver(queueUpdate);
+    mutationObserver.observe(root, { childList: true, subtree: true, characterData: true });
     queueUpdate();
     window.addEventListener("resize", queueUpdate);
 
@@ -93,6 +96,7 @@
       window.removeEventListener("resize", queueUpdate);
       scrollElement?.removeEventListener("scroll", updateScrollState);
       resizeObserver?.disconnect();
+      mutationObserver.disconnect();
     };
   });
 </script>

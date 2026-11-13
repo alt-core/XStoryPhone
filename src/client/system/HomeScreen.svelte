@@ -162,6 +162,7 @@
   .todo-widget :global(.scroll-hint-shell) {
     /* 右下の検索AIのキャラクターと吹き出しは、一覧の下端から約90pxを覆う。最後の項目と▼はその上に出す。 */
     --todo-agent-clearance: 100px;
+    container-type: size;
     min-height: 0;
     height: 100%;
   }
@@ -185,6 +186,30 @@
 
   .todo-list::-webkit-scrollbar {
     display: none;
+  }
+
+  /* 狭い欄では検索AIを避けて矢印を左に並べ、上下のボタンが重ならないようにする。 */
+  @container (max-height: 160px) {
+    .todo-widget :global(.scroll-hint-button.up),
+    .todo-widget :global(.scroll-hint-button.down) {
+      top: auto;
+      right: auto;
+      bottom: 0;
+      height: min(25px, 100%);
+    }
+
+    .todo-widget :global(.scroll-hint-button.up) {
+      left: 8px;
+    }
+
+    .todo-widget :global(.scroll-hint-button.down) {
+      left: 41px;
+    }
+
+    .todo-list {
+      padding-left: 74px;
+      padding-bottom: 0;
+    }
   }
 
   .todo-list-item {
