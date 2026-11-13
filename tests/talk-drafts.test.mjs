@@ -45,6 +45,8 @@ function composerHarness(app) {
   const response = deferred();
   const transmissions = [];
   const focusCalls = [];
+  const released = [];
+  const composerInput = { name: "composer-input" };
   let scrollCount = 0;
   const draftForThread = createTalkDrafts();
   const context = {
@@ -59,6 +61,7 @@ function composerHarness(app) {
     appliedFocusRequestId: 0, entrySerial: 0, onNavigate() {},
     pendingHistoryRepairId: "", pendingAttachmentContentId: "", lastHistorySignature: "", lastHistoryThreadId: "",
     lastAppliedShareDraftRequestId: 0, authError: "", unlockError: "",
+    composerInput, releaseTextInputAfterSend(input) { released.push(input); },
     flushPendingRead() {}, setPhotoPickerOpen() {}, onNoise() {}, onBlockedContentOpen() {},
     onInitialShareDraftConsumed() {},
     talkForFocusedContent(threads, contentId) {
@@ -75,7 +78,7 @@ function composerHarness(app) {
   vm.runInContext(code, context);
   context.syncSelection();
   return {
-    context, response, transmissions,
+    context, response, transmissions, released, composerInput,
     get scrollCount() { return scrollCount; },
     renderedQuickReplyHandler(message) {
       // 実テンプレートのcallbackを、描画時の発話に結び付けて実行する。
@@ -153,6 +156,20 @@ for (const app of ["MessagesApp", "ChatApp"]) {
       }
     });
   }
+
+  test(`${app}: 入力欄からの送信だけで、タッチが主の端末向けに入力欄を離す処理を呼ぶ`, async () => {
+    const harness = composerHarness(app);
+    const { context, response, released, composerInput } = harness;
+    await context.submitMessage();
+    assert.deepEqual(released, [], "空の入力欄では送信もフォーカスの変更もしない");
+    context.composer.text = "本文";
+    const pending = context.submitMessage();
+    assert.deepEqual(released, [composerInput]);
+    response.resolve({ ok: true });
+    await pending;
+    await context.sendQuickReply("候補");
+    assert.deepEqual(released, [composerInput], "候補ボタンの送信では入力欄に触れない");
+  });
 
   test(`${app}: 送信元の新しい共有を失敗復元で上書きしない`, async () => {
     const harness = composerHarness(app);

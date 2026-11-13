@@ -13,6 +13,7 @@
   import { resourceUrl } from "../system/resourceUrls";
   import { quickReplyLabel, quickReplyText, type QuickReply, type TalkSendOptions } from "../../shared/quickReplies.ts";
   import { latestQuickReplyPlacement, resolvedTalkInputState } from "../system/talkInputState.ts";
+  import { keepTextInputFocus, releaseTextInputAfterSend } from "../system/textInputFocus.ts";
   import {
     queuedTalkMessageDelayMs,
     shouldDelayTalkMessage,
@@ -89,6 +90,7 @@
   const draftForThread = createTalkDrafts();
   let composer = draftForThread(selectedThreadId);
   let sending = false;
+  let composerInput: HTMLInputElement | undefined;
   let requestingAuthLink = false;
   let authError = "";
   let historyList: HTMLDivElement;
@@ -394,6 +396,7 @@
     const talkId = selectedThread.id;
     const outgoingDraft = composer;
     const previousDraft = { ...composer };
+    releaseTextInputAfterSend(composerInput);
     const outgoingMessage = selectedPhoto ? `photo:${selectedPhoto.id}` : composer.share ? `share:${composer.share.contentId}` : composer.text.trim();
     composer.error = "";
     composer.text = "";
@@ -1050,14 +1053,17 @@
                 </button>
               </div>
             {:else}
+              <!-- 送信中もフォーカスを外さないよう、無効化ではなく読み取り専用にする。 -->
               <input
+                bind:this={composerInput}
                 bind:value={composer.text}
-                disabled={sending || selectedThread.corrupted || !selectedThreadCanPost}
+                disabled={selectedThread.corrupted || !selectedThreadCanPost}
+                readonly={sending}
                 maxlength="500"
                 placeholder={selectedThreadCanPost ? "メッセージを入力" : "投稿できません"}
               />
             {/if}
-            <button type="submit" disabled={sending || selectedThread.corrupted || !selectedThreadCanPost || (!composer.text.trim() && !selectedPhoto && !composer.share)} aria-label="送信" title="送信">
+            <button type="submit" disabled={sending || selectedThread.corrupted || !selectedThreadCanPost || (!composer.text.trim() && !selectedPhoto && !composer.share)} aria-label="送信" title="送信" on:mousedown={keepTextInputFocus}>
               <Send size={16} strokeWidth={2.1} />
             </button>
               </form>

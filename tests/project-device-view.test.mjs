@@ -115,7 +115,9 @@ function searchAgentHarness(props = {}, dependencies = {}) {
     appCatalog: [],
     Element: class Element {},
     tick: () => Promise.resolve(),
-    window: { clearTimeout() {}, matchMedia: () => ({ matches: false }) },
+    window: { clearTimeout() {} },
+    prefersKeyboardFocus: () => false,
+    releaseTextInputAfterSend() {},
     loadTalkDelaySeenMessages: () => ({}),
     saveTalkDelaySeenMessages() {},
     resolvedTalkInputState: () => ({ visible: true, canSubmit: true }),
@@ -182,7 +184,7 @@ test("検索の履歴復元は画面変更・強制閉じの後に開き、表�
   }, {
     restoredList,
     restoredInput: { focus() { focused += 1; } },
-    window: { clearTimeout() {}, matchMedia: () => ({ matches: true }) }
+    prefersKeyboardFocus: () => true
   });
   harness.evaluate("messageListElement = restoredList; inputElement = restoredInput");
   harness.update({
@@ -212,7 +214,7 @@ test("検索の履歴復元は古いtick待ちの末尾移動・focus・復元�
     tick: () => new Promise((resolve) => ticks.push(resolve)),
     restoredList,
     restoredInput: { focus() { focused += 1; } },
-    window: { clearTimeout() {}, matchMedia: () => ({ matches: true }) }
+    prefersKeyboardFocus: () => true
   });
   harness.evaluate("messageListElement = restoredList; inputElement = restoredInput; openExpanded()");
   harness.update({ restoreRequest: { id: 1, open: true, scrollTop: 300, visibleMessageCount: 80 } });
@@ -567,6 +569,33 @@ test("入力欄を隠した検索会話でも、開封失敗後にQuick Replyで
     harness.update({ talk: { ...talk, messages: [...talk.messages, { ...menu, id: "next", seq: 2, quickReplies: undefined }] } });
     assert.equal(harness.evaluate("quickReplyPlacement"), undefined, "新しい台本メッセージに選択肢がなければ旧選択肢は残さない");
   } finally { harness.destroy(); }
+});
+
+test("検索の入力欄から送信した時だけ、タッチが主の端末向けに入力欄を離す処理を呼ぶ", async () => {
+  const released = [];
+  const completions = [];
+  const harness = searchAgentHarness({
+    onSend: () => new Promise((resolve) => completions.push(resolve))
+  }, {
+    crypto: globalThis.crypto, MAX_SEARCH_AGENT_QUERY_LENGTH: 500,
+    composerInput: { name: "search-input" },
+    releaseTextInputAfterSend(input) { released.push(input); },
+    shouldQueueTalkMessage: () => false
+  });
+  harness.evaluate("inputElement = composerInput; openExpanded()");
+  harness.flush();
+  await harness.evaluate("sendMessage()");
+  assert.deepEqual(released, [], "空の入力欄では送信もフォーカスの変更もしない");
+  harness.evaluate('input = "古いメモ"');
+  const pending = harness.evaluate("sendMessage()");
+  assert.deepEqual(released.map((input) => input.name), ["search-input"]);
+  completions.shift()({ ok: true });
+  await pending;
+  const quickReply = harness.evaluate('sendQuickReply("候補")');
+  completions.shift()({ ok: true });
+  await quickReply;
+  assert.equal(released.length, 1, "候補ボタンの送信では入力欄に触れない");
+  harness.destroy();
 });
 
 test("検索の発言を変える候補はラベルで送信し、空発言の仮吹き出しを出さず失敗後に候補を戻す", async () => {

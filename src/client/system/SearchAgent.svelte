@@ -26,6 +26,7 @@
   import { MAX_SEARCH_AGENT_QUERY_LENGTH } from "../../shared/searchAgent";
   import { resourceUrl } from "./resourceUrls";
   import { quickReplyLabel, quickReplyText, type QuickReply, type TalkSendOptions } from "../../shared/quickReplies.ts";
+  import { keepTextInputFocus, prefersKeyboardFocus, releaseTextInputAfterSend } from "./textInputFocus.ts";
 
   type ContentStateSnapshot = {
     contentId: string;
@@ -215,15 +216,11 @@
     }
   }
 
-  function shouldAutoFocusTextInput() {
-    return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-  }
-
   async function focusInput() {
     const requestId = panelViewRequestId;
     await tick();
     if (destroyed || !expanded || requestId !== panelViewRequestId) return;
-    if (shouldAutoFocusTextInput()) {
+    if (prefersKeyboardFocus()) {
       inputElement?.focus({ preventScroll: true });
     }
   }
@@ -478,7 +475,10 @@
       };
       transientMessages = [...transientMessages, userMessage];
     }
-    if (clearInput) input = "";
+    if (clearInput) {
+      input = "";
+      releaseTextInputAfterSend(inputElement);
+    }
     pending = true;
     sendError = "";
     void scrollMessagesToBottom();
@@ -705,9 +705,10 @@
                   maxlength={MAX_SEARCH_AGENT_QUERY_LENGTH}
                   aria-label={`${name}へ送信`}
                   placeholder={composerEnabled ? "メッセージを入力" : "送信できません"}
-                  disabled={pending || !composerEnabled}
+                  disabled={!composerEnabled}
+                  readonly={pending}
                 />
-                <button type="submit" aria-label="送信" title="送信" disabled={pending || !composerEnabled || !input.trim()}>
+                <button type="submit" aria-label="送信" title="送信" disabled={pending || !composerEnabled || !input.trim()} on:mousedown={keepTextInputFocus}>
                   <Send size={15} strokeWidth={2.2} />
                 </button>
               </form>
