@@ -61,6 +61,7 @@ XSTORYPHONE_SCENARIO_DIR=scenario/my-story npm run dev
 | `messages.input_visible` / `chat.input_visible` | `false` | メッセージ／チャットの自由入力欄の初期表示。省略時`true`、各会話行の指定を優先。exposureはprivateで記述 |
 | `player.access_code` | `required` | browserの任意入場制限。`none`（既定）/ `required`。APIの`ACCESS_CODE_SECRET`も必要 |
 | `device.wallpaper_url` | `/media/wallpaper.svg` | 壁紙 |
+| `device.focused_max_scale` | `1.2` | 枠付きのfocused端末の拡大率上限。1以上の有限数、exposureはpublic。未指定時は1倍 |
 | `device.lock_method` | `none` | `player-passcode` / `fixed-pin` / `none` |
 | `device.lock_pin` | `0420` | fixed-pin時だけ指定し、exposureはprivate |
 | `device.unlock_load_part` | `evidence` | PIN正解後に取得するpart。空欄は追加なし、複数はセル内改行 |

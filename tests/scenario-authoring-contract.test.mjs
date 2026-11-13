@@ -177,6 +177,34 @@ test("初期UIの追加設定は公開指定を要求し、作品定数として
   }
 }));
 
+test("focused端末の拡大上限は任意の公開作品定数として生成する", () => withAuthoring(({ edit, invoke }) => {
+  const read = 'console.log(JSON.stringify(result.projectConstants["device.focused_max_scale"] ?? null));';
+  const defaults = invoke(read);
+  assert.equal(defaults.status, 0, defaults.stderr);
+  assert.equal(JSON.parse(defaults.stdout), null);
+  edit("project_constants", rows => rows.push({ key: "device.focused_max_scale", value: "1.2", exposure: "public" }));
+  for (const value of ["1", "1.2", "1.5"]) {
+    edit("project_constants", rows => { rows.find(row => row.key === "device.focused_max_scale").value = value; });
+    const accepted = invoke(read);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(JSON.parse(accepted.stdout), value);
+  }
+  edit("project_constants", rows => { rows.find(row => row.key === "device.focused_max_scale").exposure = "private"; });
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /device\.focused_max_scale.*public/u);
+}));
+
+test("focused端末の拡大上限は1未満・空欄・有限数以外を制作時に拒否する", () => withAuthoring(({ edit, invoke }) => {
+  edit("project_constants", rows => rows.push({ key: "device.focused_max_scale", value: "", exposure: "public" }));
+  for (const value of ["", " ", "0", "0.9", "-1", "NaN", "Infinity", "abc"]) {
+    edit("project_constants", rows => { rows.find(row => row.key === "device.focused_max_scale").value = value; });
+    const rejected = invoke();
+    assert.notEqual(rejected.status, 0, `value=${JSON.stringify(value)}`);
+    assert.match(rejected.stderr, /device\.focused_max_scale.*1以上の有限数/u);
+  }
+}));
+
 test("生成音声fallbackは音声添付IDだけを受理し、素材URLを定義へ複製しない", () => withAuthoring(({ edit, invoke }) => {
   edit("gen_audio", (rows, headers) => {
     if (!headers.includes("fallback")) headers.push("fallback");

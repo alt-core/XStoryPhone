@@ -161,8 +161,11 @@ export function compileScenarioAuthoring(workbook) {
     if (exposure !== "public" && exposure !== "private") throw new Error(`project_constants!${row.__rowNumber}: exposureはpublic/privateです。`);
     if (["client.runtime_revision", "client.public_id_revision", "device.lock_pin_length"].includes(key)) throw new Error(`${key}は自動生成される予約定数です。`);
     if (key === "device.lock_pin" && exposure === "public") throw new Error("固定PINはprivateにしてください。");
-    if (["search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices"].includes(key) && exposure !== "public") {
+    if (["search_agent.sprite_url", "effect.game_over_image_url", "effect.all_clear_image_url", "start_confirmation.notices", "device.focused_max_scale"].includes(key) && exposure !== "public") {
       throw new Error(`${key}は初期画面で使う公開設定のため、exposureをpublicにしてください。`);
+    }
+    if (key === "device.focused_max_scale" && (!Number.isFinite(Number(row.value)) || Number(row.value) < 1)) {
+      throw new Error("project_constants.device.focused_max_scale は1以上の有限数にしてください。");
     }
     constants[key] = String(row.value ?? "");
     if (exposure === "public") publicConstants[key] = constants[key];
